@@ -49,6 +49,7 @@ use codex_app_server_protocol::CollaborationModeListResponse;
 use codex_app_server_protocol::CommandExecParams;
 use codex_app_server_protocol::CommandExecResizeParams;
 use codex_app_server_protocol::CommandExecTerminateParams;
+use codex_app_server_protocol::CommandExecUnsandboxedParams;
 use codex_app_server_protocol::CommandExecWriteParams;
 use codex_app_server_protocol::ConversationGitInfo;
 use codex_app_server_protocol::ConversationSummary;
@@ -704,6 +705,30 @@ fn environment_selection_error_message(err: CodexErr) -> String {
     }
 }
 
+#[derive(Debug)]
+struct CommandExecRequestParams {
+    command: Vec<String>,
+    process_id: Option<String>,
+    tty: bool,
+    stream_stdin: bool,
+    stream_stdout_stderr: bool,
+    output_bytes_cap: Option<usize>,
+    disable_output_cap: bool,
+    disable_timeout: bool,
+    timeout_ms: Option<i64>,
+    cwd: Option<PathBuf>,
+    env_overrides: Option<HashMap<String, Option<String>>>,
+    size: Option<codex_app_server_protocol::CommandExecTerminalSize>,
+}
+
+enum CommandExecMode {
+    Sandboxed {
+        sandbox_policy: Option<codex_app_server_protocol::SandboxPolicy>,
+        permission_profile: Option<codex_app_server_protocol::PermissionProfile>,
+    },
+    Unsandboxed,
+}
+
 impl CodexMessageProcessor {
     async fn instruction_sources_from_config(config: &Config) -> Vec<AbsolutePathBuf> {
         codex_core::AgentsMdManager::new(config)
@@ -1327,6 +1352,10 @@ impl CodexMessageProcessor {
             }
             ClientRequest::OneOffCommandExec { request_id, params } => {
                 self.exec_one_off_command(to_connection_request_id(request_id), params)
+                    .await;
+            }
+            ClientRequest::CommandExecUnsandboxed { request_id, params } => {
+                self.exec_unsandboxed_command(to_connection_request_id(request_id), params)
                     .await;
             }
             ClientRequest::CommandExecWrite { request_id, params } => {
@@ -2223,14 +2252,6 @@ impl CodexMessageProcessor {
         request_id: ConnectionRequestId,
         params: CommandExecParams,
     ) -> Result<(), JSONRPCErrorError> {
-        tracing::debug!("ExecOneOffCommand params: {params:?}");
-
-        let request = request_id.clone();
-
-        if params.command.is_empty() {
-            return Err(invalid_request("command must not be empty"));
-        }
-
         let CommandExecParams {
             command,
             process_id,
@@ -2247,26 +2268,143 @@ impl CodexMessageProcessor {
             sandbox_policy,
             permission_profile,
         } = params;
-        if sandbox_policy.is_some() && permission_profile.is_some() {
+        self.exec_command(
+            request_id,
+            CommandExecRequestParams {
+                command,
+                process_id,
+                tty,
+                stream_stdin,
+                stream_stdout_stderr,
+                output_bytes_cap,
+                disable_output_cap,
+                disable_timeout,
+                timeout_ms,
+                cwd,
+                env_overrides,
+                size,
+            },
+            CommandExecMode::Sandboxed {
+                sandbox_policy,
+                permission_profile,
+            },
+        )
+        .await
+    }
+
+    async fn exec_unsandboxed_command(
+        &self,
+        request_id: ConnectionRequestId,
+        params: CommandExecUnsandboxedParams,
+    ) {
+        let result = self
+            .exec_unsandboxed_command_inner(request_id.clone(), params)
+            .await
+            .map(|()| None::<ClientResponsePayload>);
+        self.send_optional_result(request_id, result).await;
+    }
+
+    async fn exec_unsandboxed_command_inner(
+        &self,
+        request_id: ConnectionRequestId,
+        params: CommandExecUnsandboxedParams,
+    ) -> Result<(), JSONRPCErrorError> {
+        let CommandExecUnsandboxedParams {
+            command,
+            process_id,
+            tty,
+            stream_stdin,
+            stream_stdout_stderr,
+            output_bytes_cap,
+            disable_output_cap,
+            disable_timeout,
+            timeout_ms,
+            cwd,
+            env: env_overrides,
+            size,
+        } = params;
+        self.exec_command(
+            request_id,
+            CommandExecRequestParams {
+                command,
+                process_id,
+                tty,
+                stream_stdin,
+                stream_stdout_stderr,
+                output_bytes_cap,
+                disable_output_cap,
+                disable_timeout,
+                timeout_ms,
+                cwd,
+                env_overrides,
+                size,
+            },
+            CommandExecMode::Unsandboxed,
+        )
+        .await
+    }
+
+    async fn exec_command(
+        &self,
+        request_id: ConnectionRequestId,
+        params: CommandExecRequestParams,
+        mode: CommandExecMode,
+    ) -> Result<(), JSONRPCErrorError> {
+        let method_name = match &mode {
+            CommandExecMode::Sandboxed { .. } => "command/exec",
+            CommandExecMode::Unsandboxed => "command/execUnsandboxed",
+        };
+        tracing::debug!("{method_name} params: {params:?}");
+
+        let request = request_id.clone();
+
+        if params.command.is_empty() {
+            return Err(invalid_request("command must not be empty"));
+        }
+
+        let CommandExecRequestParams {
+            command,
+            process_id,
+            tty,
+            stream_stdin,
+            stream_stdout_stderr,
+            output_bytes_cap,
+            disable_output_cap,
+            disable_timeout,
+            timeout_ms,
+            cwd,
+            env_overrides,
+            size,
+        } = params;
+
+        if let CommandExecMode::Sandboxed {
+            sandbox_policy,
+            permission_profile,
+        } = &mode
+            && sandbox_policy.is_some()
+            && permission_profile.is_some()
+        {
             return Err(invalid_request(
                 "`permissionProfile` cannot be combined with `sandboxPolicy`",
             ));
         }
 
         if size.is_some() && !tty {
-            return Err(invalid_params("command/exec size requires tty: true"));
+            return Err(invalid_params(format!(
+                "{method_name} size requires tty: true"
+            )));
         }
 
         if disable_output_cap && output_bytes_cap.is_some() {
-            return Err(invalid_params(
-                "command/exec cannot set both outputBytesCap and disableOutputCap",
-            ));
+            return Err(invalid_params(format!(
+                "{method_name} cannot set both outputBytesCap and disableOutputCap"
+            )));
         }
 
         if disable_timeout && timeout_ms.is_some() {
-            return Err(invalid_params(
-                "command/exec cannot set both timeoutMs and disableTimeout",
-            ));
+            return Err(invalid_params(format!(
+                "{method_name} cannot set both timeoutMs and disableTimeout"
+            )));
         }
 
         let cwd = cwd.map_or_else(|| self.config.cwd.clone(), |cwd| self.config.cwd.join(cwd));
@@ -2291,35 +2429,12 @@ impl CodexMessageProcessor {
                 Ok(timeout_ms) => Some(timeout_ms),
                 Err(_) => {
                     return Err(invalid_params(format!(
-                        "command/exec timeoutMs must be non-negative, got {timeout_ms}"
+                        "{method_name} timeoutMs must be non-negative, got {timeout_ms}"
                     )));
                 }
             },
             None => None,
         };
-        let managed_network_requirements_enabled =
-            self.config.managed_network_requirements_enabled();
-        let started_network_proxy = match self.config.permissions.network.as_ref() {
-            Some(spec) => match spec
-                .start_proxy(
-                    self.config.permissions.permission_profile.get(),
-                    /*policy_decider*/ None,
-                    /*blocked_request_observer*/ None,
-                    managed_network_requirements_enabled,
-                    NetworkProxyAuditMetadata::default(),
-                )
-                .await
-            {
-                Ok(started) => Some(started),
-                Err(err) => {
-                    return Err(internal_error(format!(
-                        "failed to start managed network proxy: {err}"
-                    )));
-                }
-            },
-            None => None,
-        };
-        let windows_sandbox_level = WindowsSandboxLevel::from_config(&self.config);
         let output_bytes_cap = if disable_output_cap {
             None
         } else {
@@ -2338,111 +2453,164 @@ impl CodexMessageProcessor {
         } else {
             ExecCapturePolicy::ShellTool
         };
-        let sandbox_cwd = if permission_profile.is_some() {
-            cwd.clone()
-        } else {
-            self.config.cwd.clone()
-        };
-        let exec_params = ExecParams {
-            command,
-            cwd: cwd.clone(),
-            expiration,
-            capture_policy,
-            env,
-            network: started_network_proxy
-                .as_ref()
-                .map(codex_core::config::StartedNetworkProxy::proxy),
-            sandbox_permissions: SandboxPermissions::UseDefault,
-            windows_sandbox_level,
-            windows_sandbox_private_desktop: self
-                .config
-                .permissions
-                .windows_sandbox_private_desktop,
-            justification: None,
-            arg0: None,
-        };
-
-        let effective_permission_profile = if let Some(permission_profile) = permission_profile {
-            let permission_profile =
-                codex_protocol::models::PermissionProfile::from(permission_profile);
-            let (mut file_system_sandbox_policy, network_sandbox_policy) =
-                permission_profile.to_runtime_permissions();
-            let configured_file_system_sandbox_policy =
-                self.config.permissions.file_system_sandbox_policy();
-            Self::preserve_configured_deny_read_restrictions(
-                &mut file_system_sandbox_policy,
-                &configured_file_system_sandbox_policy,
-            );
-            let effective_permission_profile =
-                codex_protocol::models::PermissionProfile::from_runtime_permissions_with_enforcement(
-                    permission_profile.enforcement(),
-                    &file_system_sandbox_policy,
-                    network_sandbox_policy,
-                );
-            self.config
-                .permissions
-                .permission_profile
-                .can_set(&effective_permission_profile)
-                .map_err(|err| invalid_request(format!("invalid permission profile: {err}")))?;
-            effective_permission_profile
-        } else if let Some(policy) = sandbox_policy.map(|policy| policy.to_core()) {
-            self.config
-                .permissions
-                .can_set_legacy_sandbox_policy(&policy, &sandbox_cwd)
-                .map_err(|err| invalid_request(format!("invalid sandbox policy: {err}")))?;
-            let file_system_sandbox_policy =
-                codex_protocol::permissions::FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(&policy, &sandbox_cwd);
-            let network_sandbox_policy =
-                codex_protocol::permissions::NetworkSandboxPolicy::from(&policy);
-            let permission_profile =
-                codex_protocol::models::PermissionProfile::from_runtime_permissions_with_enforcement(
-                    codex_protocol::models::SandboxEnforcement::from_legacy_sandbox_policy(&policy),
-                    &file_system_sandbox_policy,
-                    network_sandbox_policy,
-                );
-            self.config
-                .permissions
-                .permission_profile
-                .can_set(&permission_profile)
-                .map_err(|err| invalid_request(format!("invalid sandbox policy: {err}")))?;
-            permission_profile
-        } else {
-            self.config.permissions.permission_profile()
-        };
-
-        let codex_linux_sandbox_exe = self.arg0_paths.codex_linux_sandbox_exe.clone();
         let outgoing = self.outgoing.clone();
         let request_for_task = request.clone();
-        let started_network_proxy_for_task = started_network_proxy;
-        let use_legacy_landlock = self.config.features.use_legacy_landlock();
         let size = match size.map(crate::command_exec::terminal_size_from_protocol) {
             Some(Ok(size)) => Some(size),
             Some(Err(error)) => return Err(error),
             None => None,
         };
 
-        let exec_request = codex_core::exec::build_exec_request(
-            exec_params,
-            &effective_permission_profile,
-            &sandbox_cwd,
-            &codex_linux_sandbox_exe,
-            use_legacy_landlock,
-        )
-        .map_err(|err| internal_error(format!("exec failed: {err}")))?;
+        let (exec_request, started_network_proxy) = match mode {
+            CommandExecMode::Sandboxed {
+                sandbox_policy,
+                permission_profile,
+            } => {
+                let managed_network_requirements_enabled =
+                    self.config.managed_network_requirements_enabled();
+                let started_network_proxy = match self.config.permissions.network.as_ref() {
+                    Some(spec) => match spec
+                        .start_proxy(
+                            self.config.permissions.permission_profile.get(),
+                            /*policy_decider*/ None,
+                            /*blocked_request_observer*/ None,
+                            managed_network_requirements_enabled,
+                            NetworkProxyAuditMetadata::default(),
+                        )
+                        .await
+                    {
+                        Ok(started) => Some(started),
+                        Err(err) => {
+                            return Err(internal_error(format!(
+                                "failed to start managed network proxy: {err}"
+                            )));
+                        }
+                    },
+                    None => None,
+                };
+                let sandbox_cwd = if permission_profile.is_some() {
+                    cwd.clone()
+                } else {
+                    self.config.cwd.clone()
+                };
+                let exec_params = ExecParams {
+                    command,
+                    cwd: cwd.clone(),
+                    expiration,
+                    capture_policy,
+                    env,
+                    network: started_network_proxy
+                        .as_ref()
+                        .map(codex_core::config::StartedNetworkProxy::proxy),
+                    sandbox_permissions: SandboxPermissions::UseDefault,
+                    windows_sandbox_level: WindowsSandboxLevel::from_config(&self.config),
+                    windows_sandbox_private_desktop: self
+                        .config
+                        .permissions
+                        .windows_sandbox_private_desktop,
+                    justification: None,
+                    arg0: None,
+                };
+
+                let effective_permission_profile = if let Some(permission_profile) =
+                    permission_profile
+                {
+                    let permission_profile =
+                        codex_protocol::models::PermissionProfile::from(permission_profile);
+                    let (mut file_system_sandbox_policy, network_sandbox_policy) =
+                        permission_profile.to_runtime_permissions();
+                    let configured_file_system_sandbox_policy =
+                        self.config.permissions.file_system_sandbox_policy();
+                    Self::preserve_configured_deny_read_restrictions(
+                        &mut file_system_sandbox_policy,
+                        &configured_file_system_sandbox_policy,
+                    );
+                    let effective_permission_profile =
+                        codex_protocol::models::PermissionProfile::from_runtime_permissions_with_enforcement(
+                            permission_profile.enforcement(),
+                            &file_system_sandbox_policy,
+                            network_sandbox_policy,
+                        );
+                    self.config
+                        .permissions
+                        .permission_profile
+                        .can_set(&effective_permission_profile)
+                        .map_err(|err| {
+                            invalid_request(format!("invalid permission profile: {err}"))
+                        })?;
+                    effective_permission_profile
+                } else if let Some(policy) = sandbox_policy.map(|policy| policy.to_core()) {
+                    self.config
+                        .permissions
+                        .can_set_legacy_sandbox_policy(&policy, &sandbox_cwd)
+                        .map_err(|err| invalid_request(format!("invalid sandbox policy: {err}")))?;
+                    let file_system_sandbox_policy =
+                        codex_protocol::permissions::FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(&policy, &sandbox_cwd);
+                    let network_sandbox_policy =
+                        codex_protocol::permissions::NetworkSandboxPolicy::from(&policy);
+                    let permission_profile =
+                        codex_protocol::models::PermissionProfile::from_runtime_permissions_with_enforcement(
+                            codex_protocol::models::SandboxEnforcement::from_legacy_sandbox_policy(&policy),
+                            &file_system_sandbox_policy,
+                            network_sandbox_policy,
+                        );
+                    self.config
+                        .permissions
+                        .permission_profile
+                        .can_set(&permission_profile)
+                        .map_err(|err| invalid_request(format!("invalid sandbox policy: {err}")))?;
+                    permission_profile
+                } else {
+                    self.config.permissions.permission_profile()
+                };
+
+                match codex_core::exec::build_exec_request(
+                    exec_params,
+                    &effective_permission_profile,
+                    &sandbox_cwd,
+                    &self.arg0_paths.codex_linux_sandbox_exe,
+                    self.config.features.use_legacy_landlock(),
+                ) {
+                    Ok(exec_request) => (exec_request, started_network_proxy),
+                    Err(err) => {
+                        return Err(internal_error(format!("exec failed: {err}")));
+                    }
+                }
+            }
+            CommandExecMode::Unsandboxed => (
+                codex_core::sandboxing::ExecRequest::new(
+                    command,
+                    cwd,
+                    env,
+                    /*network*/ None,
+                    expiration,
+                    capture_policy,
+                    codex_sandboxing::SandboxType::None,
+                    WindowsSandboxLevel::Disabled,
+                    /*windows_sandbox_private_desktop*/ false,
+                    codex_protocol::models::PermissionProfile::Disabled,
+                    /*arg0*/ None,
+                ),
+                None,
+            ),
+        };
+
         self.command_exec_manager
             .start(StartCommandExecParams {
                 outgoing,
                 request_id: request_for_task,
                 process_id,
                 exec_request,
-                started_network_proxy: started_network_proxy_for_task,
+                started_network_proxy,
                 tty,
                 stream_stdin,
                 stream_stdout_stderr,
                 output_bytes_cap,
                 size,
             })
-            .await
+            .await?;
+
+        Ok(())
     }
 
     fn preserve_configured_deny_read_restrictions(

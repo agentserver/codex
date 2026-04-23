@@ -57,11 +57,15 @@ pub struct AnalyticsEventsClient {
 impl AnalyticsEventsQueue {
     pub(crate) fn new(auth_manager: Arc<AuthManager>, base_url: String) -> Self {
         let (sender, mut receiver) = mpsc::channel(ANALYTICS_EVENTS_QUEUE_SIZE);
+        let auth_manager = Arc::downgrade(&auth_manager);
         tokio::spawn(async move {
             let mut reducer = AnalyticsReducer::default();
             while let Some(input) = receiver.recv().await {
                 let mut events = Vec::new();
                 reducer.ingest(input, &mut events).await;
+                let Some(auth_manager) = auth_manager.upgrade() else {
+                    break;
+                };
                 send_track_events(&auth_manager, &base_url, events).await;
             }
         });

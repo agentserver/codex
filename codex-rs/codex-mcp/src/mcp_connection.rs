@@ -3,7 +3,6 @@
 //! This module contains shared types and helpers used by [`McpConnectionManager`].
 
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,26 +10,20 @@ use std::time::Duration;
 
 use crate::McpAuthStatusEntry;
 use crate::client::StartupOutcomeError;
-pub(crate) use crate::mcp_tool_names::qualify_tools;
 use anyhow::Result;
 use anyhow::anyhow;
 use async_channel::Sender;
 use codex_exec_server::Environment;
-use codex_protocol::ToolName;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::McpStartupUpdateEvent;
 use codex_protocol::protocol::SandboxPolicy;
-use rmcp::model::Tool;
 
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Map;
-use serde_json::Value as JsonValue;
 use url::Url;
 
-use codex_config::McpServerConfig;
 use codex_config::McpServerTransportConfig;
 
 /// Default timeout for initializing MCP server & initially listing tools.
@@ -38,54 +31,6 @@ pub(crate) const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Default timeout for individual tool calls.
 pub(crate) const DEFAULT_TOOL_TIMEOUT: Duration = Duration::from_secs(120);
-
-pub(crate) const MCP_TOOLS_CACHE_WRITE_DURATION_METRIC: &str =
-    "codex.mcp.tools.cache_write.duration_ms";
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolInfo {
-    /// Raw MCP server name used for routing the tool call.
-    pub server_name: String,
-    /// Model-visible tool name used in Responses API tool declarations.
-    #[serde(rename = "tool_name", alias = "callable_name")]
-    pub callable_name: String,
-    /// Model-visible namespace used for deferred tool loading.
-    #[serde(rename = "tool_namespace", alias = "callable_namespace")]
-    pub callable_namespace: String,
-    /// Instructions from the MCP server initialize result.
-    #[serde(default)]
-    pub server_instructions: Option<String>,
-    /// Raw MCP tool definition; `tool.name` is sent back to the MCP server.
-    pub tool: Tool,
-    pub connector_id: Option<String>,
-    pub connector_name: Option<String>,
-    #[serde(default)]
-    pub plugin_display_names: Vec<String>,
-    pub connector_description: Option<String>,
-}
-
-impl ToolInfo {
-    pub fn canonical_tool_name(&self) -> ToolName {
-        ToolName::namespaced(self.callable_namespace.clone(), self.callable_name.clone())
-    }
-}
-
-pub fn declared_openai_file_input_param_names(
-    meta: Option<&Map<String, JsonValue>>,
-) -> Vec<String> {
-    let Some(meta) = meta else {
-        return Vec::new();
-    };
-
-    meta.get(META_OPENAI_FILE_PARAMS)
-        .and_then(JsonValue::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(JsonValue::as_str)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .collect()
-}
 
 /// MCP server capability indicating that Codex should include [`SandboxState`]
 /// in tool-call request `_meta` under this key.
@@ -134,107 +79,6 @@ impl McpRuntimeEnvironment {
     }
 }
 
-/// A tool is allowed to be used if both are true:
-/// 1. enabled is None (no allowlist is set) or the tool is explicitly enabled.
-/// 2. The tool is not explicitly disabled.
-#[derive(Default, Clone)]
-pub(crate) struct ToolFilter {
-    pub(crate) enabled: Option<HashSet<String>>,
-    pub(crate) disabled: HashSet<String>,
-}
-
-impl ToolFilter {
-    pub(crate) fn from_config(cfg: &McpServerConfig) -> Self {
-        let enabled = cfg
-            .enabled_tools
-            .as_ref()
-            .map(|tools| tools.iter().cloned().collect::<HashSet<_>>());
-        let disabled = cfg
-            .disabled_tools
-            .as_ref()
-            .map(|tools| tools.iter().cloned().collect::<HashSet<_>>())
-            .unwrap_or_default();
-
-        Self { enabled, disabled }
-    }
-
-    pub(crate) fn allows(&self, tool_name: &str) -> bool {
-        if let Some(enabled) = &self.enabled
-            && !enabled.contains(tool_name)
-        {
-            return false;
-        }
-
-        !self.disabled.contains(tool_name)
-    }
-}
-
-const META_OPENAI_FILE_PARAMS: &str = "openai/fileParams";
-
-/// Returns the model-visible view of a tool while preserving the raw metadata
-/// used by execution. Keep cache entries raw and call this at manager return
-/// boundaries.
-pub(crate) fn tool_with_model_visible_input_schema(tool: &Tool) -> Tool {
-    let file_params = declared_openai_file_input_param_names(tool.meta.as_deref());
-    if file_params.is_empty() {
-        return tool.clone();
-    }
-
-    let mut tool = tool.clone();
-    let mut input_schema = JsonValue::Object(tool.input_schema.as_ref().clone());
-    mask_input_schema_for_file_path_params(&mut input_schema, &file_params);
-    if let JsonValue::Object(input_schema) = input_schema {
-        tool.input_schema = Arc::new(input_schema);
-    }
-    tool
-}
-
-fn mask_input_schema_for_file_path_params(input_schema: &mut JsonValue, file_params: &[String]) {
-    let Some(properties) = input_schema
-        .as_object_mut()
-        .and_then(|schema| schema.get_mut("properties"))
-        .and_then(JsonValue::as_object_mut)
-    else {
-        return;
-    };
-
-    for field_name in file_params {
-        let Some(property_schema) = properties.get_mut(field_name) else {
-            continue;
-        };
-        mask_input_property_schema(property_schema);
-    }
-}
-
-fn mask_input_property_schema(schema: &mut JsonValue) {
-    let Some(object) = schema.as_object_mut() else {
-        return;
-    };
-
-    let mut description = object
-        .get("description")
-        .and_then(JsonValue::as_str)
-        .map(str::to_string)
-        .unwrap_or_default();
-    let guidance = "This parameter expects an absolute local file path. If you want to upload a file, provide the absolute path to that file here.";
-    if description.is_empty() {
-        description = guidance.to_string();
-    } else if !description.contains(guidance) {
-        description = format!("{description} {guidance}");
-    }
-
-    let is_array = object.get("type").and_then(JsonValue::as_str) == Some("array")
-        || object.get("items").is_some();
-    object.clear();
-    object.insert("description".to_string(), JsonValue::String(description));
-    if is_array {
-        object.insert("type".to_string(), JsonValue::String("array".to_string()));
-        object.insert("items".to_string(), serde_json::json!({ "type": "string" }));
-    } else {
-        object.insert("type".to_string(), JsonValue::String("string".to_string()));
-    }
-}
-
 pub(crate) async fn emit_update(
     submit_id: &str,
     tx_event: &Sender<Event>,
@@ -246,13 +90,6 @@ pub(crate) async fn emit_update(
             msg: EventMsg::McpStartupUpdate(update),
         })
         .await
-}
-
-pub(crate) fn filter_tools(tools: Vec<ToolInfo>, filter: &ToolFilter) -> Vec<ToolInfo> {
-    tools
-        .into_iter()
-        .filter(|tool| filter.allows(&tool.tool.name))
-        .collect()
 }
 
 pub(crate) fn resolve_bearer_token(

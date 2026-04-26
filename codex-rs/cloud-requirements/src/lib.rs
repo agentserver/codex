@@ -179,6 +179,14 @@ fn auth_identity(auth: &CodexAuth) -> (Option<String>, Option<String>) {
     (auth.get_chatgpt_user_id(), auth.get_account_id())
 }
 
+fn cloud_requirements_eligible_auth(auth: &CodexAuth) -> bool {
+    let Some(plan_type) = auth.account_plan_type() else {
+        return false;
+    };
+    auth.uses_codex_backend()
+        && (plan_type.is_business_like() || matches!(plan_type, PlanType::Enterprise))
+}
+
 fn cache_payload_bytes(payload: &CloudRequirementsCacheSignedPayload) -> Option<Vec<u8>> {
     serde_json::to_vec(&payload).ok()
 }
@@ -329,17 +337,7 @@ impl CloudRequirementsService {
         let Some(auth) = self.auth_manager.auth().await else {
             return Ok(None);
         };
-        if matches!(auth, CodexAuth::AgentIdentity(_)) {
-            // AgentIdentity does not carry a human bearer token, and identity-edge
-            // only allowlists task-scoped AgentAssertion calls for the Codex runtime.
-            return Ok(None);
-        }
-        let Some(plan_type) = auth.account_plan_type() else {
-            return Ok(None);
-        };
-        if !auth.uses_codex_backend()
-            || !(plan_type.is_business_like() || matches!(plan_type, PlanType::Enterprise))
-        {
+        if !cloud_requirements_eligible_auth(&auth) {
             return Ok(None);
         }
         let (chatgpt_user_id, account_id) = auth_identity(&auth);
@@ -554,12 +552,7 @@ impl CloudRequirementsService {
         let Some(auth) = self.auth_manager.auth().await else {
             return false;
         };
-        let Some(plan_type) = auth.account_plan_type() else {
-            return false;
-        };
-        if !auth.uses_codex_backend()
-            || !(plan_type.is_business_like() || matches!(plan_type, PlanType::Enterprise))
-        {
+        if !cloud_requirements_eligible_auth(&auth) {
             return false;
         }
 
@@ -1009,6 +1002,24 @@ mod tests {
         auth_manager_with_plan_and_identity(plan_type, Some("user-12345"), Some("account-12345"))
     }
 
+    fn agent_identity_auth_with_plan(plan_type: PlanType) -> CodexAuth {
+        let encode = |bytes: &[u8]| URL_SAFE_NO_PAD.encode(bytes);
+        let header_b64 = encode(br#"{"alg":"EdDSA","typ":"JWT"}"#);
+        let payload = json!({
+            "agent_runtime_id": "agent-runtime-123",
+            "agent_private_key": "private-key",
+            "account_id": "account-12345",
+            "chatgpt_user_id": "user-12345",
+            "email": "user@example.com",
+            "plan_type": plan_type,
+            "chatgpt_account_is_fedramp": false,
+        });
+        let payload_b64 = encode(&serde_json::to_vec(&payload).expect("payload"));
+        let signature_b64 = encode(b"sig");
+        let agent_identity = format!("{header_b64}.{payload_b64}.{signature_b64}");
+        CodexAuth::from_agent_identity_jwt(&agent_identity).expect("agent identity auth")
+    }
+
     fn parse_for_fetch(contents: Option<&str>) -> Option<ConfigRequirementsToml> {
         contents.and_then(|contents| parse_cloud_requirements(contents).ok().flatten())
     }
@@ -1187,6 +1198,13 @@ mod tests {
                 permissions: None,
             }))
         );
+    }
+
+    #[test]
+    fn cloud_requirements_eligible_auth_allows_agent_identity_business_plan() {
+        let auth = agent_identity_auth_with_plan(PlanType::Business);
+
+        assert!(cloud_requirements_eligible_auth(&auth));
     }
 
     #[tokio::test]

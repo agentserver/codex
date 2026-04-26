@@ -1,5 +1,5 @@
+pub use client::MCP_SANDBOX_STATE_META_CAPABILITY;
 pub use manager::McpConnectionManager;
-pub use mcp_connection::MCP_SANDBOX_STATE_META_CAPABILITY;
 pub use mcp_connection::McpRuntimeEnvironment;
 pub use mcp_connection::SandboxState;
 pub use tools::ToolInfo;

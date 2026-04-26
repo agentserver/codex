@@ -20,9 +20,6 @@ use crate::apps::write_cached_codex_apps_tools_if_needed;
 use crate::elicitation::ElicitationRequestManager;
 use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
 use crate::mcp::ToolPluginProvenance;
-use crate::mcp_connection::DEFAULT_STARTUP_TIMEOUT;
-use crate::mcp_connection::DEFAULT_TOOL_TIMEOUT;
-use crate::mcp_connection::MCP_SANDBOX_STATE_META_CAPABILITY;
 use crate::mcp_connection::McpRuntimeEnvironment;
 use crate::mcp_connection::emit_duration;
 use crate::tools::ToolFilter;
@@ -59,6 +56,12 @@ use tokio_util::sync::CancellationToken;
 pub(crate) const MCP_TOOLS_LIST_DURATION_METRIC: &str = "codex.mcp.tools.list.duration_ms";
 pub(crate) const MCP_TOOLS_FETCH_UNCACHED_DURATION_METRIC: &str =
     "codex.mcp.tools.fetch_uncached.duration_ms";
+pub(crate) const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const DEFAULT_TOOL_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// MCP server capability indicating that Codex should include [`SandboxState`]
+/// in tool-call request `_meta` under this key.
+pub const MCP_SANDBOX_STATE_META_CAPABILITY: &str = "codex/sandbox-state-meta";
 
 #[derive(Clone)]
 pub(crate) struct ManagedClient {

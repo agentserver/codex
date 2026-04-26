@@ -13,16 +13,6 @@ use codex_protocol::protocol::SandboxPolicy;
 use serde::Deserialize;
 use serde::Serialize;
 
-/// Default timeout for initializing MCP server & initially listing tools.
-pub(crate) const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Default timeout for individual tool calls.
-pub(crate) const DEFAULT_TOOL_TIMEOUT: Duration = Duration::from_secs(120);
-
-/// MCP server capability indicating that Codex should include [`SandboxState`]
-/// in tool-call request `_meta` under this key.
-pub const MCP_SANDBOX_STATE_META_CAPABILITY: &str = "codex/sandbox-state-meta";
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SandboxState {

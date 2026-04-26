@@ -1899,6 +1899,7 @@ async fn try_run_sampling_request(
         FuturesOrdered::new();
     let mut needs_follow_up = false;
     let mut last_agent_message: Option<String> = None;
+    let mut should_continue_sampling_assistant = false;
     let mut active_item: Option<TurnItem> = None;
     let mut active_tool_argument_diff_consumer: Option<(
         String,
@@ -2005,6 +2006,13 @@ async fn try_run_sampling_request(
                     | ResponseItem::Compaction { .. }
                     | ResponseItem::Other => false,
                 };
+                let output_item_should_continue_sampling_assistant = match &item {
+                    ResponseItem::Reasoning { .. } => true,
+                    ResponseItem::Message { role, phase, .. } => {
+                        role == "assistant" && matches!(phase, Some(MessagePhase::Commentary))
+                    }
+                    _ => false,
+                };
 
                 let output_result =
                     match handle_output_item_done(&mut ctx, item, previously_active_item)
@@ -2021,6 +2029,7 @@ async fn try_run_sampling_request(
                     last_agent_message = Some(agent_message);
                 }
                 needs_follow_up |= output_result.needs_follow_up;
+                should_continue_sampling_assistant = output_item_should_continue_sampling_assistant;
                 // todo: remove before stabilizing multi-agent v2
                 if preempt_for_mailbox_mail && sess.mailbox_rx.lock().await.has_pending() {
                     break Ok(SamplingRequestResult {
@@ -2145,7 +2154,7 @@ async fn try_run_sampling_request(
                 should_emit_turn_diff = true;
 
                 break Ok(SamplingRequestResult {
-                    needs_follow_up,
+                    needs_follow_up: needs_follow_up || should_continue_sampling_assistant,
                     last_agent_message,
                 });
             }

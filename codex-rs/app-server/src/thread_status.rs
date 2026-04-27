@@ -723,7 +723,6 @@ mod tests {
         let manager = ThreadWatchManager::new_with_outgoing(Arc::new(OutgoingMessageSender::new(
             outgoing_tx,
             codex_analytics::AnalyticsEventsClient::disabled(),
-            /*general_analytics_enabled*/ false,
         )));
 
         manager
@@ -767,7 +766,6 @@ mod tests {
         let manager = ThreadWatchManager::new_with_outgoing(Arc::new(OutgoingMessageSender::new(
             outgoing_tx,
             codex_analytics::AnalyticsEventsClient::disabled(),
-            /*general_analytics_enabled*/ false,
         )));
 
         manager

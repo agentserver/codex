@@ -1447,6 +1447,21 @@
       ],
       "type": "object"
     },
+    "HooksConfigWriteParams": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "key": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "enabled",
+        "key"
+      ],
+      "type": "object"
+    },
     "HooksListParams": {
       "properties": {
         "cwds": {
@@ -5370,6 +5385,30 @@
         "params"
       ],
       "title": "Skills/config/writeRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "hooks/config/write"
+          ],
+          "title": "Hooks/config/writeRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/HooksConfigWriteParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Hooks/config/writeRequest",
       "type": "object"
     },
     {

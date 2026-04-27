@@ -76,6 +76,8 @@ use codex_app_server_protocol::GetConversationSummaryResponse;
 use codex_app_server_protocol::GitDiffToRemoteResponse;
 use codex_app_server_protocol::GitInfo as ApiGitInfo;
 use codex_app_server_protocol::HookMetadata;
+use codex_app_server_protocol::HooksConfigWriteParams;
+use codex_app_server_protocol::HooksConfigWriteResponse;
 use codex_app_server_protocol::HooksListParams;
 use codex_app_server_protocol::HooksListResponse;
 use codex_app_server_protocol::JSONRPCErrorError;
@@ -1075,6 +1077,10 @@ impl CodexMessageProcessor {
             }
             ClientRequest::SkillsConfigWrite { request_id, params } => {
                 self.skills_config_write(to_connection_request_id(request_id), params)
+                    .await;
+            }
+            ClientRequest::HooksConfigWrite { request_id, params } => {
+                self.hooks_config_write(to_connection_request_id(request_id), params)
                     .await;
             }
             ClientRequest::PluginInstall { request_id, params } => {
@@ -7172,6 +7178,51 @@ impl CodexMessageProcessor {
         }
     }
 
+    /// Handle `hooks/config/write` by updating user-level hook enablement.
+    async fn hooks_config_write(
+        &self,
+        request_id: ConnectionRequestId,
+        params: HooksConfigWriteParams,
+    ) {
+        let HooksConfigWriteParams { key, enabled } = params;
+        if key.trim().is_empty() {
+            let error = JSONRPCErrorError {
+                code: INVALID_PARAMS_ERROR_CODE,
+                message: "hooks/config/write requires a non-empty key".to_string(),
+                data: None,
+            };
+            self.outgoing.send_error(request_id, error).await;
+            return;
+        }
+
+        let result = ConfigEditsBuilder::new(&self.config.codex_home)
+            .with_edits(vec![ConfigEdit::SetHookConfig { key, enabled }])
+            .apply()
+            .await;
+
+        match result {
+            Ok(()) => {
+                self.clear_plugin_related_caches();
+                self.outgoing
+                    .send_response(
+                        request_id,
+                        HooksConfigWriteResponse {
+                            effective_enabled: enabled,
+                        },
+                    )
+                    .await;
+            }
+            Err(err) => {
+                let error = JSONRPCErrorError {
+                    code: INTERNAL_ERROR_CODE,
+                    message: format!("failed to update hook settings: {err}"),
+                    data: None,
+                };
+                self.outgoing.send_error(request_id, error).await;
+            }
+        }
+    }
+
     async fn turn_start(
         &self,
         request_id: ConnectionRequestId,
@@ -9462,6 +9513,7 @@ fn hooks_to_info(hooks: &[codex_core::hooks::HookListEntry]) -> Vec<HookMetadata
     hooks
         .iter()
         .map(|hook| HookMetadata {
+            key: hook.key.clone(),
             event_name: hook.event_name.into(),
             handler_type: hook.handler_type.into(),
             matcher: hook.matcher.clone(),
@@ -9473,6 +9525,7 @@ fn hooks_to_info(hooks: &[codex_core::hooks::HookListEntry]) -> Vec<HookMetadata
             plugin_id: hook.plugin_id.clone(),
             source_relative_path: hook.source_relative_path.clone(),
             display_order: hook.display_order,
+            enabled: hook.enabled,
         })
         .collect()
 }

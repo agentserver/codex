@@ -444,6 +444,10 @@ client_request_definitions! {
         params: v2::SkillsConfigWriteParams,
         response: v2::SkillsConfigWriteResponse,
     },
+    HooksConfigWrite => "hooks/config/write" {
+        params: v2::HooksConfigWriteParams,
+        response: v2::HooksConfigWriteResponse,
+    },
     PluginInstall => "plugin/install" {
         params: v2::PluginInstallParams,
         response: v2::PluginInstallResponse,

@@ -155,6 +155,116 @@ with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
 }
 
 #[test]
+fn user_disablement_filters_non_managed_hooks_but_not_managed_hooks() {
+    let temp = tempdir().expect("create temp dir");
+    let managed_dir =
+        AbsolutePathBuf::try_from(temp.path().join("managed-hooks")).expect("absolute path");
+    fs::create_dir_all(managed_dir.as_path()).expect("create managed hooks dir");
+    let managed_hooks = managed_hooks_for_current_platform(
+        managed_dir.clone(),
+        HookEventsToml {
+            pre_tool_use: vec![MatcherGroup {
+                matcher: Some("^Bash$".to_string()),
+                hooks: vec![HookHandlerConfig::Command {
+                    command: "python3 /tmp/managed.py".to_string(),
+                    timeout_sec: Some(10),
+                    r#async: false,
+                    status_message: Some("checking".to_string()),
+                }],
+            }],
+            ..Default::default()
+        },
+    );
+    let config_path =
+        AbsolutePathBuf::try_from(temp.path().join("config.toml")).expect("absolute path");
+    let managed_disabled_key = format!("path:{}:pre_tool_use:0:0", managed_dir.display());
+    let user_disabled_key = format!("path:{}:pre_tool_use:0:0", config_path.display());
+    let mut user_config = TomlValue::Table(Default::default());
+    let TomlValue::Table(user_config_entries) = &mut user_config else {
+        unreachable!("config TOML root should be a table");
+    };
+    let mut hooks = TomlValue::Table(Default::default());
+    let TomlValue::Table(hooks_entries) = &mut hooks else {
+        unreachable!("hooks should be a table");
+    };
+    let mut managed_config = TomlValue::Table(Default::default());
+    let TomlValue::Table(managed_config_entries) = &mut managed_config else {
+        unreachable!("hook config should be a table");
+    };
+    managed_config_entries.insert("key".to_string(), TomlValue::String(managed_disabled_key));
+    managed_config_entries.insert("enabled".to_string(), TomlValue::Boolean(false));
+    let mut user_hook_config = TomlValue::Table(Default::default());
+    let TomlValue::Table(user_hook_config_entries) = &mut user_hook_config else {
+        unreachable!("hook config should be a table");
+    };
+    user_hook_config_entries.insert("key".to_string(), TomlValue::String(user_disabled_key));
+    user_hook_config_entries.insert("enabled".to_string(), TomlValue::Boolean(false));
+    hooks_entries.insert(
+        "config".to_string(),
+        TomlValue::Array(vec![managed_config, user_hook_config]),
+    );
+    let mut user_hook_group = TomlValue::Table(Default::default());
+    let TomlValue::Table(user_hook_group_entries) = &mut user_hook_group else {
+        unreachable!("user hook group should be a table");
+    };
+    user_hook_group_entries.insert(
+        "hooks".to_string(),
+        TomlValue::Array(vec![TomlValue::Table(Default::default())]),
+    );
+    let Some(TomlValue::Array(user_hooks)) = user_hook_group_entries.get_mut("hooks") else {
+        unreachable!("user hooks should be an array");
+    };
+    let Some(TomlValue::Table(user_handler_entries)) = user_hooks.first_mut() else {
+        unreachable!("user hook handler should be a table");
+    };
+    user_handler_entries.insert("type".to_string(), TomlValue::String("command".to_string()));
+    user_handler_entries.insert(
+        "command".to_string(),
+        TomlValue::String("python3 /tmp/user.py".to_string()),
+    );
+    hooks_entries.insert(
+        "PreToolUse".to_string(),
+        TomlValue::Array(vec![user_hook_group]),
+    );
+    user_config_entries.insert("hooks".to_string(), hooks);
+    let config_layer_stack = ConfigLayerStack::new(
+        vec![ConfigLayerEntry::new(
+            ConfigLayerSource::User { file: config_path },
+            user_config,
+        )],
+        ConfigRequirements {
+            managed_hooks: Some(ConstrainedWithSource::new(
+                Constrained::allow_any(managed_hooks.clone()),
+                Some(RequirementSource::CloudRequirements),
+            )),
+            ..ConfigRequirements::default()
+        },
+        ConfigRequirementsToml {
+            hooks: Some(managed_hooks),
+            ..ConfigRequirementsToml::default()
+        },
+    )
+    .expect("config layer stack");
+
+    let engine = ClaudeHooksEngine::new(
+        /*enabled*/ true,
+        Some(&config_layer_stack),
+        Vec::new(),
+        CommandShell {
+            program: String::new(),
+            args: Vec::new(),
+        },
+    );
+
+    assert_eq!(engine.handlers.len(), 1);
+    assert!(engine.handlers[0].is_managed);
+    let discovered = super::discovery::discover_handlers(Some(&config_layer_stack), Vec::new());
+    assert_eq!(discovered.hook_entries.len(), 2);
+    assert_eq!(discovered.hook_entries[0].enabled, true);
+    assert_eq!(discovered.hook_entries[1].enabled, false);
+}
+
+#[test]
 fn requirements_managed_hooks_warn_when_managed_dir_is_missing() {
     let temp = tempdir().expect("create temp dir");
     let missing_dir = temp.path().join("missing-managed-hooks");

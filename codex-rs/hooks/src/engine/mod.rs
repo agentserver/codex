@@ -71,6 +71,7 @@ impl ConfiguredHandler {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookListEntry {
+    pub key: String,
     pub event_name: HookEventName,
     pub handler_type: HookHandlerType,
     pub matcher: Option<String>,
@@ -82,6 +83,7 @@ pub struct HookListEntry {
     pub plugin_id: Option<String>,
     pub source_relative_path: Option<String>,
     pub display_order: i64,
+    pub enabled: bool,
 }
 
 #[derive(Clone)]

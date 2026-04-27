@@ -6,12 +6,11 @@ expression: "render_lines(&view, 112)"
   PreToolUse hooks                                                                                              
   Turn hooks on or off. Your changes are saved automatically.                                                   
                                                                                                                 
-  [x] Admin managed Hook 1 - [Config]                                                                           
-  [x] Admin managed Hook 2 - [Config]                                                                           
+  [x] Admin managed Hook 1 - System Config                                                                      
+  [x] Admin managed Hook 2 - System Config                                                                      
                                                                                                                 
   Event     PreToolUse                                                                                          
   Matcher   Bash                                                                                                
-  Source    [Config] /tmp/hooks.json                                                                            
   File      /tmp/hooks.json                                                                                     
   Command   /enterprise/hooks/pre-tool-use-2.sh                                                                 
   Timeout   30s                                                                                                 

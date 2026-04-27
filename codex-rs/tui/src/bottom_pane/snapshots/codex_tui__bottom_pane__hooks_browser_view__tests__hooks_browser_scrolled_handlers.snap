@@ -6,18 +6,17 @@ expression: "render_lines(&view, 112)"
   PreToolUse hooks                                                                                              
   Turn hooks on or off. Your changes are saved automatically.                                                   
                                                                                                                 
-  [x] Hook 2 - [Config]                                                                                         
-  [x] Hook 3 - [Config]                                                                                         
-  [x] Hook 4 - [Config]                                                                                         
-  [x] Hook 5 - [Config]                                                                                         
-  [x] Hook 6 - [Config]                                                                                         
-  [x] Hook 7 - [Config]                                                                                         
-  [x] Hook 8 - [Config]                                                                                         
-  [x] Hook 9 - [Config]                                                                                         
+  [x] Hook 2 - User Config                                                                                      
+  [x] Hook 3 - User Config                                                                                      
+  [x] Hook 4 - User Config                                                                                      
+  [x] Hook 5 - User Config                                                                                      
+  [x] Hook 6 - User Config                                                                                      
+  [x] Hook 7 - User Config                                                                                      
+  [x] Hook 8 - User Config                                                                                      
+  [x] Hook 9 - User Config                                                                                      
                                                                                                                 
   Event     PreToolUse                                                                                          
   Matcher   Bash                                                                                                
-  Source    [Config] /tmp/hooks.json                                                                            
   File      /tmp/hooks.json                                                                                     
   Command   /tmp/hook-8.sh                                                                                      
   Timeout   30s                                                                                                 

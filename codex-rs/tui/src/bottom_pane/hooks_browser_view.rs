@@ -274,7 +274,6 @@ impl HooksBrowserView {
         if let Some(matcher) = hook.matcher.as_deref() {
             lines.extend(detail_wrapped_lines("Matcher", matcher, width));
         }
-        lines.extend(detail_wrapped_lines("Source", &detail_source(hook), width));
         lines.extend(detail_wrapped_lines(
             "File",
             &hook.source_path.display().to_string(),
@@ -525,17 +524,21 @@ fn summary_source(hook: &HookMetadata, idx: usize) -> String {
             "{hook_label} - {}",
             hook.plugin_id.as_deref().unwrap_or("unknown plugin")
         ),
-        _ => format!("{hook_label} - [Config]"),
+        _ => format!("{hook_label} - {}", config_source_label(hook.source)),
     }
 }
 
-fn detail_source(hook: &HookMetadata) -> String {
-    match hook.source {
-        HookSource::Plugin => format!(
-            "[Plugin] {}",
-            hook.plugin_id.as_deref().unwrap_or("unknown plugin")
-        ),
-        _ => format!("[Config] {}", hook.source_path.display()),
+fn config_source_label(source: HookSource) -> &'static str {
+    match source {
+        HookSource::System => "System Config",
+        HookSource::User => "User Config",
+        HookSource::Project => "Project Config",
+        HookSource::Mdm => "MDM",
+        HookSource::SessionFlags => "Session Flags",
+        HookSource::Plugin => "Plugin",
+        HookSource::LegacyManagedConfigFile => "Legacy Managed Config",
+        HookSource::LegacyManagedConfigMdm => "Legacy Managed MDM",
+        HookSource::Unknown => "Unknown Source",
     }
 }
 

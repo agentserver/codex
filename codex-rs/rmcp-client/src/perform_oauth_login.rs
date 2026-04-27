@@ -7,9 +7,9 @@ use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
 use anyhow::bail;
-use reqwest::ClientBuilder;
+use codex_exec_server::HttpClient;
+use codex_exec_server::ReqwestHttpClient;
 use reqwest::Url;
-use rmcp::transport::auth::OAuthState;
 use tiny_http::Response;
 use tiny_http::Server;
 use tokio::sync::oneshot;
@@ -18,10 +18,10 @@ use urlencoding::decode;
 
 use crate::StoredOAuthTokens;
 use crate::WrappedOAuthTokenResponse;
+use crate::mcp_oauth_http::OAuthAuthorizationSession;
+use crate::mcp_oauth_http::OAuthHttpClient;
 use crate::oauth::compute_expires_at_millis;
 use crate::save_oauth_tokens;
-use crate::utils::apply_default_headers;
-use crate::utils::build_default_headers;
 use codex_config::types::OAuthCredentialsStoreMode;
 
 struct OauthHeaders {
@@ -81,6 +81,34 @@ pub async fn perform_oauth_login(
     callback_port: Option<u16>,
     callback_url: Option<&str>,
 ) -> Result<()> {
+    perform_oauth_login_with_client(
+        server_name,
+        server_url,
+        store_mode,
+        http_headers,
+        env_http_headers,
+        scopes,
+        oauth_resource,
+        callback_port,
+        callback_url,
+        Arc::new(ReqwestHttpClient),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn perform_oauth_login_with_client(
+    server_name: &str,
+    server_url: &str,
+    store_mode: OAuthCredentialsStoreMode,
+    http_headers: Option<HashMap<String, String>>,
+    env_http_headers: Option<HashMap<String, String>>,
+    scopes: &[String],
+    oauth_resource: Option<&str>,
+    callback_port: Option<u16>,
+    callback_url: Option<&str>,
+    http_client: Arc<dyn HttpClient>,
+) -> Result<()> {
     perform_oauth_login_with_browser_output(
         server_name,
         server_url,
@@ -92,6 +120,7 @@ pub async fn perform_oauth_login(
         callback_port,
         callback_url,
         /*emit_browser_url*/ true,
+        http_client,
     )
     .await
 }
@@ -108,6 +137,34 @@ pub async fn perform_oauth_login_silent(
     callback_port: Option<u16>,
     callback_url: Option<&str>,
 ) -> Result<()> {
+    perform_oauth_login_silent_with_client(
+        server_name,
+        server_url,
+        store_mode,
+        http_headers,
+        env_http_headers,
+        scopes,
+        oauth_resource,
+        callback_port,
+        callback_url,
+        Arc::new(ReqwestHttpClient),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn perform_oauth_login_silent_with_client(
+    server_name: &str,
+    server_url: &str,
+    store_mode: OAuthCredentialsStoreMode,
+    http_headers: Option<HashMap<String, String>>,
+    env_http_headers: Option<HashMap<String, String>>,
+    scopes: &[String],
+    oauth_resource: Option<&str>,
+    callback_port: Option<u16>,
+    callback_url: Option<&str>,
+    http_client: Arc<dyn HttpClient>,
+) -> Result<()> {
     perform_oauth_login_with_browser_output(
         server_name,
         server_url,
@@ -119,6 +176,7 @@ pub async fn perform_oauth_login_silent(
         callback_port,
         callback_url,
         /*emit_browser_url*/ false,
+        http_client,
     )
     .await
 }
@@ -135,6 +193,7 @@ async fn perform_oauth_login_with_browser_output(
     callback_port: Option<u16>,
     callback_url: Option<&str>,
     emit_browser_url: bool,
+    http_client: Arc<dyn HttpClient>,
 ) -> Result<()> {
     let headers = OauthHeaders {
         http_headers,
@@ -151,6 +210,7 @@ async fn perform_oauth_login_with_browser_output(
         callback_port,
         callback_url,
         /*timeout_secs*/ None,
+        http_client,
     )
     .await?
     .finish(emit_browser_url)
@@ -170,6 +230,36 @@ pub async fn perform_oauth_login_return_url(
     callback_port: Option<u16>,
     callback_url: Option<&str>,
 ) -> Result<OauthLoginHandle> {
+    perform_oauth_login_return_url_with_client(
+        server_name,
+        server_url,
+        store_mode,
+        http_headers,
+        env_http_headers,
+        scopes,
+        oauth_resource,
+        timeout_secs,
+        callback_port,
+        callback_url,
+        Arc::new(ReqwestHttpClient),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn perform_oauth_login_return_url_with_client(
+    server_name: &str,
+    server_url: &str,
+    store_mode: OAuthCredentialsStoreMode,
+    http_headers: Option<HashMap<String, String>>,
+    env_http_headers: Option<HashMap<String, String>>,
+    scopes: &[String],
+    oauth_resource: Option<&str>,
+    timeout_secs: Option<i64>,
+    callback_port: Option<u16>,
+    callback_url: Option<&str>,
+    http_client: Arc<dyn HttpClient>,
+) -> Result<OauthLoginHandle> {
     let headers = OauthHeaders {
         http_headers,
         env_http_headers,
@@ -185,6 +275,7 @@ pub async fn perform_oauth_login_return_url(
         callback_port,
         callback_url,
         timeout_secs,
+        http_client,
     )
     .await?;
 
@@ -329,7 +420,8 @@ impl OauthLoginHandle {
 
 struct OauthLoginFlow {
     auth_url: String,
-    oauth_state: OAuthState,
+    oauth_http: OAuthHttpClient,
+    oauth_session: Option<OAuthAuthorizationSession>,
     rx: oneshot::Receiver<CallbackResult>,
     guard: CallbackServerGuard,
     server_name: String,
@@ -412,6 +504,7 @@ impl OauthLoginFlow {
         callback_port: Option<u16>,
         callback_url: Option<&str>,
         timeout_secs: Option<i64>,
+        http_client: Arc<dyn HttpClient>,
     ) -> Result<Self> {
         const DEFAULT_OAUTH_TIMEOUT_SECS: i64 = 300;
 
@@ -437,25 +530,19 @@ impl OauthLoginFlow {
             http_headers,
             env_http_headers,
         } = headers;
-        let default_headers = build_default_headers(http_headers, env_http_headers)?;
-        let http_client = apply_default_headers(ClientBuilder::new(), &default_headers).build()?;
-
-        let mut oauth_state = OAuthState::new(server_url, Some(http_client)).await?;
-        let scope_refs: Vec<&str> = scopes.iter().map(String::as_str).collect();
-        oauth_state
-            .start_authorization(&scope_refs, &redirect_uri, Some("Codex"))
+        let oauth_http = OAuthHttpClient::new(http_client, http_headers, env_http_headers)?;
+        let oauth_session = oauth_http
+            .start_authorization(server_url, scopes, &redirect_uri, "Codex")
             .await?;
-        let auth_url = append_query_param(
-            &oauth_state.get_authorization_url().await?,
-            "resource",
-            oauth_resource,
-        );
+        let auth_url =
+            append_query_param(&oauth_session.authorization_url, "resource", oauth_resource);
         let timeout_secs = timeout_secs.unwrap_or(DEFAULT_OAUTH_TIMEOUT_SECS).max(1);
         let timeout = Duration::from_secs(timeout_secs as u64);
 
         Ok(Self {
             auth_url,
-            oauth_state,
+            oauth_http,
+            oauth_session: Some(oauth_session),
             rx,
             guard,
             server_name: server_name.to_string(),
@@ -503,18 +590,15 @@ impl OauthLoginFlow {
                 CallbackResult::Error(error) => return Err(anyhow!(error)),
             };
 
-            self.oauth_state
-                .handle_callback(&code, &csrf_state)
+            let oauth_session = self
+                .oauth_session
+                .take()
+                .ok_or_else(|| anyhow!("OAuth login flow was already completed"))?;
+            let (client_id, credentials) = self
+                .oauth_http
+                .exchange_code(oauth_session, &code, &csrf_state)
                 .await
                 .context("failed to handle OAuth callback")?;
-
-            let (client_id, credentials_opt) = self
-                .oauth_state
-                .get_credentials()
-                .await
-                .context("failed to retrieve OAuth credentials")?;
-            let credentials = credentials_opt
-                .ok_or_else(|| anyhow!("OAuth provider did not return credentials"))?;
 
             let expires_at = compute_expires_at_millis(&credentials);
             let stored = StoredOAuthTokens {

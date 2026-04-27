@@ -20,6 +20,7 @@ use anyhow::Context;
 use anyhow::Error;
 use anyhow::Result;
 use codex_config::types::OAuthCredentialsStoreMode;
+use codex_exec_server::HttpClient;
 use oauth2::AccessToken;
 use oauth2::EmptyExtraTokenFields;
 use oauth2::RefreshToken;
@@ -45,9 +46,9 @@ use tracing::warn;
 
 use codex_keyring_store::DefaultKeyringStore;
 use codex_keyring_store::KeyringStore;
-use rmcp::transport::auth::AuthorizationManager;
 use tokio::sync::Mutex;
 
+use crate::mcp_oauth_http::OAuthHttpClient;
 use codex_utils_home_dir::find_codex_home;
 
 const KEYRING_SERVICE: &str = "Codex MCP Credentials";
@@ -256,8 +257,7 @@ pub(crate) struct OAuthPersistor {
 
 struct OAuthPersistorInner {
     server_name: String,
-    url: String,
-    authorization_manager: Arc<Mutex<AuthorizationManager>>,
+    oauth_http: OAuthHttpClient,
     store_mode: OAuthCredentialsStoreMode,
     last_credentials: Mutex<Option<StoredOAuthTokens>>,
 }
@@ -265,106 +265,81 @@ struct OAuthPersistorInner {
 impl OAuthPersistor {
     pub(crate) fn new(
         server_name: String,
-        url: String,
-        authorization_manager: Arc<Mutex<AuthorizationManager>>,
+        oauth_http: OAuthHttpClient,
         store_mode: OAuthCredentialsStoreMode,
         initial_credentials: Option<StoredOAuthTokens>,
     ) -> Self {
         Self {
             inner: Arc::new(OAuthPersistorInner {
                 server_name,
-                url,
-                authorization_manager,
+                oauth_http,
                 store_mode,
                 last_credentials: Mutex::new(initial_credentials),
             }),
         }
     }
 
+    pub(crate) fn with_http_client(
+        server_name: String,
+        http_client: Arc<dyn HttpClient>,
+        default_headers: reqwest::header::HeaderMap,
+        store_mode: OAuthCredentialsStoreMode,
+        initial_credentials: Option<StoredOAuthTokens>,
+    ) -> Self {
+        Self::new(
+            server_name,
+            OAuthHttpClient::from_default_headers(http_client, default_headers),
+            store_mode,
+            initial_credentials,
+        )
+    }
+
     /// Persists the latest stored credentials if they have changed.
-    /// Deletes the credentials if they are no longer present.
-    #[expect(
-        clippy::await_holding_invalid_type,
-        reason = "AuthorizationManager async access must be serialized through its mutex"
-    )]
     pub(crate) async fn persist_if_needed(&self) -> Result<()> {
-        let (client_id, maybe_credentials) = {
-            let manager = self.inner.authorization_manager.clone();
-            let guard = manager.lock().await;
-            guard.get_credentials().await
-        }?;
-
-        match maybe_credentials {
-            Some(credentials) => {
-                let mut last_credentials = self.inner.last_credentials.lock().await;
-                let new_token_response = WrappedOAuthTokenResponse(credentials.clone());
-                let same_token = last_credentials
-                    .as_ref()
-                    .map(|prev| prev.token_response == new_token_response)
-                    .unwrap_or(false);
-                let expires_at = if same_token {
-                    last_credentials.as_ref().and_then(|prev| prev.expires_at)
-                } else {
-                    compute_expires_at_millis(&credentials)
-                };
-                let stored = StoredOAuthTokens {
-                    server_name: self.inner.server_name.clone(),
-                    url: self.inner.url.clone(),
-                    client_id,
-                    token_response: new_token_response,
-                    expires_at,
-                };
-                if last_credentials.as_ref() != Some(&stored) {
-                    save_oauth_tokens(&self.inner.server_name, &stored, self.inner.store_mode)?;
-                    *last_credentials = Some(stored);
-                }
-            }
-            None => {
-                let mut last_serialized = self.inner.last_credentials.lock().await;
-                if last_serialized.take().is_some()
-                    && let Err(error) = delete_oauth_tokens(
-                        &self.inner.server_name,
-                        &self.inner.url,
-                        self.inner.store_mode,
-                    )
-                {
-                    warn!(
-                        "failed to remove OAuth tokens for server {}: {error}",
-                        self.inner.server_name
-                    );
-                }
-            }
+        let last_credentials = self.inner.last_credentials.lock().await;
+        if let Some(stored) = last_credentials.as_ref() {
+            save_oauth_tokens(&self.inner.server_name, stored, self.inner.store_mode)?;
         }
-
         Ok(())
     }
 
-    #[expect(
-        clippy::await_holding_invalid_type,
-        reason = "AuthorizationManager async access must be serialized through its mutex"
-    )]
     pub(crate) async fn refresh_if_needed(&self) -> Result<()> {
-        let expires_at = {
+        let tokens = {
             let guard = self.inner.last_credentials.lock().await;
-            guard.as_ref().and_then(|tokens| tokens.expires_at)
+            let Some(tokens) = guard.as_ref() else {
+                return Ok(());
+            };
+            if !token_needs_refresh(tokens.expires_at) {
+                return Ok(());
+            }
+            tokens.clone()
         };
 
-        if !token_needs_refresh(expires_at) {
-            return Ok(());
-        }
-
-        {
-            let manager = self.inner.authorization_manager.clone();
-            let guard = manager.lock().await;
-            guard.refresh_token().await.with_context(|| {
+        if let Some(refreshed) = self
+            .inner
+            .oauth_http
+            .refresh_token(&tokens)
+            .await
+            .with_context(|| {
                 format!(
                     "failed to refresh OAuth tokens for server {}",
                     self.inner.server_name
                 )
-            })?;
+            })?
+        {
+            let mut guard = self.inner.last_credentials.lock().await;
+            *guard = Some(refreshed);
         }
 
         self.persist_if_needed().await
+    }
+
+    pub(crate) async fn access_token(&self) -> Result<Option<String>> {
+        self.refresh_if_needed().await?;
+        let guard = self.inner.last_credentials.lock().await;
+        Ok(guard
+            .as_ref()
+            .map(|tokens| tokens.token_response.0.access_token().secret().to_string()))
     }
 }
 

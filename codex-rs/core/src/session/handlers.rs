@@ -32,6 +32,7 @@ use crate::tasks::UndoTask;
 use crate::tasks::UserShellCommandMode;
 use crate::tasks::UserShellCommandTask;
 use crate::tasks::execute_user_shell_command;
+use codex_mcp::McpRuntimeEnvironment;
 use codex_mcp::collect_mcp_snapshot_from_manager;
 use codex_mcp::compute_auth_statuses;
 use codex_protocol::models::ContentItem;
@@ -538,12 +539,18 @@ pub async fn list_mcp_tools(sess: &Session, config: &Arc<Config>, sub_id: String
         .mcp_manager
         .effective_servers(config, auth.as_ref())
         .await;
+    let environment = sess
+        .services
+        .environment_manager
+        .default_environment()
+        .unwrap_or_else(|| sess.services.environment_manager.local_environment());
     let snapshot = collect_mcp_snapshot_from_manager(
         &mcp_connection_manager,
         compute_auth_statuses(
             mcp_servers.iter(),
             config.mcp_oauth_credentials_store_mode,
             auth.as_ref(),
+            McpRuntimeEnvironment::new(environment, config.cwd.to_path_buf()),
         )
         .await,
     )

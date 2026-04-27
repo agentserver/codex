@@ -29,6 +29,7 @@ pub use mcp::McpOAuthScopesSource;
 pub use mcp::ResolvedMcpOAuthScopes;
 pub use mcp::compute_auth_statuses;
 pub use mcp::discover_supported_scopes;
+pub use mcp::http_client_for_server;
 pub use mcp::oauth_login_support;
 pub use mcp::resolve_oauth_scopes;
 pub use mcp::should_retry_without_scopes;

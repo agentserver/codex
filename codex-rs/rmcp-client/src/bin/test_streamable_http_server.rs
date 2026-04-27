@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
+use axum::body::Bytes;
 use axum::extract::Json;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -122,6 +123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             SESSION_POST_FAILURE_CONTROL_PATH,
             post(arm_session_post_failure),
         )
+        .route("/oauth/token", post(oauth_token))
         .route(
             "/.well-known/oauth-authorization-server/mcp",
             get({
@@ -139,6 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             serde_json::to_vec(&json!({
                                 "authorization_endpoint": format!("{metadata_base}/oauth/authorize"),
                                 "token_endpoint": format!("{metadata_base}/oauth/token"),
+                                "registration_endpoint": format!("{metadata_base}/oauth/register"),
                                 "scopes_supported": [""],
                             })).expect("failed to serialize metadata"),
                         ))
@@ -386,7 +389,8 @@ async fn require_bearer(
     request: Request<Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    if request.uri().path().contains("/.well-known/") {
+    let path = request.uri().path();
+    if path.contains("/.well-known/") || path.starts_with("/oauth/") {
         return Ok(next.run(request).await);
     }
     if request
@@ -398,6 +402,33 @@ async fn require_bearer(
     } else {
         Err(StatusCode::UNAUTHORIZED)
     }
+}
+
+async fn oauth_token(body: Bytes) -> Result<Response, StatusCode> {
+    let form = String::from_utf8(body.to_vec()).map_err(|_| StatusCode::BAD_REQUEST)?;
+    if !form.contains("grant_type=refresh_token") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let access_token =
+        std::env::var("MCP_OAUTH_ACCESS_TOKEN").unwrap_or_else(|_| "refreshed-oauth-token".into());
+    let refresh_token =
+        std::env::var("MCP_OAUTH_REFRESH_TOKEN").unwrap_or_else(|_| "refresh-token".into());
+
+    #[expect(clippy::expect_used)]
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&json!({
+                "access_token": access_token,
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "refresh_token": refresh_token,
+            }))
+            .expect("failed to serialize token response"),
+        ))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn arm_session_post_failure(

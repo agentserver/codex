@@ -1,30 +1,18 @@
 use std::collections::HashMap;
-use std::time::Duration;
+use std::sync::Arc;
 
-use anyhow::Error;
 use anyhow::Result;
+use codex_exec_server::HttpClient;
+use codex_exec_server::ReqwestHttpClient;
 use codex_protocol::protocol::McpAuthStatus;
-use reqwest::Client;
-use reqwest::StatusCode;
-use reqwest::Url;
 use reqwest::header::AUTHORIZATION;
-use reqwest::header::HeaderMap;
-use serde::Deserialize;
 use tracing::debug;
 
+use crate::mcp_oauth_http::OAuthHttpClient;
+use crate::mcp_oauth_http::StreamableHttpOAuthDiscovery;
 use crate::oauth::has_oauth_tokens;
-use crate::utils::apply_default_headers;
 use crate::utils::build_default_headers;
 use codex_config::types::OAuthCredentialsStoreMode;
-
-const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
-const OAUTH_DISCOVERY_HEADER: &str = "MCP-Protocol-Version";
-const OAUTH_DISCOVERY_VERSION: &str = "2024-11-05";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StreamableHttpOAuthDiscovery {
-    pub scopes_supported: Option<Vec<String>>,
-}
 
 /// Determine the authentication status for a streamable HTTP MCP server.
 pub async fn determine_streamable_http_auth_status(
@@ -35,11 +23,35 @@ pub async fn determine_streamable_http_auth_status(
     env_http_headers: Option<HashMap<String, String>>,
     store_mode: OAuthCredentialsStoreMode,
 ) -> Result<McpAuthStatus> {
+    determine_streamable_http_auth_status_with_client(
+        server_name,
+        url,
+        bearer_token_env_var,
+        http_headers,
+        env_http_headers,
+        store_mode,
+        Arc::new(ReqwestHttpClient),
+    )
+    .await
+}
+
+/// Determine the authentication status for a streamable HTTP MCP server using
+/// the caller-selected runtime HTTP client.
+#[allow(clippy::too_many_arguments)]
+pub async fn determine_streamable_http_auth_status_with_client(
+    server_name: &str,
+    url: &str,
+    bearer_token_env_var: Option<&str>,
+    http_headers: Option<HashMap<String, String>>,
+    env_http_headers: Option<HashMap<String, String>>,
+    store_mode: OAuthCredentialsStoreMode,
+    http_client: Arc<dyn HttpClient>,
+) -> Result<McpAuthStatus> {
     if bearer_token_env_var.is_some() {
         return Ok(McpAuthStatus::BearerToken);
     }
 
-    let default_headers = build_default_headers(http_headers, env_http_headers)?;
+    let default_headers = build_default_headers(http_headers.clone(), env_http_headers.clone())?;
     if default_headers.contains_key(AUTHORIZATION) {
         return Ok(McpAuthStatus::BearerToken);
     }
@@ -48,7 +60,8 @@ pub async fn determine_streamable_http_auth_status(
         return Ok(McpAuthStatus::OAuth);
     }
 
-    match discover_streamable_http_oauth_with_headers(url, &default_headers).await {
+    let oauth_http = OAuthHttpClient::from_default_headers(http_client, default_headers);
+    match oauth_http.discover(url).await {
         Ok(Some(_)) => Ok(McpAuthStatus::NotLoggedIn),
         Ok(None) => Ok(McpAuthStatus::Unsupported),
         Err(error) => {
@@ -74,121 +87,23 @@ pub async fn discover_streamable_http_oauth(
     http_headers: Option<HashMap<String, String>>,
     env_http_headers: Option<HashMap<String, String>>,
 ) -> Result<Option<StreamableHttpOAuthDiscovery>> {
-    let default_headers = build_default_headers(http_headers, env_http_headers)?;
-    discover_streamable_http_oauth_with_headers(url, &default_headers).await
+    discover_streamable_http_oauth_with_client(
+        url,
+        http_headers,
+        env_http_headers,
+        Arc::new(ReqwestHttpClient),
+    )
+    .await
 }
 
-async fn discover_streamable_http_oauth_with_headers(
+pub async fn discover_streamable_http_oauth_with_client(
     url: &str,
-    default_headers: &HeaderMap,
+    http_headers: Option<HashMap<String, String>>,
+    env_http_headers: Option<HashMap<String, String>>,
+    http_client: Arc<dyn HttpClient>,
 ) -> Result<Option<StreamableHttpOAuthDiscovery>> {
-    let base_url = Url::parse(url)?;
-
-    // Use no_proxy to avoid a bug in the system-configuration crate that
-    // can result in a panic. See #8912.
-    let builder = Client::builder().timeout(DISCOVERY_TIMEOUT).no_proxy();
-    let client = apply_default_headers(builder, default_headers).build()?;
-
-    let mut last_error: Option<Error> = None;
-    for candidate_path in discovery_paths(base_url.path()) {
-        let mut discovery_url = base_url.clone();
-        discovery_url.set_path(&candidate_path);
-
-        let response = match client
-            .get(discovery_url.clone())
-            .header(OAUTH_DISCOVERY_HEADER, OAUTH_DISCOVERY_VERSION)
-            .send()
-            .await
-        {
-            Ok(response) => response,
-            Err(err) => {
-                last_error = Some(err.into());
-                continue;
-            }
-        };
-
-        if response.status() != StatusCode::OK {
-            continue;
-        }
-
-        let metadata = match response.json::<OAuthDiscoveryMetadata>().await {
-            Ok(metadata) => metadata,
-            Err(err) => {
-                last_error = Some(err.into());
-                continue;
-            }
-        };
-
-        if metadata.authorization_endpoint.is_some() && metadata.token_endpoint.is_some() {
-            return Ok(Some(StreamableHttpOAuthDiscovery {
-                scopes_supported: normalize_scopes(metadata.scopes_supported),
-            }));
-        }
-    }
-
-    if let Some(err) = last_error {
-        debug!("OAuth discovery requests failed for {url}: {err:?}");
-    }
-
-    Ok(None)
-}
-
-#[derive(Debug, Deserialize)]
-struct OAuthDiscoveryMetadata {
-    #[serde(default)]
-    authorization_endpoint: Option<String>,
-    #[serde(default)]
-    token_endpoint: Option<String>,
-    #[serde(default)]
-    scopes_supported: Option<Vec<String>>,
-}
-
-fn normalize_scopes(scopes_supported: Option<Vec<String>>) -> Option<Vec<String>> {
-    let scopes_supported = scopes_supported?;
-
-    let mut normalized = Vec::new();
-    for scope in scopes_supported {
-        let scope = scope.trim();
-        if scope.is_empty() {
-            continue;
-        }
-        let scope = scope.to_string();
-        if !normalized.contains(&scope) {
-            normalized.push(scope);
-        }
-    }
-
-    if normalized.is_empty() {
-        None
-    } else {
-        Some(normalized)
-    }
-}
-
-/// Implements RFC 8414 section 3.1 for discovering well-known oauth endpoints.
-/// This is a requirement for MCP servers to support OAuth.
-/// https://datatracker.ietf.org/doc/html/rfc8414#section-3.1
-/// https://github.com/modelcontextprotocol/rust-sdk/blob/main/crates/rmcp/src/transport/auth.rs#L182
-fn discovery_paths(base_path: &str) -> Vec<String> {
-    let trimmed = base_path.trim_start_matches('/').trim_end_matches('/');
-    let canonical = "/.well-known/oauth-authorization-server".to_string();
-
-    if trimmed.is_empty() {
-        return vec![canonical];
-    }
-
-    let mut candidates = Vec::new();
-    let mut push_unique = |candidate: String| {
-        if !candidates.contains(&candidate) {
-            candidates.push(candidate);
-        }
-    };
-
-    push_unique(format!("{canonical}/{trimmed}"));
-    push_unique(format!("/{trimmed}/.well-known/oauth-authorization-server"));
-    push_unique(canonical);
-
-    candidates
+    let oauth_http = OAuthHttpClient::new(http_client, http_headers, env_http_headers)?;
+    oauth_http.discover(url).await
 }
 
 #[cfg(test)]

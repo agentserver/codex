@@ -35,6 +35,8 @@ use rmcp::transport::streamable_http_client::StreamableHttpPostResponse;
 use sse_stream::Sse;
 use sse_stream::SseStream;
 
+use crate::oauth::OAuthPersistor;
+
 const EVENT_STREAM_MIME_TYPE: &str = "text/event-stream";
 const JSON_MIME_TYPE: &str = "application/json";
 const HEADER_SESSION_ID: &str = "Mcp-Session-Id";
@@ -45,6 +47,7 @@ pub(crate) struct StreamableHttpClientAdapter {
     http_client: Arc<dyn HttpClient>,
     default_headers: HeaderMap,
     auth_provider: Option<SharedAuthProvider>,
+    oauth_persistor: Option<OAuthPersistor>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -55,6 +58,8 @@ pub(crate) enum StreamableHttpClientAdapterError {
     HttpRequest(#[from] ExecServerError),
     #[error("invalid HTTP header: {0}")]
     Header(String),
+    #[error("OAuth token error: {0}")]
+    Auth(String),
 }
 
 impl StreamableHttpClientAdapter {
@@ -62,11 +67,13 @@ impl StreamableHttpClientAdapter {
         http_client: Arc<dyn HttpClient>,
         default_headers: HeaderMap,
         auth_provider: Option<SharedAuthProvider>,
+        oauth_persistor: Option<OAuthPersistor>,
     ) -> Self {
         Self {
             http_client,
             default_headers,
             auth_provider,
+            oauth_persistor,
         }
     }
 }
@@ -82,7 +89,7 @@ impl StreamableHttpClient for StreamableHttpClientAdapter {
         auth_token: Option<String>,
     ) -> std::result::Result<StreamableHttpPostResponse, StreamableHttpError<Self::Error>> {
         let mut headers = self.default_headers.clone();
-        self.add_auth_headers(&mut headers);
+        self.add_auth_headers(&mut headers).await?;
         insert_header(
             &mut headers,
             ACCEPT,
@@ -179,7 +186,7 @@ impl StreamableHttpClient for StreamableHttpClientAdapter {
         auth_token: Option<String>,
     ) -> std::result::Result<(), StreamableHttpError<Self::Error>> {
         let mut headers = self.default_headers.clone();
-        self.add_auth_headers(&mut headers);
+        self.add_auth_headers(&mut headers).await?;
         if let Some(auth_token) = auth_token {
             insert_header(
                 &mut headers,
@@ -232,7 +239,7 @@ impl StreamableHttpClient for StreamableHttpClientAdapter {
         StreamableHttpError<Self::Error>,
     > {
         let mut headers = self.default_headers.clone();
-        self.add_auth_headers(&mut headers);
+        self.add_auth_headers(&mut headers).await?;
         insert_header(
             &mut headers,
             ACCEPT,
@@ -308,10 +315,27 @@ impl StreamableHttpClient for StreamableHttpClientAdapter {
 }
 
 impl StreamableHttpClientAdapter {
-    fn add_auth_headers(&self, headers: &mut HeaderMap) {
+    async fn add_auth_headers(
+        &self,
+        headers: &mut HeaderMap,
+    ) -> std::result::Result<(), StreamableHttpError<StreamableHttpClientAdapterError>> {
         if let Some(auth_provider) = &self.auth_provider {
             headers.extend(auth_provider.to_auth_headers());
         }
+        if !headers.contains_key(AUTHORIZATION)
+            && let Some(oauth_persistor) = &self.oauth_persistor
+            && let Some(access_token) = oauth_persistor.access_token().await.map_err(|err| {
+                StreamableHttpError::Client(StreamableHttpClientAdapterError::Auth(err.to_string()))
+            })?
+        {
+            insert_header(
+                headers,
+                AUTHORIZATION,
+                format!("Bearer {access_token}"),
+                StreamableHttpClientAdapterError::Header,
+            )?;
+        }
+        Ok(())
     }
 }
 

@@ -11,7 +11,7 @@ use codex_protocol::request_user_input::RequestUserInputArgs;
 use codex_protocol::request_user_input::RequestUserInputQuestion;
 use codex_protocol::request_user_input::RequestUserInputQuestionOption;
 use codex_protocol::request_user_input::RequestUserInputResponse;
-use codex_rmcp_client::perform_oauth_login;
+use codex_rmcp_client::perform_oauth_login_with_client;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
@@ -20,6 +20,8 @@ use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::skills::model::SkillToolDependency;
 use codex_mcp::McpOAuthLoginSupport;
+use codex_mcp::McpRuntimeEnvironment;
+use codex_mcp::http_client_for_server;
 use codex_mcp::mcp_permission_prompt_is_auto_approved;
 use codex_mcp::oauth_login_support;
 use codex_mcp::resolve_oauth_scopes;
@@ -126,14 +128,29 @@ pub(crate) async fn maybe_install_mcp_dependencies(
     }
 
     for (name, server_config) in added {
-        let oauth_config = match oauth_login_support(&server_config.transport).await {
-            McpOAuthLoginSupport::Supported(config) => config,
-            McpOAuthLoginSupport::Unsupported => continue,
-            McpOAuthLoginSupport::Unknown(err) => {
-                warn!("MCP server may or may not require login for dependency {name}: {err}");
+        let runtime_environment = McpRuntimeEnvironment::new(
+            turn_context
+                .environment
+                .clone()
+                .unwrap_or_else(|| sess.services.environment_manager.local_environment()),
+            turn_context.cwd.to_path_buf(),
+        );
+        let http_client = match http_client_for_server(&server_config, runtime_environment) {
+            Ok(http_client) => http_client,
+            Err(err) => {
+                warn!("failed to resolve MCP OAuth environment for dependency {name}: {err}");
                 continue;
             }
         };
+        let oauth_config =
+            match oauth_login_support(&server_config.transport, http_client.clone()).await {
+                McpOAuthLoginSupport::Supported(config) => config,
+                McpOAuthLoginSupport::Unsupported => continue,
+                McpOAuthLoginSupport::Unknown(err) => {
+                    warn!("MCP server may or may not require login for dependency {name}: {err}");
+                    continue;
+                }
+            };
 
         sess.notify_background_event(
             turn_context,
@@ -148,7 +165,7 @@ pub(crate) async fn maybe_install_mcp_dependencies(
             server_config.scopes.clone(),
             oauth_config.discovered_scopes.clone(),
         );
-        let first_attempt = perform_oauth_login(
+        let first_attempt = perform_oauth_login_with_client(
             &name,
             &oauth_config.url,
             config.mcp_oauth_credentials_store_mode,
@@ -158,6 +175,7 @@ pub(crate) async fn maybe_install_mcp_dependencies(
             server_config.oauth_resource.as_deref(),
             config.mcp_oauth_callback_port,
             config.mcp_oauth_callback_url.as_deref(),
+            http_client.clone(),
         )
         .await;
 
@@ -171,7 +189,7 @@ pub(crate) async fn maybe_install_mcp_dependencies(
                 )
                 .await;
 
-                if let Err(err) = perform_oauth_login(
+                if let Err(err) = perform_oauth_login_with_client(
                     &name,
                     &oauth_config.url,
                     config.mcp_oauth_credentials_store_mode,
@@ -181,6 +199,7 @@ pub(crate) async fn maybe_install_mcp_dependencies(
                     server_config.oauth_resource.as_deref(),
                     config.mcp_oauth_callback_port,
                     config.mcp_oauth_callback_url.as_deref(),
+                    http_client,
                 )
                 .await
                 {

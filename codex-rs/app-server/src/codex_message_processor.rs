@@ -312,6 +312,7 @@ use codex_mcp::McpSnapshotDetail;
 use codex_mcp::collect_mcp_server_status_snapshot_with_detail;
 use codex_mcp::discover_supported_scopes;
 use codex_mcp::effective_mcp_servers;
+use codex_mcp::http_client_for_server;
 use codex_mcp::read_mcp_resource as read_mcp_resource_without_thread;
 use codex_mcp::resolve_oauth_scopes;
 use codex_model_provider::ProviderAccountError;
@@ -355,7 +356,7 @@ use codex_protocol::protocol::USER_MESSAGE_BEGIN;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_protocol::user_input::MAX_USER_INPUT_TEXT_CHARS;
 use codex_protocol::user_input::UserInput as CoreInputItem;
-use codex_rmcp_client::perform_oauth_login_return_url;
+use codex_rmcp_client::perform_oauth_login_return_url_with_client;
 use codex_rollout::state_db::StateDbHandle;
 use codex_rollout::state_db::get_state_db;
 use codex_rollout::state_db::reconcile_rollout;
@@ -5960,15 +5961,36 @@ impl CodexMessageProcessor {
             }
         };
 
+        let environment_manager = self.thread_manager.environment_manager();
+        let runtime_environment = match environment_manager.default_environment() {
+            Some(environment) => McpRuntimeEnvironment::new(environment, config.cwd.to_path_buf()),
+            None => McpRuntimeEnvironment::new(
+                environment_manager.local_environment(),
+                config.cwd.to_path_buf(),
+            ),
+        };
+        let http_client = match http_client_for_server(server, runtime_environment) {
+            Ok(http_client) => http_client,
+            Err(err) => {
+                let error = JSONRPCErrorError {
+                    code: INVALID_REQUEST_ERROR_CODE,
+                    message: format!("failed to resolve MCP server OAuth environment: {err}"),
+                    data: None,
+                };
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+
         let discovered_scopes = if scopes.is_none() && server.scopes.is_none() {
-            discover_supported_scopes(&server.transport).await
+            discover_supported_scopes(&server.transport, http_client.clone()).await
         } else {
             None
         };
         let resolved_scopes =
             resolve_oauth_scopes(scopes, server.scopes.clone(), discovered_scopes);
 
-        match perform_oauth_login_return_url(
+        match perform_oauth_login_return_url_with_client(
             &name,
             &url,
             config.mcp_oauth_credentials_store_mode,
@@ -5979,6 +6001,7 @@ impl CodexMessageProcessor {
             timeout_secs,
             config.mcp_oauth_callback_port,
             config.mcp_oauth_callback_url.as_deref(),
+            http_client,
         )
         .await
         {

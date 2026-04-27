@@ -15,7 +15,10 @@ use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::find_codex_home;
 use codex_core::config::load_global_mcp_servers;
 use codex_core::plugins::PluginsManager;
+use codex_exec_server::Environment;
+use codex_exec_server::ReqwestHttpClient;
 use codex_mcp::McpOAuthLoginSupport;
+use codex_mcp::McpRuntimeEnvironment;
 use codex_mcp::ResolvedMcpOAuthScopes;
 use codex_mcp::compute_auth_statuses;
 use codex_mcp::discover_supported_scopes;
@@ -323,7 +326,7 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
 
     println!("Added global MCP server '{name}'.");
 
-    match oauth_login_support(&transport).await {
+    match oauth_login_support(&transport, Arc::new(ReqwestHttpClient)).await {
         McpOAuthLoginSupport::Supported(oauth_config) => {
             println!("Detected OAuth support. Starting OAuth flow…");
             let resolved_scopes = resolve_oauth_scopes(
@@ -417,7 +420,7 @@ async fn run_login(config_overrides: &CliConfigOverrides, login_args: LoginArgs)
 
     let explicit_scopes = (!scopes.is_empty()).then_some(scopes);
     let discovered_scopes = if explicit_scopes.is_none() && server.scopes.is_none() {
-        discover_supported_scopes(&server.transport).await
+        discover_supported_scopes(&server.transport, Arc::new(ReqwestHttpClient)).await
     } else {
         None
     };
@@ -490,6 +493,10 @@ async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) ->
         mcp_servers.iter(),
         config.mcp_oauth_credentials_store_mode,
         /*auth*/ None,
+        McpRuntimeEnvironment::new(
+            Arc::new(Environment::default_for_tests()),
+            config.cwd.to_path_buf(),
+        ),
     )
     .await;
 

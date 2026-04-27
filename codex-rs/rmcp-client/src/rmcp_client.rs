@@ -12,7 +12,6 @@ use std::time::Instant;
 use anyhow::Result;
 use anyhow::anyhow;
 use codex_api::SharedAuthProvider;
-use codex_client::build_reqwest_client_with_custom_ca;
 use codex_config::types::McpServerEnvVar;
 use codex_exec_server::HttpClient;
 use futures::FutureExt;
@@ -45,9 +44,6 @@ use rmcp::service::RoleClient;
 use rmcp::service::RunningService;
 use rmcp::service::{self};
 use rmcp::transport::StreamableHttpClientTransport;
-use rmcp::transport::auth::AuthClient;
-use rmcp::transport::auth::AuthError;
-use rmcp::transport::auth::OAuthState;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::streamable_http_client::StreamableHttpError;
 use serde::Deserialize;
@@ -68,7 +64,6 @@ use crate::oauth::StoredOAuthTokens;
 use crate::stdio_server_launcher::StdioServerCommand;
 use crate::stdio_server_launcher::StdioServerLauncher;
 use crate::stdio_server_launcher::StdioServerTransport;
-use crate::utils::apply_default_headers;
 use crate::utils::build_default_headers;
 use codex_config::types::OAuthCredentialsStoreMode;
 
@@ -80,7 +75,7 @@ enum PendingTransport {
         transport: StreamableHttpClientTransport<StreamableHttpClientAdapter>,
     },
     StreamableHttpWithOAuth {
-        transport: StreamableHttpClientTransport<AuthClient<StreamableHttpClientAdapter>>,
+        transport: StreamableHttpClientTransport<StreamableHttpClientAdapter>,
         oauth_persistor: OAuthPersistor,
     },
 }
@@ -708,11 +703,7 @@ impl RmcpClient {
                                 oauth_persistor,
                             })
                         }
-                        Err(err)
-                            if err.downcast_ref::<AuthError>().is_some_and(|auth_err| {
-                                matches!(auth_err, AuthError::NoAuthorizationSupport)
-                            }) =>
-                        {
+                        Err(err) if err.to_string().contains("No authorization support") => {
                             let access_token = initial_tokens
                                 .token_response
                                 .0
@@ -730,6 +721,7 @@ impl RmcpClient {
                                     Arc::clone(http_client),
                                     default_headers,
                                     /*auth_provider*/ None,
+                                    /*oauth_persistor*/ None,
                                 ),
                                 http_config,
                             );
@@ -749,6 +741,7 @@ impl RmcpClient {
                             Arc::clone(http_client),
                             default_headers,
                             auth_provider.clone(),
+                            /*oauth_persistor*/ None,
                         ),
                         http_config,
                     );
@@ -943,52 +936,27 @@ async fn create_oauth_transport_and_runtime(
     default_headers: HeaderMap,
     http_client: Arc<dyn HttpClient>,
 ) -> Result<(
-    StreamableHttpClientTransport<AuthClient<StreamableHttpClientAdapter>>,
+    StreamableHttpClientTransport<StreamableHttpClientAdapter>,
     OAuthPersistor,
 )> {
-    let builder = apply_default_headers(reqwest::Client::builder(), &default_headers);
-    let oauth_metadata_client = build_reqwest_client_with_custom_ca(builder)?;
-    // TODO(aibrahim): teach OAuth bootstrap and refresh to use the same
-    // shared HTTP client abstraction instead of always creating the local
-    // reqwest metadata client here.
-    let mut oauth_state =
-        OAuthState::new(url.to_string(), Some(oauth_metadata_client.clone())).await?;
-
-    oauth_state
-        .set_credentials(
-            &initial_tokens.client_id,
-            initial_tokens.token_response.0.clone(),
-        )
-        .await?;
-
-    let manager = match oauth_state {
-        OAuthState::Authorized(manager) => manager,
-        OAuthState::Unauthorized(manager) => manager,
-        OAuthState::Session(_) | OAuthState::AuthorizedHttpClient(_) => {
-            return Err(anyhow!("unexpected OAuth state during client setup"));
-        }
-    };
-
-    let auth_client = AuthClient::new(
-        StreamableHttpClientAdapter::new(http_client, default_headers, /*auth_provider*/ None),
-        manager,
-    );
-    let auth_manager = auth_client.auth_manager.clone();
-
-    let transport = StreamableHttpClientTransport::with_client(
-        auth_client,
-        StreamableHttpClientTransportConfig::with_uri(url.to_string()),
-    );
-
-    let runtime = OAuthPersistor::new(
+    let oauth_persistor = OAuthPersistor::with_http_client(
         server_name.to_string(),
-        url.to_string(),
-        auth_manager,
+        Arc::clone(&http_client),
+        default_headers.clone(),
         credentials_store,
         Some(initial_tokens),
     );
 
-    Ok((transport, runtime))
+    let transport = StreamableHttpClientTransport::with_client(
+        StreamableHttpClientAdapter::new(
+            http_client,
+            default_headers,
+            /*auth_provider*/ None,
+            Some(oauth_persistor.clone()),
+        ),
+        StreamableHttpClientTransportConfig::with_uri(url.to_string()),
+    );
+    Ok((transport, oauth_persistor))
 }
 
 #[cfg(test)]

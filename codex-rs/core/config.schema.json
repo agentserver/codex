@@ -1795,6 +1795,10 @@
           "description": "Legacy display-name field accepted for backward compatibility.",
           "type": "string"
         },
+        "oauth_client_id": {
+          "default": null,
+          "type": "string"
+        },
         "oauth_resource": {
           "default": null,
           "type": "string"

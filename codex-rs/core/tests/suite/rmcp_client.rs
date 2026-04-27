@@ -288,6 +288,7 @@ fn insert_mcp_server(
             disabled_tools: None,
             scopes: None,
             oauth_resource: None,
+            oauth_client_id: None,
             tools: HashMap::new(),
         },
     );

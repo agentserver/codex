@@ -506,6 +506,7 @@ async fn make_rmcp_client(
     let McpServerConfig {
         transport,
         experimental_environment,
+        oauth_client_id,
         ..
     } = config;
     let remote_environment = match experimental_environment.as_deref() {
@@ -578,6 +579,7 @@ async fn make_rmcp_client(
                 server_name,
                 &url,
                 resolved_bearer_token,
+                oauth_client_id,
                 http_headers,
                 env_http_headers,
                 store_mode,

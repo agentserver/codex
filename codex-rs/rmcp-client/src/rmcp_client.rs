@@ -105,6 +105,7 @@ enum TransportRecipe {
         server_name: String,
         url: String,
         bearer_token: Option<String>,
+        oauth_client_id: Option<String>,
         http_headers: Option<HashMap<String, String>>,
         env_http_headers: Option<HashMap<String, String>>,
         store_mode: OAuthCredentialsStoreMode,
@@ -304,6 +305,7 @@ impl RmcpClient {
         server_name: &str,
         url: &str,
         bearer_token: Option<String>,
+        oauth_client_id: Option<String>,
         http_headers: Option<HashMap<String, String>>,
         env_http_headers: Option<HashMap<String, String>>,
         store_mode: OAuthCredentialsStoreMode,
@@ -314,6 +316,7 @@ impl RmcpClient {
             server_name: server_name.to_string(),
             url: url.to_string(),
             bearer_token,
+            oauth_client_id,
             http_headers,
             env_http_headers,
             store_mode,
@@ -667,6 +670,7 @@ impl RmcpClient {
                 server_name,
                 url,
                 bearer_token,
+                oauth_client_id,
                 http_headers,
                 env_http_headers,
                 store_mode,
@@ -681,7 +685,26 @@ impl RmcpClient {
                     && !default_headers.contains_key(AUTHORIZATION)
                 {
                     match load_oauth_tokens(server_name, url, *store_mode) {
-                        Ok(tokens) => tokens,
+                        Ok(Some(tokens))
+                            if oauth_tokens_match_client_id(
+                                &tokens,
+                                oauth_client_id.as_deref(),
+                            ) =>
+                        {
+                            Some(tokens)
+                        }
+                        Ok(Some(tokens)) => {
+                            if let Some(configured_client_id) =
+                                configured_oauth_client_id(oauth_client_id.as_deref())
+                            {
+                                warn!(
+                                    "stored OAuth tokens for MCP server `{server_name}` were issued to client `{}` but config requires `{configured_client_id}`; ignoring cached tokens",
+                                    tokens.client_id
+                                );
+                            }
+                            None
+                        }
+                        Ok(None) => None,
                         Err(err) => {
                             warn!("failed to read tokens for server `{server_name}`: {err}");
                             None
@@ -991,14 +1014,31 @@ async fn create_oauth_transport_and_runtime(
     Ok((transport, runtime))
 }
 
+fn configured_oauth_client_id(oauth_client_id: Option<&str>) -> Option<&str> {
+    oauth_client_id.map(str::trim).filter(|id| !id.is_empty())
+}
+
+fn oauth_tokens_match_client_id(tokens: &StoredOAuthTokens, oauth_client_id: Option<&str>) -> bool {
+    let Some(client_id) = configured_oauth_client_id(oauth_client_id) else {
+        return true;
+    };
+
+    tokens.client_id == client_id
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
+    use oauth2::AccessToken;
+    use oauth2::EmptyExtraTokenFields;
+    use oauth2::basic::BasicTokenType;
     use pretty_assertions::assert_eq;
+    use rmcp::transport::auth::OAuthTokenResponse;
     use tokio::time;
 
     use super::*;
+    use crate::WrappedOAuthTokenResponse;
 
     #[tokio::test]
     async fn active_time_timeout_pauses_while_elicitation_is_pending() {
@@ -1017,5 +1057,46 @@ mod tests {
             .await;
 
         assert_eq!(Ok("done"), result);
+    }
+
+    #[test]
+    fn cached_oauth_tokens_are_valid_without_configured_client_id() {
+        let tokens = stored_tokens("registered-client-id");
+
+        assert!(oauth_tokens_match_client_id(&tokens, None));
+    }
+
+    #[test]
+    fn cached_oauth_tokens_are_valid_for_matching_configured_client_id() {
+        let tokens = stored_tokens("registered-client-id");
+
+        assert!(oauth_tokens_match_client_id(
+            &tokens,
+            Some(" registered-client-id ")
+        ));
+    }
+
+    #[test]
+    fn cached_oauth_tokens_are_rejected_for_different_configured_client_id() {
+        let tokens = stored_tokens("dynamic-client-id");
+
+        assert!(!oauth_tokens_match_client_id(
+            &tokens,
+            Some("registered-client-id")
+        ));
+    }
+
+    fn stored_tokens(client_id: &str) -> StoredOAuthTokens {
+        StoredOAuthTokens {
+            server_name: "test-server".to_string(),
+            url: "https://mcp.example.test/mcp".to_string(),
+            client_id: client_id.to_string(),
+            token_response: WrappedOAuthTokenResponse(OAuthTokenResponse::new(
+                AccessToken::new("access-token".to_string()),
+                BasicTokenType::Bearer,
+                EmptyExtraTokenFields {},
+            )),
+            expires_at: None,
+        }
     }
 }

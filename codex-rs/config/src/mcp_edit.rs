@@ -217,6 +217,11 @@ fn serialize_mcp_server(config: &McpServerConfig) -> TomlItem {
     {
         entry["oauth_resource"] = value(resource.clone());
     }
+    if let Some(client_id) = &config.oauth_client_id
+        && !client_id.is_empty()
+    {
+        entry["oauth_client_id"] = value(client_id.clone());
+    }
     if !config.tools.is_empty() {
         let mut tools = TomlTable::new();
         tools.set_implicit(false);

@@ -200,6 +200,7 @@ async fn perform_oauth_login_retry_without_scopes(
     env_http_headers: Option<HashMap<String, String>>,
     resolved_scopes: &ResolvedMcpOAuthScopes,
     oauth_resource: Option<&str>,
+    oauth_client_id: Option<&str>,
     callback_port: Option<u16>,
     callback_url: Option<&str>,
 ) -> Result<()> {
@@ -211,6 +212,7 @@ async fn perform_oauth_login_retry_without_scopes(
         env_http_headers.clone(),
         &resolved_scopes.scopes,
         oauth_resource,
+        oauth_client_id,
         callback_port,
         callback_url,
     )
@@ -227,6 +229,7 @@ async fn perform_oauth_login_retry_without_scopes(
                 env_http_headers,
                 &[],
                 oauth_resource,
+                oauth_client_id,
                 callback_port,
                 callback_url,
             )
@@ -310,6 +313,7 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
         disabled_tools: None,
         scopes: None,
         oauth_resource: None,
+        oauth_client_id: None,
         tools: HashMap::new(),
     };
 
@@ -339,6 +343,7 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
                 oauth_config.env_http_headers,
                 &resolved_scopes,
                 /*oauth_resource*/ None,
+                /*oauth_client_id*/ None,
                 config.mcp_oauth_callback_port,
                 config.mcp_oauth_callback_url.as_deref(),
             )
@@ -432,6 +437,7 @@ async fn run_login(config_overrides: &CliConfigOverrides, login_args: LoginArgs)
         env_http_headers,
         &resolved_scopes,
         server.oauth_resource.as_deref(),
+        server.oauth_client_id.as_deref(),
         config.mcp_oauth_callback_port,
         config.mcp_oauth_callback_url.as_deref(),
     )

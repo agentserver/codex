@@ -26,6 +26,19 @@ Only enable parallel calls for MCP servers whose tools are safe to run at the
 same time. If tools read and write shared state, files, databases, or external
 resources, review those read/write race conditions before enabling this setting.
 
+For streamable HTTP servers that require a pre-registered OAuth client instead
+of dynamic client registration, set `oauth_client_id` on that server:
+
+```toml
+[mcp_servers.docs]
+url = "https://example.com/mcp"
+oauth_client_id = "your-registered-client-id"
+```
+
+When this is set, `codex mcp login docs` sends that client ID in the OAuth
+authorization request. When it is unset, Codex keeps using dynamic client
+registration.
+
 ## MCP tool approvals
 
 Codex stores approval defaults and per-tool overrides for custom MCP servers

@@ -9,6 +9,8 @@ use anyhow::anyhow;
 use anyhow::bail;
 use reqwest::ClientBuilder;
 use reqwest::Url;
+use rmcp::transport::auth::AuthorizationSession;
+use rmcp::transport::auth::OAuthClientConfig;
 use rmcp::transport::auth::OAuthState;
 use tiny_http::Response;
 use tiny_http::Server;
@@ -78,6 +80,7 @@ pub async fn perform_oauth_login(
     env_http_headers: Option<HashMap<String, String>>,
     scopes: &[String],
     oauth_resource: Option<&str>,
+    oauth_client_id: Option<&str>,
     callback_port: Option<u16>,
     callback_url: Option<&str>,
 ) -> Result<()> {
@@ -89,6 +92,7 @@ pub async fn perform_oauth_login(
         env_http_headers,
         scopes,
         oauth_resource,
+        oauth_client_id,
         callback_port,
         callback_url,
         /*emit_browser_url*/ true,
@@ -105,6 +109,7 @@ pub async fn perform_oauth_login_silent(
     env_http_headers: Option<HashMap<String, String>>,
     scopes: &[String],
     oauth_resource: Option<&str>,
+    oauth_client_id: Option<&str>,
     callback_port: Option<u16>,
     callback_url: Option<&str>,
 ) -> Result<()> {
@@ -116,6 +121,7 @@ pub async fn perform_oauth_login_silent(
         env_http_headers,
         scopes,
         oauth_resource,
+        oauth_client_id,
         callback_port,
         callback_url,
         /*emit_browser_url*/ false,
@@ -132,6 +138,7 @@ async fn perform_oauth_login_with_browser_output(
     env_http_headers: Option<HashMap<String, String>>,
     scopes: &[String],
     oauth_resource: Option<&str>,
+    oauth_client_id: Option<&str>,
     callback_port: Option<u16>,
     callback_url: Option<&str>,
     emit_browser_url: bool,
@@ -147,6 +154,7 @@ async fn perform_oauth_login_with_browser_output(
         headers,
         scopes,
         oauth_resource,
+        oauth_client_id,
         /*launch_browser*/ true,
         callback_port,
         callback_url,
@@ -166,6 +174,7 @@ pub async fn perform_oauth_login_return_url(
     env_http_headers: Option<HashMap<String, String>>,
     scopes: &[String],
     oauth_resource: Option<&str>,
+    oauth_client_id: Option<&str>,
     timeout_secs: Option<i64>,
     callback_port: Option<u16>,
     callback_url: Option<&str>,
@@ -181,6 +190,7 @@ pub async fn perform_oauth_login_return_url(
         headers,
         scopes,
         oauth_resource,
+        oauth_client_id,
         /*launch_browser*/ false,
         callback_port,
         callback_url,
@@ -408,6 +418,7 @@ impl OauthLoginFlow {
         headers: OauthHeaders,
         scopes: &[String],
         oauth_resource: Option<&str>,
+        oauth_client_id: Option<&str>,
         launch_browser: bool,
         callback_port: Option<u16>,
         callback_url: Option<&str>,
@@ -442,9 +453,15 @@ impl OauthLoginFlow {
 
         let mut oauth_state = OAuthState::new(server_url, Some(http_client)).await?;
         let scope_refs: Vec<&str> = scopes.iter().map(String::as_str).collect();
-        oauth_state
-            .start_authorization(&scope_refs, &redirect_uri, Some("Codex"))
-            .await?;
+        start_authorization(
+            &mut oauth_state,
+            server_url,
+            &scope_refs,
+            &redirect_uri,
+            Some("Codex"),
+            oauth_client_id,
+        )
+        .await?;
         let auth_url = append_query_param(
             &oauth_state.get_authorization_url().await?,
             "resource",
@@ -554,6 +571,43 @@ impl OauthLoginFlow {
     }
 }
 
+async fn start_authorization(
+    oauth_state: &mut OAuthState,
+    server_url: &str,
+    scopes: &[&str],
+    redirect_uri: &str,
+    client_name: Option<&str>,
+    oauth_client_id: Option<&str>,
+) -> Result<()> {
+    let Some(client_id) = oauth_client_id.map(str::trim).filter(|id| !id.is_empty()) else {
+        oauth_state
+            .start_authorization(scopes, redirect_uri, client_name)
+            .await?;
+        return Ok(());
+    };
+
+    let placeholder = OAuthState::new(server_url, None).await?;
+    let OAuthState::Unauthorized(mut manager) = std::mem::replace(oauth_state, placeholder) else {
+        return Err(anyhow!("OAuth client is already authorizing or authorized"));
+    };
+
+    let metadata = manager.discover_metadata().await?;
+    manager.set_metadata(metadata);
+    manager.configure_client(OAuthClientConfig {
+        client_id: client_id.to_string(),
+        client_secret: None,
+        scopes: scopes.iter().map(|scope| (*scope).to_string()).collect(),
+        redirect_uri: redirect_uri.to_string(),
+    })?;
+    let auth_url = manager.get_authorization_url(scopes).await?;
+    *oauth_state = OAuthState::Session(AuthorizationSession {
+        auth_manager: manager,
+        auth_url,
+        redirect_uri: redirect_uri.to_string(),
+    });
+    Ok(())
+}
+
 fn append_query_param(url: &str, key: &str, value: Option<&str>) -> String {
     let Some(value) = value else {
         return url.to_string();
@@ -573,13 +627,62 @@ fn append_query_param(url: &str, key: &str, value: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use axum::Json;
+    use axum::Router;
+    use axum::routing::get;
     use pretty_assertions::assert_eq;
+    use tokio::task::JoinHandle;
 
     use super::CallbackOutcome;
     use super::OAuthProviderError;
+    use super::OauthHeaders;
+    use super::OauthLoginFlow;
     use super::append_query_param;
     use super::callback_path_from_redirect_uri;
     use super::parse_oauth_callback;
+    use codex_config::types::OAuthCredentialsStoreMode;
+
+    struct TestServer {
+        url: String,
+        handle: JoinHandle<()>,
+    }
+
+    impl Drop for TestServer {
+        fn drop(&mut self) {
+            self.handle.abort();
+        }
+    }
+
+    async fn spawn_oauth_metadata_server() -> TestServer {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let address = listener.local_addr().expect("listener should have address");
+        let base = format!("http://{address}");
+        let app = Router::new().route(
+            "/.well-known/oauth-authorization-server/mcp",
+            get({
+                let base = base.clone();
+                move || {
+                    let base = base.clone();
+                    async move {
+                        Json(serde_json::json!({
+                            "authorization_endpoint": format!("{base}/oauth/authorize"),
+                            "token_endpoint": format!("{base}/oauth/token"),
+                        }))
+                    }
+                }
+            }),
+        );
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("server should run");
+        });
+
+        TestServer {
+            url: format!("{base}/mcp"),
+            handle,
+        }
+    }
 
     #[test]
     fn parse_oauth_callback_accepts_default_path() {
@@ -620,6 +723,37 @@ mod tests {
         let path = callback_path_from_redirect_uri("https://example.com/oauth/callback")
             .expect("redirect URI should parse");
         assert_eq!(path, "/oauth/callback");
+    }
+
+    #[tokio::test]
+    async fn oauth_login_flow_uses_configured_client_id_without_registration() {
+        let server = spawn_oauth_metadata_server().await;
+        let flow = OauthLoginFlow::new(
+            "docs",
+            &server.url,
+            OAuthCredentialsStoreMode::File,
+            OauthHeaders {
+                http_headers: None,
+                env_http_headers: None,
+            },
+            &[],
+            /*oauth_resource*/ None,
+            Some("registered-client-id"),
+            /*launch_browser*/ false,
+            /*callback_port*/ None,
+            /*callback_url*/ None,
+            Some(1),
+        )
+        .await
+        .expect("static client id should avoid dynamic registration");
+
+        let authorization_url =
+            reqwest::Url::parse(&flow.authorization_url()).expect("authorization URL should parse");
+        let client_id = authorization_url
+            .query_pairs()
+            .find_map(|(key, value)| (key == "client_id").then_some(value.into_owned()));
+
+        assert_eq!(client_id, Some("registered-client-id".to_string()));
     }
 
     #[test]

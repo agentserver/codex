@@ -53,6 +53,7 @@ impl CodexMessageProcessor {
                     oauth_config.env_http_headers.clone(),
                     &resolved_scopes.scopes,
                     server.oauth_resource.as_deref(),
+                    server.oauth_client_id.as_deref(),
                     callback_port,
                     callback_url.as_deref(),
                 )
@@ -68,6 +69,7 @@ impl CodexMessageProcessor {
                             oauth_config.env_http_headers,
                             &[],
                             server.oauth_resource.as_deref(),
+                            server.oauth_client_id.as_deref(),
                             callback_port,
                             callback_url.as_deref(),
                         )

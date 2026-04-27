@@ -171,6 +171,10 @@ pub struct McpServerConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oauth_resource: Option<String>,
 
+    /// Optional OAuth client ID to use for MCP login instead of dynamic client registration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_client_id: Option<String>,
+
     /// Per-tool approval settings keyed by tool name.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub tools: HashMap<String, McpServerToolConfig>,
@@ -234,6 +238,8 @@ pub struct RawMcpServerConfig {
     pub scopes: Option<Vec<String>>,
     #[serde(default)]
     pub oauth_resource: Option<String>,
+    #[serde(default)]
+    pub oauth_client_id: Option<String>,
     /// Legacy display-name field accepted for backward compatibility.
     #[serde(default, rename = "name")]
     pub _name: Option<String>,
@@ -268,6 +274,7 @@ impl TryFrom<RawMcpServerConfig> for McpServerConfig {
             disabled_tools,
             scopes,
             oauth_resource,
+            oauth_client_id,
             _name: _,
             tools,
         } = raw;
@@ -278,6 +285,13 @@ impl TryFrom<RawMcpServerConfig> for McpServerConfig {
             }
             (None, Some(ms)) => Some(Duration::from_millis(ms)),
             (None, None) => None,
+        };
+        let oauth_client_id = match oauth_client_id {
+            Some(id) if id.trim().is_empty() => {
+                return Err("oauth_client_id cannot be empty".to_string());
+            }
+            Some(id) => Some(id),
+            None => None,
         };
 
         fn throw_if_set<T>(transport: &str, field: &str, value: Option<&T>) -> Result<(), String> {
@@ -298,6 +312,7 @@ impl TryFrom<RawMcpServerConfig> for McpServerConfig {
             throw_if_set("stdio", "http_headers", http_headers.as_ref())?;
             throw_if_set("stdio", "env_http_headers", env_http_headers.as_ref())?;
             throw_if_set("stdio", "oauth_resource", oauth_resource.as_ref())?;
+            throw_if_set("stdio", "oauth_client_id", oauth_client_id.as_ref())?;
             let env_vars = env_vars.unwrap_or_default();
             for env_var in &env_vars {
                 env_var.validate_source()?;
@@ -339,6 +354,7 @@ impl TryFrom<RawMcpServerConfig> for McpServerConfig {
             disabled_tools,
             scopes,
             oauth_resource,
+            oauth_client_id,
             tools: tools.unwrap_or_default(),
         })
     }

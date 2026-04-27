@@ -13,7 +13,6 @@ use codex_login::AuthManager;
 use codex_utils_cli::CliConfigOverrides;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::ffi::OsString;
 use std::io::ErrorKind;
 use std::io::Result as IoResult;
 use std::sync::Arc;
@@ -84,6 +83,7 @@ mod filters;
 mod fs_api;
 mod fs_watch;
 mod fuzzy_file_search;
+mod identity_key;
 pub mod in_process;
 mod message_processor;
 mod models;
@@ -95,6 +95,7 @@ mod transport;
 
 pub use crate::error_code::INPUT_TOO_LARGE_ERROR_CODE;
 pub use crate::error_code::INVALID_PARAMS_ERROR_CODE;
+pub use crate::identity_key::IdentityKey;
 pub use crate::transport::AppServerTransport;
 pub use crate::transport::app_server_control_socket_path;
 pub use crate::transport::auth::AppServerWebsocketAuthArgs;
@@ -102,43 +103,6 @@ pub use crate::transport::auth::AppServerWebsocketAuthSettings;
 pub use crate::transport::auth::WebsocketAuthCliMode;
 
 const LOG_FORMAT_ENV_VAR: &str = "LOG_FORMAT";
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct IdentityKey {
-    bytes: Vec<u8>,
-}
-
-impl IdentityKey {
-    pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> Self {
-        Self {
-            bytes: bytes.into(),
-        }
-    }
-
-    pub fn from_os_string(value: OsString) -> Self {
-        Self::from_bytes(os_string_to_bytes(value))
-    }
-
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes
-    }
-
-    pub fn into_bytes(self) -> Vec<u8> {
-        self.bytes
-    }
-}
-
-#[cfg(unix)]
-fn os_string_to_bytes(value: OsString) -> Vec<u8> {
-    use std::os::unix::ffi::OsStrExt;
-
-    value.as_os_str().as_bytes().to_vec()
-}
-
-#[cfg(not(unix))]
-fn os_string_to_bytes(value: OsString) -> Vec<u8> {
-    value.to_string_lossy().into_owned().into_bytes()
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LogFormat {
@@ -1013,26 +977,8 @@ fn analytics_rpc_transport(transport: &AppServerTransport) -> AppServerRpcTransp
 
 #[cfg(test)]
 mod tests {
-    use super::IdentityKey;
     use super::LogFormat;
     use pretty_assertions::assert_eq;
-
-    #[test]
-    fn identity_key_preserves_opaque_bytes() {
-        let key = IdentityKey::from_bytes(b"tenant-key-\x00\xff".to_vec());
-        assert_eq!(key.as_bytes(), &b"tenant-key-\x00\xff"[..]);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn identity_key_preserves_unix_argv_bytes() {
-        use std::ffi::OsString;
-        use std::os::unix::ffi::OsStringExt;
-
-        let key = IdentityKey::from_os_string(OsString::from_vec(b"tenant-key-\xff".to_vec()));
-
-        assert_eq!(key.as_bytes(), &b"tenant-key-\xff"[..]);
-    }
 
     #[test]
     fn log_format_from_env_value_matches_json_values_case_insensitively() {

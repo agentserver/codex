@@ -50,8 +50,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use crate::config_manager::ConfigManager;
 use crate::IdentityKey;
+use crate::config_manager::ConfigManager;
 use crate::error_code::INTERNAL_ERROR_CODE;
 use crate::error_code::INVALID_REQUEST_ERROR_CODE;
 use crate::error_code::OVERLOADED_ERROR_CODE;

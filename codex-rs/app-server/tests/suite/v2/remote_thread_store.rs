@@ -90,6 +90,7 @@ async fn thread_start_with_non_local_thread_store_does_not_create_local_persiste
             },
             capabilities: None,
         },
+        identity_key: None,
         channel_capacity: in_process::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
     })
     .await?;

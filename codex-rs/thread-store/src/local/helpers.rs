@@ -178,10 +178,6 @@ fn git_info_from_fields(fields: ThreadGitInfoFields) -> Option<GitInfo> {
     })
 }
 
-pub(super) fn git_info_from_metadata(metadata: &ThreadMetadata) -> Option<GitInfo> {
-    git_info_from_fields(metadata.git_info_fields())
-}
-
 pub(super) fn apply_metadata_git_info(thread: &mut StoredThread, metadata: &ThreadMetadata) {
     let mut git_info = git_info_fields_from_git_info(thread.git_info.as_ref());
     git_info.overlay_non_null(&metadata.git_info_fields());

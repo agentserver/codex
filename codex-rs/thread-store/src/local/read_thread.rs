@@ -14,7 +14,7 @@ use codex_state::ThreadMetadata;
 
 use super::LocalThreadStore;
 use super::helpers::apply_metadata_git_info;
-use super::helpers::git_info_from_metadata;
+use super::helpers::git_info_from_parts;
 use super::helpers::stored_thread_from_rollout_item;
 use crate::ReadThreadParams;
 use crate::StoredThread;
@@ -86,7 +86,9 @@ pub(super) async fn read_thread_by_rollout_path(
             message: format!("thread {} is archived", thread.thread_id),
         });
     }
-    apply_sqlite_git_info_if_present(store, &mut thread).await;
+    if let Some(metadata) = read_sqlite_metadata(store, thread.thread_id).await {
+        apply_metadata_git_info(&mut thread, &metadata);
+    }
     attach_history_if_requested(&mut thread, include_history).await?;
     Ok(thread)
 }
@@ -206,12 +208,6 @@ async fn read_sqlite_metadata(
         .flatten()
 }
 
-async fn apply_sqlite_git_info_if_present(store: &LocalThreadStore, thread: &mut StoredThread) {
-    if let Some(metadata) = read_sqlite_metadata(store, thread.thread_id).await {
-        apply_metadata_git_info(thread, &metadata);
-    }
-}
-
 async fn stored_thread_from_sqlite_metadata(
     store: &LocalThreadStore,
     metadata: ThreadMetadata,
@@ -227,7 +223,11 @@ async fn stored_thread_from_sqlite_metadata(
         .await
         .ok()
         .and_then(|meta_line| meta_line.meta.forked_from_id);
-    let git_info = git_info_from_metadata(&metadata);
+    let git_info = git_info_from_parts(
+        metadata.git_sha.clone(),
+        metadata.git_branch.clone(),
+        metadata.git_origin_url.clone(),
+    );
     StoredThread {
         thread_id: metadata.id,
         rollout_path: Some(metadata.rollout_path),

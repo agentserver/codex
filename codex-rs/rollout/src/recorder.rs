@@ -552,12 +552,11 @@ impl RolloutRecorder {
         // If SQLite listing still fails, return the filesystem page rather than failing the list.
         tracing::error!("Falling back on rollout system");
         tracing::warn!("state db discrepancy during list_threads_with_db_fallback: falling_back");
-        Ok(page_from_filesystem_scan(
-            fs_page,
-            sort_direction,
-            page_size,
-            sort_key,
-        ))
+        let page = page_from_filesystem_scan(fs_page, sort_direction, page_size, sort_key);
+        Ok(
+            overlay_thread_item_metadata_from_state_db(exact_lookup_state_db_ctx.as_ref(), page)
+                .await,
+        )
     }
 
     /// Find the newest recorded thread path, optionally filtering to a matching cwd.

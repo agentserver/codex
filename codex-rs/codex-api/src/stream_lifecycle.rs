@@ -6,7 +6,6 @@ use crate::error::ApiError;
 use crate::sse::ResponsesStreamEvent;
 use std::fmt;
 use std::time::Instant;
-use tracing::debug;
 use tracing::warn;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,44 +135,28 @@ impl ResponseStreamLifecycleSummary {
     }
 
     fn log(&self) {
-        let observed_event_kinds = self.observed_event_kinds.join(",");
-        let log_message = "responses stream lifecycle";
         if self.terminal_state == ResponseStreamTerminalState::Completed && !self.ids_mismatch() {
-            debug!(
-                stream_attempt = self.options.attempt,
-                stream_transport = %self.options.transport,
-                stream_terminal_state = %self.terminal_state,
-                stream_created_response_id = self.created_response_id.as_deref().unwrap_or(""),
-                stream_completed_response_id = self.completed_response_id.as_deref().unwrap_or(""),
-                stream_first_event_elapsed_ms = ?self.first_event_elapsed_ms,
-                stream_last_event_elapsed_ms = ?self.last_event_elapsed_ms,
-                stream_last_event_kind = self.last_event_kind.as_deref().unwrap_or(""),
-                stream_first_output_item_added_elapsed_ms = ?self.first_output_item_added_elapsed_ms,
-                stream_first_output_item_done_elapsed_ms = ?self.first_output_item_done_elapsed_ms,
-                stream_first_output_text_delta_elapsed_ms = ?self.first_output_text_delta_elapsed_ms,
-                stream_observed_event_kinds = %observed_event_kinds,
-                stream_event_count = self.event_count,
-                "{log_message}"
-            );
-        } else {
-            warn!(
-                stream_attempt = self.options.attempt,
-                stream_transport = %self.options.transport,
-                stream_terminal_state = %self.terminal_state,
-                stream_created_response_id = self.created_response_id.as_deref().unwrap_or(""),
-                stream_completed_response_id = self.completed_response_id.as_deref().unwrap_or(""),
-                stream_first_event_elapsed_ms = ?self.first_event_elapsed_ms,
-                stream_last_event_elapsed_ms = ?self.last_event_elapsed_ms,
-                stream_last_event_kind = self.last_event_kind.as_deref().unwrap_or(""),
-                stream_first_output_item_added_elapsed_ms = ?self.first_output_item_added_elapsed_ms,
-                stream_first_output_item_done_elapsed_ms = ?self.first_output_item_done_elapsed_ms,
-                stream_first_output_text_delta_elapsed_ms = ?self.first_output_text_delta_elapsed_ms,
-                stream_observed_event_kinds = %observed_event_kinds,
-                stream_event_count = self.event_count,
-                stream_diagnostic = %self.diagnostic_phrase(),
-                "{log_message}"
-            );
+            return;
         }
+
+        let observed_event_kinds = self.observed_event_kinds.join(",");
+        warn!(
+            stream_attempt = self.options.attempt,
+            stream_transport = %self.options.transport,
+            stream_terminal_state = %self.terminal_state,
+            stream_created_response_id = self.created_response_id.as_deref().unwrap_or(""),
+            stream_completed_response_id = self.completed_response_id.as_deref().unwrap_or(""),
+            stream_first_event_elapsed_ms = ?self.first_event_elapsed_ms,
+            stream_last_event_elapsed_ms = ?self.last_event_elapsed_ms,
+            stream_last_event_kind = self.last_event_kind.as_deref().unwrap_or(""),
+            stream_first_output_item_added_elapsed_ms = ?self.first_output_item_added_elapsed_ms,
+            stream_first_output_item_done_elapsed_ms = ?self.first_output_item_done_elapsed_ms,
+            stream_first_output_text_delta_elapsed_ms = ?self.first_output_text_delta_elapsed_ms,
+            stream_observed_event_kinds = %observed_event_kinds,
+            stream_event_count = self.event_count,
+            stream_diagnostic = %self.diagnostic_phrase(),
+            "responses stream lifecycle"
+        );
     }
 
     fn error_detail(&self) -> String {

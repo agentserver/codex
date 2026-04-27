@@ -534,7 +534,7 @@ impl ShellHandler {
         let exec_approval_requirement = codex_shell_command::preserved_path_write_forbidden_reason(
             &exec_params.command,
             &exec_params.cwd,
-            &turn.file_system_sandbox_policy,
+            &file_system_sandbox_policy,
         )
         .map_or(exec_approval_requirement, |reason| {
             crate::tools::sandboxing::ExecApprovalRequirement::Forbidden { reason }

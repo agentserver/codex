@@ -149,7 +149,7 @@ async fn run_command_under_sandbox(
     if let Some(reason) = codex_shell_command::preserved_path_write_forbidden_reason(
         &command,
         cwd.as_path(),
-        &config.permissions.file_system_sandbox_policy,
+        &config.permissions.file_system_sandbox_policy(),
     ) {
         anyhow::bail!("{reason}");
     }

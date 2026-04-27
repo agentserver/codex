@@ -254,12 +254,16 @@ impl StatusHistoryCell {
             ),
             (
                 "sandbox",
-                summarize_sandbox_policy(config.permissions.sandbox_policy.get()),
+                summarize_sandbox_policy(
+                    &config
+                        .permissions
+                        .legacy_sandbox_policy(config.cwd.as_path()),
+                ),
             ),
         ];
         if config.model_provider.wire_api == WireApi::Responses {
             let effort_value = reasoning_effort_override
-                .unwrap_or(None)
+                .unwrap_or(config.model_reasoning_effort)
                 .map(|effort| effort.to_string())
                 .unwrap_or_else(|| "none".to_string());
             config_entries.push(("reasoning effort", effort_value));
@@ -277,7 +281,10 @@ impl StatusHistoryCell {
             .find(|(k, _)| *k == "approval")
             .map(|(_, v)| v.clone())
             .unwrap_or_else(|| "<unknown>".to_string());
-        let sandbox = match config.permissions.sandbox_policy.get() {
+        let sandbox_policy = config
+            .permissions
+            .legacy_sandbox_policy(config.cwd.as_path());
+        let sandbox = match &sandbox_policy {
             SandboxPolicy::DangerFullAccess => "danger-full-access".to_string(),
             SandboxPolicy::ReadOnly { .. } => "read-only".to_string(),
             SandboxPolicy::WorkspaceWrite {
@@ -294,12 +301,11 @@ impl StatusHistoryCell {
             }
         };
         let permissions = if config.permissions.approval_policy.value() == AskForApproval::OnRequest
-            && *config.permissions.sandbox_policy.get()
-                == SandboxPolicy::new_workspace_write_policy()
+            && sandbox_policy == SandboxPolicy::new_workspace_write_policy()
         {
             "Default".to_string()
         } else if config.permissions.approval_policy.value() == AskForApproval::Never
-            && *config.permissions.sandbox_policy.get() == SandboxPolicy::DangerFullAccess
+            && sandbox_policy == SandboxPolicy::DangerFullAccess
         {
             "Full Access".to_string()
         } else {

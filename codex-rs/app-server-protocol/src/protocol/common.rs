@@ -30,6 +30,11 @@ pub enum AuthMode {
     #[ts(rename = "chatgptAuthTokens")]
     #[strum(serialize = "chatgptAuthTokens")]
     ChatgptAuthTokens,
+    /// Programmatic Codex auth backed by a registered Agent Identity.
+    #[serde(rename = "agentIdentity")]
+    #[ts(rename = "agentIdentity")]
+    #[strum(serialize = "agentIdentity")]
+    AgentIdentity,
 }
 
 macro_rules! experimental_reason_expr {
@@ -280,6 +285,21 @@ client_request_definitions! {
         params: v2::ThreadSetNameParams,
         response: v2::ThreadSetNameResponse,
     },
+    #[experimental("thread/goal/set")]
+    ThreadGoalSet => "thread/goal/set" {
+        params: v2::ThreadGoalSetParams,
+        response: v2::ThreadGoalSetResponse,
+    },
+    #[experimental("thread/goal/get")]
+    ThreadGoalGet => "thread/goal/get" {
+        params: v2::ThreadGoalGetParams,
+        response: v2::ThreadGoalGetResponse,
+    },
+    #[experimental("thread/goal/clear")]
+    ThreadGoalClear => "thread/goal/clear" {
+        params: v2::ThreadGoalClearParams,
+        response: v2::ThreadGoalClearResponse,
+    },
     ThreadMetadataUpdate => "thread/metadata/update" {
         params: v2::ThreadMetadataUpdateParams,
         response: v2::ThreadMetadataUpdateResponse,
@@ -288,6 +308,11 @@ client_request_definitions! {
     ThreadMemoryModeSet => "thread/memoryMode/set" {
         params: v2::ThreadMemoryModeSetParams,
         response: v2::ThreadMemoryModeSetResponse,
+    },
+    #[experimental("memory/reset")]
+    MemoryReset => "memory/reset" {
+        params: #[ts(type = "undefined")] #[serde(skip_serializing_if = "Option::is_none")] Option<()>,
+        response: v2::MemoryResetResponse,
     },
     ThreadUnarchive => "thread/unarchive" {
         params: v2::ThreadUnarchiveParams,
@@ -300,6 +325,10 @@ client_request_definitions! {
     ThreadShellCommand => "thread/shellCommand" {
         params: v2::ThreadShellCommandParams,
         response: v2::ThreadShellCommandResponse,
+    },
+    ThreadApproveGuardianDeniedAction => "thread/approveGuardianDeniedAction" {
+        params: v2::ThreadApproveGuardianDeniedActionParams,
+        response: v2::ThreadApproveGuardianDeniedActionResponse,
     },
     #[experimental("thread/backgroundTerminals/clean")]
     ThreadBackgroundTerminalsClean => "thread/backgroundTerminals/clean" {
@@ -322,6 +351,10 @@ client_request_definitions! {
         params: v2::ThreadReadParams,
         response: v2::ThreadReadResponse,
     },
+    ThreadTurnsList => "thread/turns/list" {
+        params: v2::ThreadTurnsListParams,
+        response: v2::ThreadTurnsListResponse,
+    },
     /// Append raw Responses API items to the thread history without starting a user turn.
     ThreadInjectItems => "thread/inject_items" {
         params: v2::ThreadInjectItemsParams,
@@ -330,6 +363,18 @@ client_request_definitions! {
     SkillsList => "skills/list" {
         params: v2::SkillsListParams,
         response: v2::SkillsListResponse,
+    },
+    MarketplaceAdd => "marketplace/add" {
+        params: v2::MarketplaceAddParams,
+        response: v2::MarketplaceAddResponse,
+    },
+    MarketplaceRemove => "marketplace/remove" {
+        params: v2::MarketplaceRemoveParams,
+        response: v2::MarketplaceRemoveResponse,
+    },
+    MarketplaceUpgrade => "marketplace/upgrade" {
+        params: v2::MarketplaceUpgradeParams,
+        response: v2::MarketplaceUpgradeResponse,
     },
     PluginList => "plugin/list" {
         params: v2::PluginListParams,
@@ -342,6 +387,18 @@ client_request_definitions! {
     AppsList => "app/list" {
         params: v2::AppsListParams,
         response: v2::AppsListResponse,
+    },
+    DeviceKeyCreate => "device/key/create" {
+        params: v2::DeviceKeyCreateParams,
+        response: v2::DeviceKeyCreateResponse,
+    },
+    DeviceKeyPublic => "device/key/public" {
+        params: v2::DeviceKeyPublicParams,
+        response: v2::DeviceKeyPublicResponse,
+    },
+    DeviceKeySign => "device/key/sign" {
+        params: v2::DeviceKeySignParams,
+        response: v2::DeviceKeySignResponse,
     },
     FsReadFile => "fs/readFile" {
         params: v2::FsReadFileParams,
@@ -509,6 +566,11 @@ client_request_definitions! {
     GetAccountRateLimits => "account/rateLimits/read" {
         params: #[ts(type = "undefined")] #[serde(skip_serializing_if = "Option::is_none")] Option<()>,
         response: v2::GetAccountRateLimitsResponse,
+    },
+
+    SendAddCreditsNudgeEmail => "account/sendAddCreditsNudgeEmail" {
+        params: v2::SendAddCreditsNudgeEmailParams,
+        response: v2::SendAddCreditsNudgeEmailResponse,
     },
 
     FeedbackUpload => "feedback/upload" {
@@ -755,6 +817,7 @@ macro_rules! server_notification_definitions {
             Display,
             ExperimentalApi,
         )]
+        #[allow(clippy::large_enum_variant)]
         #[serde(tag = "method", content = "params", rename_all = "camelCase")]
         #[strum(serialize_all = "camelCase")]
         pub enum ServerNotification {
@@ -979,6 +1042,10 @@ server_notification_definitions! {
     ThreadClosed => "thread/closed" (v2::ThreadClosedNotification),
     SkillsChanged => "skills/changed" (v2::SkillsChangedNotification),
     ThreadNameUpdated => "thread/name/updated" (v2::ThreadNameUpdatedNotification),
+    #[experimental("thread/goal/updated")]
+    ThreadGoalUpdated => "thread/goal/updated" (v2::ThreadGoalUpdatedNotification),
+    #[experimental("thread/goal/cleared")]
+    ThreadGoalCleared => "thread/goal/cleared" (v2::ThreadGoalClearedNotification),
     ThreadTokenUsageUpdated => "thread/tokenUsage/updated" (v2::ThreadTokenUsageUpdatedNotification),
     TurnStarted => "turn/started" (v2::TurnStartedNotification),
     HookStarted => "hook/started" (v2::HookStartedNotification),
@@ -1000,6 +1067,7 @@ server_notification_definitions! {
     CommandExecutionOutputDelta => "item/commandExecution/outputDelta" (v2::CommandExecutionOutputDeltaNotification),
     TerminalInteraction => "item/commandExecution/terminalInteraction" (v2::TerminalInteractionNotification),
     FileChangeOutputDelta => "item/fileChange/outputDelta" (v2::FileChangeOutputDeltaNotification),
+    FileChangePatchUpdated => "item/fileChange/patchUpdated" (v2::FileChangePatchUpdatedNotification),
     ServerRequestResolved => "serverRequest/resolved" (v2::ServerRequestResolvedNotification),
     McpToolCallProgress => "item/mcpToolCall/progress" (v2::McpToolCallProgressNotification),
     McpServerOauthLoginCompleted => "mcpServer/oauthLogin/completed" (v2::McpServerOauthLoginCompletedNotification),
@@ -1007,6 +1075,7 @@ server_notification_definitions! {
     AccountUpdated => "account/updated" (v2::AccountUpdatedNotification),
     AccountRateLimitsUpdated => "account/rateLimits/updated" (v2::AccountRateLimitsUpdatedNotification),
     AppListUpdated => "app/list/updated" (v2::AppListUpdatedNotification),
+    ExternalAgentConfigImportCompleted => "externalAgentConfig/import/completed" (v2::ExternalAgentConfigImportCompletedNotification),
     FsChanged => "fs/changed" (v2::FsChangedNotification),
     ReasoningSummaryTextDelta => "item/reasoning/summaryTextDelta" (v2::ReasoningSummaryTextDeltaNotification),
     ReasoningSummaryPartAdded => "item/reasoning/summaryPartAdded" (v2::ReasoningSummaryPartAddedNotification),
@@ -1014,6 +1083,9 @@ server_notification_definitions! {
     /// Deprecated: Use `ContextCompaction` item type instead.
     ContextCompacted => "thread/compacted" (v2::ContextCompactedNotification),
     ModelRerouted => "model/rerouted" (v2::ModelReroutedNotification),
+    ModelVerification => "model/verification" (v2::ModelVerificationNotification),
+    Warning => "warning" (v2::WarningNotification),
+    GuardianWarning => "guardianWarning" (v2::GuardianWarningNotification),
     DeprecationNotice => "deprecationNotice" (v2::DeprecationNoticeNotification),
     ConfigWarning => "configWarning" (v2::ConfigWarningNotification),
     FuzzyFileSearchSessionUpdated => "fuzzyFileSearch/sessionUpdated" (FuzzyFileSearchSessionUpdatedNotification),
@@ -1022,8 +1094,10 @@ server_notification_definitions! {
     ThreadRealtimeStarted => "thread/realtime/started" (v2::ThreadRealtimeStartedNotification),
     #[experimental("thread/realtime/itemAdded")]
     ThreadRealtimeItemAdded => "thread/realtime/itemAdded" (v2::ThreadRealtimeItemAddedNotification),
-    #[experimental("thread/realtime/transcriptUpdated")]
-    ThreadRealtimeTranscriptUpdated => "thread/realtime/transcriptUpdated" (v2::ThreadRealtimeTranscriptUpdatedNotification),
+    #[experimental("thread/realtime/transcript/delta")]
+    ThreadRealtimeTranscriptDelta => "thread/realtime/transcript/delta" (v2::ThreadRealtimeTranscriptDeltaNotification),
+    #[experimental("thread/realtime/transcript/done")]
+    ThreadRealtimeTranscriptDone => "thread/realtime/transcript/done" (v2::ThreadRealtimeTranscriptDoneNotification),
     #[experimental("thread/realtime/outputAudio/delta")]
     ThreadRealtimeOutputAudioDelta => "thread/realtime/outputAudio/delta" (v2::ThreadRealtimeOutputAudioDeltaNotification),
     #[experimental("thread/realtime/sdp")]
@@ -1056,22 +1130,23 @@ mod tests {
     use codex_protocol::account::PlanType;
     use codex_protocol::parse_command::ParsedCommand;
     use codex_protocol::protocol::RealtimeConversationVersion;
+    use codex_protocol::protocol::RealtimeOutputModality;
+    use codex_protocol::protocol::RealtimeVoice;
     use codex_utils_absolute_path::AbsolutePathBuf;
+    use codex_utils_absolute_path::test_support::PathBufExt;
+    use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use std::path::PathBuf;
 
     fn absolute_path_string(path: &str) -> String {
-        let trimmed = path.trim_start_matches('/');
-        if cfg!(windows) {
-            format!(r"C:\{}", trimmed.replace('/', "\\"))
-        } else {
-            format!("/{trimmed}")
-        }
+        let path = format!("/{}", path.trim_start_matches('/'));
+        test_path_buf(&path).display().to_string()
     }
 
     fn absolute_path(path: &str) -> AbsolutePathBuf {
-        AbsolutePathBuf::from_absolute_path(absolute_path_string(path)).expect("absolute path")
+        let path = format!("/{}", path.trim_start_matches('/'));
+        test_path_buf(&path).abs()
     }
 
     #[test]
@@ -1389,6 +1464,7 @@ mod tests {
 
     #[test]
     fn serialize_client_response() -> Result<()> {
+        let cwd = absolute_path("/tmp");
         let response = ClientResponse::ThreadStart {
             request_id: RequestId::Integer(7),
             response: v2::ThreadStartResponse {
@@ -1402,7 +1478,7 @@ mod tests {
                     updated_at: 2,
                     status: v2::ThreadStatus::Idle,
                     path: None,
-                    cwd: PathBuf::from("/tmp"),
+                    cwd: cwd.clone(),
                     cli_version: "0.0.0".to_string(),
                     source: v2::SessionSource::Exec,
                     agent_nickname: None,
@@ -1414,11 +1490,17 @@ mod tests {
                 model: "gpt-5".to_string(),
                 model_provider: "openai".to_string(),
                 service_tier: None,
-                cwd: PathBuf::from("/tmp"),
-                instruction_sources: vec![PathBuf::from("/tmp/AGENTS.md")],
+                cwd,
+                instruction_sources: vec![absolute_path("/tmp/AGENTS.md")],
                 approval_policy: v2::AskForApproval::OnFailure,
                 approvals_reviewer: v2::ApprovalsReviewer::User,
                 sandbox: v2::SandboxPolicy::DangerFullAccess,
+                permission_profile: Some(
+                    codex_protocol::models::PermissionProfile::from_legacy_sandbox_policy(
+                        &codex_protocol::protocol::SandboxPolicy::DangerFullAccess,
+                    )
+                    .into(),
+                ),
                 reasoning_effort: None,
             },
         };
@@ -1442,7 +1524,7 @@ mod tests {
                             "type": "idle"
                         },
                         "path": null,
-                        "cwd": "/tmp",
+                        "cwd": absolute_path_string("tmp"),
                         "cliVersion": "0.0.0",
                         "source": "exec",
                         "agentNickname": null,
@@ -1454,12 +1536,15 @@ mod tests {
                     "model": "gpt-5",
                     "modelProvider": "openai",
                     "serviceTier": null,
-                    "cwd": "/tmp",
-                    "instructionSources": ["/tmp/AGENTS.md"],
+                    "cwd": absolute_path_string("tmp"),
+                    "instructionSources": [absolute_path_string("tmp/AGENTS.md")],
                     "approvalPolicy": "on-failure",
                     "approvalsReviewer": "user",
                     "sandbox": {
                         "type": "dangerFullAccess"
+                    },
+                    "permissionProfile": {
+                        "type": "disabled"
                     },
                     "reasoningEffort": null
                 }
@@ -1784,10 +1869,11 @@ mod tests {
             request_id: RequestId::Integer(9),
             params: v2::ThreadRealtimeStartParams {
                 thread_id: "thr_123".to_string(),
+                output_modality: RealtimeOutputModality::Audio,
                 prompt: Some(Some("You are on a call".to_string())),
                 session_id: Some("sess_456".to_string()),
                 transport: None,
-                voice: Some(codex_protocol::protocol::RealtimeVoice::Marin),
+                voice: Some(RealtimeVoice::Marin),
             },
         };
         assert_eq!(
@@ -1796,6 +1882,7 @@ mod tests {
                 "id": 9,
                 "params": {
                     "threadId": "thr_123",
+                    "outputModality": "audio",
                     "prompt": "You are on a call",
                     "sessionId": "sess_456",
                     "transport": null,
@@ -1813,6 +1900,7 @@ mod tests {
             request_id: RequestId::Integer(9),
             params: v2::ThreadRealtimeStartParams {
                 thread_id: "thr_123".to_string(),
+                output_modality: RealtimeOutputModality::Audio,
                 prompt: None,
                 session_id: None,
                 transport: None,
@@ -1825,6 +1913,7 @@ mod tests {
                 "id": 9,
                 "params": {
                     "threadId": "thr_123",
+                    "outputModality": "audio",
                     "sessionId": null,
                     "transport": null,
                     "voice": null
@@ -1837,6 +1926,7 @@ mod tests {
             request_id: RequestId::Integer(9),
             params: v2::ThreadRealtimeStartParams {
                 thread_id: "thr_123".to_string(),
+                output_modality: RealtimeOutputModality::Audio,
                 prompt: Some(None),
                 session_id: None,
                 transport: None,
@@ -1849,6 +1939,7 @@ mod tests {
                 "id": 9,
                 "params": {
                     "threadId": "thr_123",
+                    "outputModality": "audio",
                     "prompt": null,
                     "sessionId": null,
                     "transport": null,
@@ -1863,6 +1954,7 @@ mod tests {
             "id": 9,
             "params": {
                 "threadId": "thr_123",
+                "outputModality": "audio",
                 "sessionId": null,
                 "transport": null,
                 "voice": null
@@ -1878,6 +1970,7 @@ mod tests {
             "id": 9,
             "params": {
                 "threadId": "thr_123",
+                "outputModality": "audio",
                 "prompt": null,
                 "sessionId": null,
                 "transport": null,
@@ -1962,6 +2055,7 @@ mod tests {
             request_id: RequestId::Integer(1),
             params: v2::ThreadRealtimeStartParams {
                 thread_id: "thr_123".to_string(),
+                output_modality: RealtimeOutputModality::Audio,
                 prompt: Some(Some("You are on a call".to_string())),
                 session_id: None,
                 transport: None,
@@ -1971,6 +2065,76 @@ mod tests {
         let reason = crate::experimental_api::ExperimentalApi::experimental_reason(&request);
         assert_eq!(reason, Some("thread/realtime/start"));
     }
+
+    #[test]
+    fn thread_goal_methods_are_marked_experimental() {
+        let set_request = ClientRequest::ThreadGoalSet {
+            request_id: RequestId::Integer(1),
+            params: v2::ThreadGoalSetParams {
+                thread_id: "thr_123".to_string(),
+                objective: Some("ship goal mode".to_string()),
+                status: Some(v2::ThreadGoalStatus::Active),
+                token_budget: Some(Some(10_000)),
+            },
+        };
+        let get_request = ClientRequest::ThreadGoalGet {
+            request_id: RequestId::Integer(2),
+            params: v2::ThreadGoalGetParams {
+                thread_id: "thr_123".to_string(),
+            },
+        };
+        let clear_request = ClientRequest::ThreadGoalClear {
+            request_id: RequestId::Integer(3),
+            params: v2::ThreadGoalClearParams {
+                thread_id: "thr_123".to_string(),
+            },
+        };
+
+        assert_eq!(
+            crate::experimental_api::ExperimentalApi::experimental_reason(&set_request),
+            Some("thread/goal/set")
+        );
+        assert_eq!(
+            crate::experimental_api::ExperimentalApi::experimental_reason(&get_request),
+            Some("thread/goal/get")
+        );
+        assert_eq!(
+            crate::experimental_api::ExperimentalApi::experimental_reason(&clear_request),
+            Some("thread/goal/clear")
+        );
+    }
+
+    #[test]
+    fn thread_goal_notifications_are_marked_experimental() {
+        let goal = v2::ThreadGoal {
+            thread_id: "thr_123".to_string(),
+            objective: "ship goal mode".to_string(),
+            status: v2::ThreadGoalStatus::Active,
+            token_budget: Some(10_000),
+            tokens_used: 123,
+            time_used_seconds: 45,
+            created_at: 1_700_000_000,
+            updated_at: 1_700_000_123,
+        };
+        let updated = ServerNotification::ThreadGoalUpdated(v2::ThreadGoalUpdatedNotification {
+            thread_id: "thr_123".to_string(),
+            turn_id: None,
+            goal,
+        });
+        let cleared = ServerNotification::ThreadGoalCleared(v2::ThreadGoalClearedNotification {
+            thread_id: "thr_123".to_string(),
+        });
+
+        assert_eq!(
+            crate::experimental_api::ExperimentalApi::experimental_reason(&updated),
+            Some("thread/goal/updated")
+        );
+        assert_eq!(
+            crate::experimental_api::ExperimentalApi::experimental_reason(&cleared),
+            Some("thread/goal/cleared")
+        );
+    }
+
     #[test]
     fn thread_realtime_started_notification_is_marked_experimental() {
         let notification =
@@ -2018,6 +2182,8 @@ mod tests {
                 file_system: Some(v2::AdditionalFileSystemPermissions {
                     read: Some(vec![absolute_path("/tmp/allowed")]),
                     write: None,
+                    glob_scan_max_depth: None,
+                    entries: None,
                 }),
             }),
             proposed_execpolicy_amendment: None,

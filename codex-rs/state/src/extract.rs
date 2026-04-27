@@ -177,7 +177,6 @@ mod tests {
             content: vec![ContentItem::InputText {
                 text: "hello from response item".to_string(),
             }],
-            end_turn: None,
             phase: None,
         });
 
@@ -301,7 +300,9 @@ mod tests {
                 timezone: None,
                 approval_policy: AskForApproval::Never,
                 sandbox_policy: SandboxPolicy::DangerFullAccess,
+                permission_profile: None,
                 network: None,
+                file_system_sandbox_policy: None,
                 model: "gpt-5".to_string(),
                 personality: None,
                 collaboration_mode: None,
@@ -339,7 +340,9 @@ mod tests {
                 timezone: None,
                 approval_policy: AskForApproval::OnRequest,
                 sandbox_policy: SandboxPolicy::new_read_only_policy(),
+                permission_profile: None,
                 network: None,
+                file_system_sandbox_policy: None,
                 model: "gpt-5".to_string(),
                 personality: None,
                 collaboration_mode: None,
@@ -371,7 +374,9 @@ mod tests {
                 timezone: None,
                 approval_policy: AskForApproval::OnRequest,
                 sandbox_policy: SandboxPolicy::new_read_only_policy(),
+                permission_profile: None,
                 network: None,
+                file_system_sandbox_policy: None,
                 model: "gpt-5".to_string(),
                 personality: None,
                 collaboration_mode: None,

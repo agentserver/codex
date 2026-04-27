@@ -6,20 +6,23 @@
 pub use crate::mcp_types::AppToolApproval;
 pub use crate::mcp_types::McpServerConfig;
 pub use crate::mcp_types::McpServerDisabledReason;
+pub use crate::mcp_types::McpServerEnvVar;
 pub use crate::mcp_types::McpServerToolConfig;
 pub use crate::mcp_types::McpServerTransportConfig;
 pub use crate::mcp_types::RawMcpServerConfig;
 pub use codex_protocol::config_types::AltScreenMode;
 pub use codex_protocol::config_types::ApprovalsReviewer;
+use codex_protocol::config_types::EnvironmentVariablePattern;
 pub use codex_protocol::config_types::ModeKind;
 pub use codex_protocol::config_types::Personality;
 pub use codex_protocol::config_types::ServiceTier;
+use codex_protocol::config_types::ShellEnvironmentPolicy;
+use codex_protocol::config_types::ShellEnvironmentPolicyInherit;
 pub use codex_protocol::config_types::WebSearchMode;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fmt;
-use wildmatch::WildMatchPattern;
 
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -31,6 +34,10 @@ pub const DEFAULT_MEMORIES_MAX_ROLLOUT_AGE_DAYS: i64 = 30;
 pub const DEFAULT_MEMORIES_MIN_ROLLOUT_IDLE_HOURS: i64 = 6;
 pub const DEFAULT_MEMORIES_MAX_RAW_MEMORIES_FOR_CONSOLIDATION: usize = 256;
 pub const DEFAULT_MEMORIES_MAX_UNUSED_DAYS: i64 = 30;
+const MIN_MEMORIES_MAX_RAW_MEMORIES_FOR_CONSOLIDATION: usize = 1;
+const MAX_MEMORIES_MAX_RAW_MEMORIES_FOR_CONSOLIDATION: usize = 4096;
+const MIN_MEMORIES_MAX_ROLLOUTS_PER_STARTUP: usize = 1;
+const MAX_MEMORIES_MAX_ROLLOUTS_PER_STARTUP: usize = 128;
 
 const fn default_enabled() -> bool {
     true
@@ -178,19 +185,22 @@ pub struct ToolSuggestConfig {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct MemoriesToml {
-    /// When `true`, web searches and MCP tool calls mark the thread `memory_mode` as `"polluted"`.
-    pub no_memories_if_mcp_or_web_search: Option<bool>,
+    /// When `true`, external context sources mark the thread `memory_mode` as `"polluted"`.
+    #[serde(alias = "no_memories_if_mcp_or_web_search")]
+    pub disable_on_external_context: Option<bool>,
     /// When `false`, newly created threads are stored with `memory_mode = "disabled"` in the state DB.
     pub generate_memories: Option<bool>,
     /// When `false`, skip injecting memory usage instructions into developer prompts.
     pub use_memories: Option<bool>,
     /// Maximum number of recent raw memories retained for global consolidation.
+    #[schemars(range(min = 1, max = 4096))]
     pub max_raw_memories_for_consolidation: Option<usize>,
     /// Maximum number of days since a memory was last used before it becomes ineligible for phase 2 selection.
     pub max_unused_days: Option<i64>,
     /// Maximum age of the threads used for memories.
     pub max_rollout_age_days: Option<i64>,
     /// Maximum number of rollout candidates processed per pass.
+    #[schemars(range(min = 1, max = 128))]
     pub max_rollouts_per_startup: Option<usize>,
     /// Minimum idle time between last thread activity and memory creation (hours). > 12h recommended.
     pub min_rollout_idle_hours: Option<i64>,
@@ -203,7 +213,7 @@ pub struct MemoriesToml {
 /// Effective memories settings after defaults are applied.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoriesConfig {
-    pub no_memories_if_mcp_or_web_search: bool,
+    pub disable_on_external_context: bool,
     pub generate_memories: bool,
     pub use_memories: bool,
     pub max_raw_memories_for_consolidation: usize,
@@ -218,7 +228,7 @@ pub struct MemoriesConfig {
 impl Default for MemoriesConfig {
     fn default() -> Self {
         Self {
-            no_memories_if_mcp_or_web_search: false,
+            disable_on_external_context: false,
             generate_memories: true,
             use_memories: true,
             max_raw_memories_for_consolidation: DEFAULT_MEMORIES_MAX_RAW_MEMORIES_FOR_CONSOLIDATION,
@@ -236,15 +246,18 @@ impl From<MemoriesToml> for MemoriesConfig {
     fn from(toml: MemoriesToml) -> Self {
         let defaults = Self::default();
         Self {
-            no_memories_if_mcp_or_web_search: toml
-                .no_memories_if_mcp_or_web_search
-                .unwrap_or(defaults.no_memories_if_mcp_or_web_search),
+            disable_on_external_context: toml
+                .disable_on_external_context
+                .unwrap_or(defaults.disable_on_external_context),
             generate_memories: toml.generate_memories.unwrap_or(defaults.generate_memories),
             use_memories: toml.use_memories.unwrap_or(defaults.use_memories),
             max_raw_memories_for_consolidation: toml
                 .max_raw_memories_for_consolidation
                 .unwrap_or(defaults.max_raw_memories_for_consolidation)
-                .min(4096),
+                .clamp(
+                    MIN_MEMORIES_MAX_RAW_MEMORIES_FOR_CONSOLIDATION,
+                    MAX_MEMORIES_MAX_RAW_MEMORIES_FOR_CONSOLIDATION,
+                ),
             max_unused_days: toml
                 .max_unused_days
                 .unwrap_or(defaults.max_unused_days)
@@ -256,7 +269,10 @@ impl From<MemoriesToml> for MemoriesConfig {
             max_rollouts_per_startup: toml
                 .max_rollouts_per_startup
                 .unwrap_or(defaults.max_rollouts_per_startup)
-                .min(128),
+                .clamp(
+                    MIN_MEMORIES_MAX_ROLLOUTS_PER_STARTUP,
+                    MAX_MEMORIES_MAX_ROLLOUTS_PER_STARTUP,
+                ),
             min_rollout_idle_hours: toml
                 .min_rollout_idle_hours
                 .unwrap_or(defaults.min_rollout_idle_hours)
@@ -518,6 +534,9 @@ pub struct ModelAvailabilityNuxConfig {
     pub shown_count: HashMap<String, u32>,
 }
 
+/// Fallback resize-reflow row cap when Codex cannot identify a terminal-specific scrollback size.
+pub const DEFAULT_TERMINAL_RESIZE_REFLOW_FALLBACK_MAX_ROWS: usize = 1_000;
+
 /// Collection of settings that are specific to the TUI.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -570,6 +589,13 @@ pub struct Tui {
     /// Startup tooltip availability NUX state persisted by the TUI.
     #[serde(default)]
     pub model_availability_nux: ModelAvailabilityNuxConfig,
+
+    /// Trim terminal resize-reflow replay to the most recent rendered terminal rows when the
+    /// transcript exceeds this cap. Omit to use Codex's terminal-specific default. Set to `0` to
+    /// keep all rendered rows.
+    #[serde(default)]
+    #[schemars(range(min = 0))]
+    pub terminal_resize_reflow_max_rows: Option<usize>,
 }
 
 const fn default_true() -> bool {
@@ -579,12 +605,30 @@ const fn default_true() -> bool {
 /// Settings for notices we display to users via the tui and app-server clients
 /// (primarily the Codex IDE extension). NOTE: these are different from
 /// notifications - notices are warnings, NUX screens, acknowledgements, etc.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ExternalConfigMigrationPrompts {
+    /// Tracks whether home-level external config migration prompts are hidden.
+    pub home: Option<bool>,
+    /// Tracks the last time the home-level external config migration prompt was shown.
+    pub home_last_prompted_at: Option<i64>,
+    /// Tracks which project paths have opted out of external config migration prompts.
+    #[serde(default)]
+    pub projects: BTreeMap<String, bool>,
+    /// Tracks the last time a project-level external config migration prompt was shown.
+    #[serde(default)]
+    pub project_last_prompted_at: BTreeMap<String, i64>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct Notice {
     /// Tracks whether the user has acknowledged the full access warning prompt.
     pub hide_full_access_warning: Option<bool>,
     /// Tracks whether the user has acknowledged the Windows world-writable directories warning.
     pub hide_world_writable_warning: Option<bool>,
+    /// Tracks whether the user opted out of Codex-managed fast defaults.
+    pub fast_default_opt_out: Option<bool>,
     /// Tracks whether the user opted out of the rate limit model switch reminder.
     pub hide_rate_limit_model_nudge: Option<bool>,
     /// Tracks whether the user has seen the model migration prompt
@@ -595,6 +639,9 @@ pub struct Notice {
     /// Tracks acknowledged model migrations as old->new model slug mappings.
     #[serde(default)]
     pub model_migrations: BTreeMap<String, String>,
+    /// Tracks scopes where external config migration prompts should be suppressed.
+    #[serde(default)]
+    pub external_config_migration_prompts: ExternalConfigMigrationPrompts,
 }
 
 pub use crate::skills_config::BundledSkillsConfig;
@@ -614,6 +661,9 @@ pub struct MarketplaceConfig {
     /// Last time Codex successfully added or refreshed this marketplace.
     #[serde(default)]
     pub last_updated: Option<String>,
+    /// Git revision Codex last successfully activated for this marketplace.
+    #[serde(default)]
+    pub last_revision: Option<String>,
     /// Source kind used to install this marketplace.
     #[serde(default)]
     pub source_type: Option<MarketplaceSourceType>,
@@ -632,6 +682,7 @@ pub struct MarketplaceConfig {
 #[serde(rename_all = "snake_case")]
 pub enum MarketplaceSourceType {
     Git,
+    Local,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
@@ -658,21 +709,6 @@ impl From<SandboxWorkspaceWrite> for codex_app_server_protocol::SandboxSettings 
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum ShellEnvironmentPolicyInherit {
-    /// "Core" environment variables for the platform. On UNIX, this would
-    /// include HOME, LOGNAME, PATH, SHELL, and USER, among others.
-    Core,
-
-    /// Inherits the full environment from the parent process.
-    #[default]
-    All,
-
-    /// Do not inherit any environment variables from the parent process.
-    None,
-}
-
 /// Policy for building the `env` when spawning a process via either the
 /// `shell` or `local_shell` tool.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
@@ -691,37 +727,6 @@ pub struct ShellEnvironmentPolicyToml {
     pub include_only: Option<Vec<String>>,
 
     pub experimental_use_profile: Option<bool>,
-}
-
-pub type EnvironmentVariablePattern = WildMatchPattern<'*', '?'>;
-
-/// Deriving the `env` based on this policy works as follows:
-/// 1. Create an initial map based on the `inherit` policy.
-/// 2. If `ignore_default_excludes` is false, filter the map using the default
-///    exclude pattern(s), which are: `"*KEY*"`, `"*SECRET*"`, and `"*TOKEN*"`.
-/// 3. If `exclude` is not empty, filter the map using the provided patterns.
-/// 4. Insert any entries from `r#set` into the map.
-/// 5. If non-empty, filter the map using the `include_only` patterns.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ShellEnvironmentPolicy {
-    /// Starting point when building the environment.
-    pub inherit: ShellEnvironmentPolicyInherit,
-
-    /// True to skip the check to exclude default environment variables that
-    /// contain "KEY", "SECRET", or "TOKEN" in their name. Defaults to true.
-    pub ignore_default_excludes: bool,
-
-    /// Environment variable names to exclude from the environment.
-    pub exclude: Vec<EnvironmentVariablePattern>,
-
-    /// (key, value) pairs to insert in the environment.
-    pub r#set: HashMap<String, String>,
-
-    /// Environment variable names to retain in the environment.
-    pub include_only: Vec<EnvironmentVariablePattern>,
-
-    /// If true, the shell profile will be used to run the command.
-    pub use_profile: bool,
 }
 
 impl From<ShellEnvironmentPolicyToml> for ShellEnvironmentPolicy {
@@ -751,19 +756,6 @@ impl From<ShellEnvironmentPolicyToml> for ShellEnvironmentPolicy {
             r#set,
             include_only,
             use_profile,
-        }
-    }
-}
-
-impl Default for ShellEnvironmentPolicy {
-    fn default() -> Self {
-        Self {
-            inherit: ShellEnvironmentPolicyInherit::All,
-            ignore_default_excludes: true,
-            exclude: Vec::new(),
-            r#set: HashMap::new(),
-            include_only: Vec::new(),
-            use_profile: false,
         }
     }
 }

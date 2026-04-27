@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::sync::Arc;
@@ -41,6 +42,7 @@ struct TestToolServer {
 
 const MEMO_URI: &str = "memo://codex/example-note";
 const MEMO_CONTENT: &str = "This is a sample MCP resource served by the rmcp test server.";
+const SANDBOX_STATE_META_CAPABILITY: &str = "codex/sandbox-state-meta";
 const SMALL_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
 
 pub fn stdio() -> (tokio::io::Stdin, tokio::io::Stdout) {
@@ -49,12 +51,28 @@ pub fn stdio() -> (tokio::io::Stdin, tokio::io::Stdout) {
 
 impl TestToolServer {
     fn new() -> Self {
+        #[expect(clippy::expect_used)]
+        let sandbox_meta_schema: JsonObject = serde_json::from_value(serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }))
+        .expect("sandbox_meta tool schema should deserialize");
+        let mut sandbox_meta_tool = Tool::new(
+            Cow::Borrowed("sandbox_meta"),
+            Cow::Borrowed("Return the MCP request metadata received by this test server."),
+            Arc::new(sandbox_meta_schema),
+        );
+        sandbox_meta_tool.annotations = Some(ToolAnnotations::new().read_only(true));
+
         let tools = vec![
             Self::echo_tool(),
             Self::echo_dash_tool(),
+            Self::cwd_tool(),
             Self::sync_tool(),
             Self::image_tool(),
             Self::image_scenario_tool(),
+            sandbox_meta_tool,
         ];
         let resources = vec![Self::memo_resource()];
         let resource_templates = vec![Self::memo_template()];
@@ -107,12 +125,41 @@ impl TestToolServer {
                         { "type": "string" },
                         { "type": "null" }
                     ]
-                }
+                },
             },
             "required": ["echo", "env"],
             "additionalProperties": false
         }))
         .expect("echo tool output schema should deserialize");
+        tool.output_schema = Some(Arc::new(output_schema));
+        tool.annotations = Some(ToolAnnotations::new().read_only(true));
+        tool
+    }
+
+    fn cwd_tool() -> Tool {
+        #[expect(clippy::expect_used)]
+        let schema: JsonObject = serde_json::from_value(json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }))
+        .expect("cwd tool schema should deserialize");
+
+        let mut tool = Tool::new(
+            Cow::Borrowed("cwd"),
+            Cow::Borrowed("Return the current working directory of this test server process."),
+            Arc::new(schema),
+        );
+        #[expect(clippy::expect_used)]
+        let output_schema: JsonObject = serde_json::from_value(json!({
+            "type": "object",
+            "properties": {
+                "cwd": { "type": "string" }
+            },
+            "required": ["cwd"],
+            "additionalProperties": false
+        }))
+        .expect("cwd tool output schema should deserialize");
         tool.output_schema = Some(Arc::new(output_schema));
         tool.annotations = Some(ToolAnnotations::new().read_only(true));
         tool
@@ -191,6 +238,7 @@ impl TestToolServer {
     ///   - `codex mcp add mcpimg -- /abs/path/to/test_stdio_server`
     /// - Then in Codex TUI, ask it to call:
     ///   - `mcpimg.image_scenario({"scenario":"image_only"})`
+    ///   - `mcpimg.image_scenario({"scenario":"image_only_original_detail"})`
     ///   - `mcpimg.image_scenario({"scenario":"text_then_image","caption":"Here is the image:"})`
     ///   - `mcpimg.image_scenario({"scenario":"invalid_base64_then_image"})`
     ///   - `mcpimg.image_scenario({"scenario":"invalid_image_bytes_then_image"})`
@@ -207,6 +255,7 @@ impl TestToolServer {
                     "type": "string",
                     "enum": [
                         "image_only",
+                        "image_only_original_detail",
                         "text_then_image",
                         "invalid_base64_then_image",
                         "invalid_image_bytes_then_image",
@@ -273,7 +322,6 @@ impl TestToolServer {
 #[derive(Deserialize)]
 struct EchoArgs {
     message: String,
-    #[allow(dead_code)]
     env_var: Option<String>,
 }
 
@@ -322,6 +370,7 @@ fn sync_barrier_map() -> &'static tokio::sync::Mutex<HashMap<String, SyncBarrier
 /// invalid image.
 enum ImageScenario {
     ImageOnly,
+    ImageOnlyOriginalDetail,
     TextThenImage,
     InvalidBase64ThenImage,
     InvalidImageBytesThenImage,
@@ -341,12 +390,18 @@ struct ImageScenarioArgs {
 
 impl ServerHandler for TestToolServer {
     fn get_info(&self) -> ServerInfo {
+        let mut capabilities = ServerCapabilities::builder()
+            .enable_tools()
+            .enable_tool_list_changed()
+            .enable_resources()
+            .build();
+        capabilities.experimental = Some(BTreeMap::from([(
+            SANDBOX_STATE_META_CAPABILITY.to_string(),
+            JsonObject::new(),
+        )]));
+
         ServerInfo {
-            capabilities: ServerCapabilities::builder()
-                .enable_tools()
-                .enable_tool_list_changed()
-                .enable_resources()
-                .build(),
+            capabilities,
             ..ServerInfo::default()
         }
     }
@@ -418,9 +473,26 @@ impl ServerHandler for TestToolServer {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+        context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         match request.name.as_ref() {
+            "sandbox_meta" => Ok(CallToolResult {
+                content: Vec::new(),
+                structured_content: Some(serde_json::Value::Object(context.meta.0)),
+                is_error: Some(false),
+                meta: None,
+            }),
+            "cwd" => {
+                let cwd = std::env::current_dir()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .map_err(|err| McpError::internal_error(err.to_string(), None))?;
+                Ok(CallToolResult {
+                    content: Vec::new(),
+                    structured_content: Some(json!({ "cwd": cwd })),
+                    is_error: Some(false),
+                    meta: None,
+                })
+            }
             "echo" | "echo-tool" => {
                 let args: EchoArgs = match request.arguments {
                     Some(arguments) => serde_json::from_value(serde_json::Value::Object(
@@ -436,9 +508,10 @@ impl ServerHandler for TestToolServer {
                 };
 
                 let env_snapshot: HashMap<String, String> = std::env::vars().collect();
+                let env_name = args.env_var.as_deref().unwrap_or("MCP_TEST_VALUE");
                 let structured_content = json!({
                     "echo": format!("ECHOING: {}", args.message),
-                    "env": env_snapshot.get("MCP_TEST_VALUE"),
+                    "env": env_snapshot.get(env_name),
                 });
 
                 Ok(CallToolResult {
@@ -522,6 +595,21 @@ impl TestToolServer {
         match args.scenario {
             ImageScenario::ImageOnly => {
                 content.push(rmcp::model::Content::image(valid_data_b64, mime_type));
+            }
+            ImageScenario::ImageOnlyOriginalDetail => {
+                let mut meta = rmcp::model::Meta::new();
+                meta.insert(
+                    "codex/imageDetail".to_string(),
+                    serde_json::json!("original"),
+                );
+                content.push(rmcp::model::Annotated::new(
+                    rmcp::model::RawContent::Image(rmcp::model::RawImageContent {
+                        data: valid_data_b64,
+                        mime_type,
+                        meta: Some(meta),
+                    }),
+                    None,
+                ));
             }
             ImageScenario::TextThenImage => {
                 content.push(rmcp::model::Content::text(caption));

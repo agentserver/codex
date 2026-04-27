@@ -91,9 +91,11 @@ fn numbered_mcp_tools(count: usize) -> HashMap<String, ToolInfo> {
         .collect()
 }
 
-fn tool_names_with_defer_loading(exposure: &McpToolExposure, defer_loading: bool) -> Vec<String> {
-    let mut names = exposure
-        .tools
+fn tool_names_with_defer_loading(
+    exposed_tools: &HashMap<String, McpToolInput>,
+    defer_loading: bool,
+) -> Vec<String> {
+    let mut names = exposed_tools
         .iter()
         .filter_map(|(name, tool)| (tool.defer_loading == defer_loading).then_some(name.clone()))
         .collect::<Vec<_>>();
@@ -127,7 +129,7 @@ async fn directly_exposes_small_candidate_tool_sets() {
     let tools_config = tools_config_for_mcp_tool_exposure(/*search_tool*/ true).await;
     let mcp_tools = numbered_mcp_tools(DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD - 1);
 
-    let exposure = build_mcp_tool_exposure(
+    let exposed_tools = build_mcp_tool_exposure(
         &mcp_tools,
         /*connectors*/ None,
         &[],
@@ -135,11 +137,12 @@ async fn directly_exposes_small_candidate_tool_sets() {
         &tools_config,
     );
 
-    let direct_tool_names = tool_names_with_defer_loading(&exposure, /*defer_loading*/ false);
+    let direct_tool_names =
+        tool_names_with_defer_loading(&exposed_tools, /*defer_loading*/ false);
     let mut expected_tool_names: Vec<_> = mcp_tools.keys().cloned().collect();
     expected_tool_names.sort();
     assert_eq!(direct_tool_names, expected_tool_names);
-    assert!(exposure.tools.values().all(|tool| !tool.defer_loading));
+    assert!(exposed_tools.values().all(|tool| !tool.defer_loading));
 }
 
 #[tokio::test]
@@ -148,7 +151,7 @@ async fn searches_large_candidate_tool_sets() {
     let tools_config = tools_config_for_mcp_tool_exposure(/*search_tool*/ true).await;
     let mcp_tools = numbered_mcp_tools(DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD);
 
-    let exposure = build_mcp_tool_exposure(
+    let exposed_tools = build_mcp_tool_exposure(
         &mcp_tools,
         /*connectors*/ None,
         &[],
@@ -156,7 +159,8 @@ async fn searches_large_candidate_tool_sets() {
         &tools_config,
     );
 
-    let deferred_tool_names = tool_names_with_defer_loading(&exposure, /*defer_loading*/ true);
+    let deferred_tool_names =
+        tool_names_with_defer_loading(&exposed_tools, /*defer_loading*/ true);
     let mut expected_tool_names: Vec<_> = mcp_tools.keys().cloned().collect();
     expected_tool_names.sort();
     assert_eq!(deferred_tool_names, expected_tool_names);
@@ -178,7 +182,7 @@ async fn directly_exposes_explicit_apps_without_deferred_overlap() {
     )]);
     let connectors = vec![make_connector("calendar", "Calendar")];
 
-    let exposure = build_mcp_tool_exposure(
+    let exposed_tools = build_mcp_tool_exposure(
         &mcp_tools,
         Some(connectors.as_slice()),
         connectors.as_slice(),
@@ -186,12 +190,13 @@ async fn directly_exposes_explicit_apps_without_deferred_overlap() {
         &tools_config,
     );
 
-    let tool_names = tool_names_with_defer_loading(&exposure, /*defer_loading*/ false);
+    let tool_names = tool_names_with_defer_loading(&exposed_tools, /*defer_loading*/ false);
     assert_eq!(
         tool_names,
         vec!["mcp__codex_apps__calendar_create_event".to_string()]
     );
-    let deferred_tool_names = tool_names_with_defer_loading(&exposure, /*defer_loading*/ true);
+    let deferred_tool_names =
+        tool_names_with_defer_loading(&exposed_tools, /*defer_loading*/ true);
     assert_eq!(
         deferred_tool_names.len(),
         DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD - 1
@@ -233,7 +238,7 @@ async fn always_defer_feature_preserves_explicit_apps() {
     ]);
     let connectors = vec![make_connector("calendar", "Calendar")];
 
-    let exposure = build_mcp_tool_exposure(
+    let exposed_tools = build_mcp_tool_exposure(
         &mcp_tools,
         Some(connectors.as_slice()),
         connectors.as_slice(),
@@ -241,12 +246,14 @@ async fn always_defer_feature_preserves_explicit_apps() {
         &tools_config,
     );
 
-    let direct_tool_names = tool_names_with_defer_loading(&exposure, /*defer_loading*/ false);
+    let direct_tool_names =
+        tool_names_with_defer_loading(&exposed_tools, /*defer_loading*/ false);
     assert_eq!(
         direct_tool_names,
         vec!["mcp__codex_apps__calendar_create_event".to_string()]
     );
-    let deferred_tool_names = tool_names_with_defer_loading(&exposure, /*defer_loading*/ true);
+    let deferred_tool_names =
+        tool_names_with_defer_loading(&exposed_tools, /*defer_loading*/ true);
     assert!(deferred_tool_names.contains(&"mcp__rmcp__tool".to_string()));
     assert!(!deferred_tool_names.contains(&"mcp__codex_apps__calendar_create_event".to_string()));
 }

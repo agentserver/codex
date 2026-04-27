@@ -1196,14 +1196,14 @@ pub(crate) async fn built_tools(
     } else {
         Vec::new()
     };
-    let mcp_tool_exposure = build_mcp_tool_exposure(
+    let exposed_mcp_tools = build_mcp_tool_exposure(
         &all_mcp_tools,
         connectors.as_deref(),
         explicitly_enabled.as_slice(),
         &turn_context.config,
         &turn_context.tools_config,
     );
-    let mcp_tools = has_mcp_servers.then_some(mcp_tool_exposure.tools);
+    let mcp_tools = has_mcp_servers.then_some(exposed_mcp_tools);
     let unavailable_called_tools = if turn_context
         .config
         .features

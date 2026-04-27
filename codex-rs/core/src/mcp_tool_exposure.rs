@@ -13,17 +13,13 @@ use crate::tools::mcp_tool_input::McpToolInput;
 
 pub(crate) const DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD: usize = 100;
 
-pub(crate) struct McpToolExposure {
-    pub(crate) tools: HashMap<String, McpToolInput>,
-}
-
 pub(crate) fn build_mcp_tool_exposure(
     all_mcp_tools: &HashMap<String, McpToolInfo>,
     connectors: Option<&[connectors::AppInfo]>,
     explicitly_enabled_connectors: &[connectors::AppInfo],
     config: &Config,
     tools_config: &ToolsConfig,
-) -> McpToolExposure {
+) -> HashMap<String, McpToolInput> {
     let mut candidate_tools = filter_non_codex_apps_mcp_tools_only(all_mcp_tools);
     if let Some(connectors) = connectors {
         candidate_tools.extend(filter_codex_apps_mcp_tools(
@@ -40,20 +36,18 @@ pub(crate) fn build_mcp_tool_exposure(
             || candidate_tools.len() >= DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD);
 
     if !should_defer {
-        return McpToolExposure {
-            tools: candidate_tools
-                .into_iter()
-                .map(|(name, tool_info)| {
-                    (
-                        name,
-                        McpToolInput {
-                            tool_info,
-                            defer_loading: false,
-                        },
-                    )
-                })
-                .collect(),
-        };
+        return candidate_tools
+            .into_iter()
+            .map(|(name, tool_info)| {
+                (
+                    name,
+                    McpToolInput {
+                        tool_info,
+                        defer_loading: false,
+                    },
+                )
+            })
+            .collect();
     }
 
     let direct_tools =
@@ -79,7 +73,7 @@ pub(crate) fn build_mcp_tool_exposure(
         );
     }
 
-    McpToolExposure { tools }
+    tools
 }
 
 fn filter_codex_apps_mcp_tools(

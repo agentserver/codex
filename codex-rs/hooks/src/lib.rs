@@ -6,6 +6,7 @@ mod schema;
 mod types;
 
 pub use engine::inventory::HookInventoryEntry;
+pub use engine::inventory::list_hooks;
 pub use engine::inventory::list_plugin_hooks;
 pub use events::permission_request::PermissionRequestDecision;
 pub use events::permission_request::PermissionRequestOutcome;

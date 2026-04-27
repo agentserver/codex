@@ -256,6 +256,7 @@ use codex_core::config::NetworkProxyAuditMetadata;
 use codex_core::config::ThreadStoreConfig;
 use codex_core::config::edit::ConfigEdit;
 use codex_core::config::edit::ConfigEditsBuilder;
+use codex_core::config::edit::HookConfigEditSelector;
 use codex_core::config_loader::CloudRequirementsLoadError;
 use codex_core::config_loader::CloudRequirementsLoadErrorCode;
 use codex_core::config_loader::project_trust_key;
@@ -6972,13 +6973,11 @@ impl CodexMessageProcessor {
             } else {
                 Vec::new()
             };
-            let hooks = codex_hooks::list_plugin_hooks(
-                Some(&config.config_layer_stack),
-                &plugin_hook_sources,
-            )
-            .into_iter()
-            .map(hook_to_info)
-            .collect();
+            let hooks =
+                codex_hooks::list_hooks(Some(&config.config_layer_stack), &plugin_hook_sources)
+                    .into_iter()
+                    .map(hook_to_info)
+                    .collect();
             data.push(HooksListEntry {
                 cwd,
                 hooks,
@@ -7178,6 +7177,7 @@ impl CodexMessageProcessor {
         let HooksConfigWriteParams {
             source,
             plugin_id,
+            source_path,
             key,
             enabled,
         } = params;
@@ -7201,10 +7201,40 @@ impl CodexMessageProcessor {
                     return;
                 }
                 ConfigEdit::SetHookConfig {
-                    plugin_id,
-                    key,
+                    selector: HookConfigEditSelector::Plugin { plugin_id, key },
                     enabled,
                 }
+            }
+            ApiHookConfigSource::User | ApiHookConfigSource::Project => {
+                let Some(source_path) =
+                    source_path.filter(|source_path| !source_path.as_os_str().is_empty())
+                else {
+                    self.send_invalid_request_error(
+                        request_id,
+                        format!(
+                            "hooks/config/write requires sourcePath when source is {}",
+                            hook_config_source_label(source)
+                        ),
+                    )
+                    .await;
+                    return;
+                };
+                if key.trim().is_empty() {
+                    self.send_invalid_request_error(
+                        request_id,
+                        "hooks/config/write requires a non-empty key".to_string(),
+                    )
+                    .await;
+                    return;
+                }
+                let selector = match source {
+                    ApiHookConfigSource::User => HookConfigEditSelector::User { source_path, key },
+                    ApiHookConfigSource::Project => {
+                        HookConfigEditSelector::Project { source_path, key }
+                    }
+                    ApiHookConfigSource::Plugin => unreachable!("plugin handled above"),
+                };
+                ConfigEdit::SetHookConfig { selector, enabled }
             }
         };
         let result = ConfigEditsBuilder::new(&self.config.codex_home)
@@ -9561,6 +9591,14 @@ fn hook_to_info(hook: HookInventoryEntry) -> HookMetadata {
         source_path: hook.source_path,
         source_relative_path: hook.source_relative_path,
         enabled: hook.enabled,
+    }
+}
+
+fn hook_config_source_label(source: ApiHookConfigSource) -> &'static str {
+    match source {
+        ApiHookConfigSource::Plugin => "plugin",
+        ApiHookConfigSource::User => "user",
+        ApiHookConfigSource::Project => "project",
     }
 }
 

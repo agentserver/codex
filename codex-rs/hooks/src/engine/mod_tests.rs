@@ -18,6 +18,7 @@ use codex_config::TomlValue;
 use codex_plugin::PluginHookSource;
 use codex_plugin::PluginId;
 use codex_protocol::ThreadId;
+use codex_protocol::protocol::HookEventName;
 use codex_protocol::protocol::HookSource;
 use pretty_assertions::assert_eq;
 use tempfile::tempdir;
@@ -28,6 +29,70 @@ use crate::events::pre_tool_use::PreToolUseRequest;
 
 fn cwd() -> AbsolutePathBuf {
     AbsolutePathBuf::current_dir().expect("current dir")
+}
+
+fn config_with_command_hook(event_name: &str, matcher: &str, command: &str) -> TomlValue {
+    let mut root = toml_table();
+    let TomlValue::Table(root_table) = &mut root else {
+        unreachable!("root should be a table");
+    };
+    let mut hooks = toml_table();
+    let TomlValue::Table(hooks_table) = &mut hooks else {
+        unreachable!("hooks should be a table");
+    };
+    let mut group = toml_table();
+    let TomlValue::Table(group_table) = &mut group else {
+        unreachable!("group should be a table");
+    };
+    group_table.insert(
+        "matcher".to_string(),
+        TomlValue::String(matcher.to_string()),
+    );
+    let mut handler = toml_table();
+    let TomlValue::Table(handler_table) = &mut handler else {
+        unreachable!("handler should be a table");
+    };
+    handler_table.insert("type".to_string(), TomlValue::String("command".to_string()));
+    handler_table.insert(
+        "command".to_string(),
+        TomlValue::String(command.to_string()),
+    );
+    group_table.insert("hooks".to_string(), TomlValue::Array(vec![handler]));
+    hooks_table.insert(event_name.to_string(), TomlValue::Array(vec![group]));
+    root_table.insert("hooks".to_string(), hooks);
+    root
+}
+
+fn config_with_project_hook_override(source_path: &AbsolutePathBuf, key: &str) -> TomlValue {
+    let mut root = toml_table();
+    let TomlValue::Table(root_table) = &mut root else {
+        unreachable!("root should be a table");
+    };
+    let mut hooks = toml_table();
+    let TomlValue::Table(hooks_table) = &mut hooks else {
+        unreachable!("hooks should be a table");
+    };
+    let mut config_entry = toml_table();
+    let TomlValue::Table(config_entry_table) = &mut config_entry else {
+        unreachable!("hooks config entry should be a table");
+    };
+    config_entry_table.insert(
+        "source".to_string(),
+        TomlValue::String("project".to_string()),
+    );
+    config_entry_table.insert(
+        "source_path".to_string(),
+        TomlValue::String(source_path.display().to_string()),
+    );
+    config_entry_table.insert("key".to_string(), TomlValue::String(key.to_string()));
+    config_entry_table.insert("enabled".to_string(), TomlValue::Boolean(false));
+    hooks_table.insert("config".to_string(), TomlValue::Array(vec![config_entry]));
+    root_table.insert("hooks".to_string(), hooks);
+    root
+}
+
+fn toml_table() -> TomlValue {
+    TomlValue::Table(Default::default())
 }
 
 fn managed_hooks_for_current_platform(
@@ -499,6 +564,235 @@ fn plugin_hook_sources_can_be_disabled_by_user_config() {
         /*enabled*/ true,
         Some(&config_layer_stack),
         plugin_hook_sources,
+        CommandShell {
+            program: String::new(),
+            args: Vec::new(),
+        },
+    );
+
+    let preview = engine.preview_pre_tool_use(&PreToolUseRequest {
+        session_id: ThreadId::new(),
+        turn_id: "turn-1".to_string(),
+        cwd: cwd(),
+        transcript_path: None,
+        model: "gpt-test".to_string(),
+        permission_mode: "default".to_string(),
+        tool_name: "Bash".to_string(),
+        matcher_aliases: Vec::new(),
+        tool_use_id: "tool-1".to_string(),
+        tool_input: serde_json::json!({ "command": "echo hello" }),
+    });
+
+    assert_eq!(preview, Vec::new());
+}
+
+#[test]
+fn hook_inventory_lists_config_and_plugin_hooks() {
+    let temp = tempdir().expect("create temp dir");
+    let user_config_path =
+        AbsolutePathBuf::try_from(temp.path().join("config.toml")).expect("user config path");
+    let project_dot_codex =
+        AbsolutePathBuf::try_from(temp.path().join("repo/.codex")).expect("project config dir");
+    fs::create_dir_all(project_dot_codex.as_path()).expect("create project .codex");
+    let project_hooks_path = project_dot_codex.join("hooks.json");
+    fs::write(
+        project_hooks_path.as_path(),
+        r#"{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "echo project" }
+        ]
+      }
+    ]
+  }
+}"#,
+    )
+    .expect("write project hooks");
+
+    let user_config = config_with_command_hook("SessionStart", "startup", "echo user");
+    let session_config = config_with_command_hook("Stop", "stop", "echo session");
+    let managed_dir =
+        AbsolutePathBuf::try_from(temp.path().join("managed-hooks")).expect("managed hooks dir");
+    fs::create_dir_all(managed_dir.as_path()).expect("create managed hooks dir");
+    let managed_hooks = managed_hooks_for_current_platform(
+        managed_dir.clone(),
+        HookEventsToml {
+            post_tool_use: vec![MatcherGroup {
+                matcher: Some("Bash".to_string()),
+                hooks: vec![HookHandlerConfig::Command {
+                    command: "echo managed".to_string(),
+                    timeout_sec: None,
+                    r#async: false,
+                    status_message: None,
+                }],
+            }],
+            ..Default::default()
+        },
+    );
+    let plugin_root =
+        AbsolutePathBuf::try_from(temp.path().join("demo-plugin")).expect("plugin root");
+    let plugin_hook_sources = vec![PluginHookSource {
+        plugin_id: PluginId::parse("demo-plugin@test-marketplace").expect("plugin id"),
+        plugin_root: plugin_root.clone(),
+        source_path: plugin_root.join("hooks/hooks.json"),
+        source_relative_path: "hooks/hooks.json".to_string(),
+        hooks: HookEventsToml {
+            pre_tool_use: vec![MatcherGroup {
+                matcher: Some("Read".to_string()),
+                hooks: vec![HookHandlerConfig::Command {
+                    command: "echo plugin".to_string(),
+                    timeout_sec: None,
+                    r#async: false,
+                    status_message: None,
+                }],
+            }],
+            ..Default::default()
+        },
+    }];
+    let config_layer_stack = ConfigLayerStack::new(
+        vec![
+            ConfigLayerEntry::new(
+                ConfigLayerSource::User {
+                    file: user_config_path.clone(),
+                },
+                user_config,
+            ),
+            ConfigLayerEntry::new(
+                ConfigLayerSource::Project {
+                    dot_codex_folder: project_dot_codex,
+                },
+                TomlValue::Table(Default::default()),
+            ),
+            ConfigLayerEntry::new(ConfigLayerSource::SessionFlags, session_config),
+        ],
+        ConfigRequirements {
+            managed_hooks: Some(ConstrainedWithSource::new(
+                Constrained::allow_any(managed_hooks),
+                Some(RequirementSource::SystemRequirementsToml {
+                    file: managed_dir.join("requirements.toml"),
+                }),
+            )),
+            ..ConfigRequirements::default()
+        },
+        ConfigRequirementsToml::default(),
+    )
+    .expect("config layer stack");
+
+    let entries = super::inventory::list_hooks(Some(&config_layer_stack), &plugin_hook_sources);
+    let session_source_path = if cfg!(windows) {
+        AbsolutePathBuf::resolve_path_against_base("<session-flags>/config.toml", r"C:\")
+    } else {
+        AbsolutePathBuf::resolve_path_against_base("<session-flags>/config.toml", "/")
+    };
+    let summary: Vec<_> = entries
+        .into_iter()
+        .map(|entry| {
+            (
+                entry.source,
+                entry.event_name,
+                entry.key,
+                entry.source_path,
+                entry.enabled,
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        summary,
+        vec![
+            (
+                HookSource::System,
+                HookEventName::PostToolUse,
+                "PostToolUse:0:0".to_string(),
+                managed_dir,
+                true,
+            ),
+            (
+                HookSource::User,
+                HookEventName::SessionStart,
+                "SessionStart:0:0".to_string(),
+                user_config_path,
+                true,
+            ),
+            (
+                HookSource::Project,
+                HookEventName::PreToolUse,
+                "PreToolUse:0:0".to_string(),
+                project_hooks_path,
+                true,
+            ),
+            (
+                HookSource::SessionFlags,
+                HookEventName::Stop,
+                "Stop:0:0".to_string(),
+                session_source_path,
+                true,
+            ),
+            (
+                HookSource::Plugin,
+                HookEventName::PreToolUse,
+                "hooks/hooks.json:PreToolUse:0:0".to_string(),
+                plugin_root.join("hooks/hooks.json"),
+                true,
+            ),
+        ]
+    );
+}
+
+#[test]
+fn project_hook_sources_can_be_disabled_by_user_config() {
+    let temp = tempdir().expect("create temp dir");
+    let user_config_path =
+        AbsolutePathBuf::try_from(temp.path().join("config.toml")).expect("user config path");
+    let project_dot_codex =
+        AbsolutePathBuf::try_from(temp.path().join("repo/.codex")).expect("project config dir");
+    fs::create_dir_all(project_dot_codex.as_path()).expect("create project .codex");
+    let project_hooks_path = project_dot_codex.join("hooks.json");
+    fs::write(
+        project_hooks_path.as_path(),
+        r#"{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "echo project" }
+        ]
+      }
+    ]
+  }
+}"#,
+    )
+    .expect("write project hooks");
+
+    let user_config = config_with_project_hook_override(&project_hooks_path, "PreToolUse:0:0");
+    let config_layer_stack = ConfigLayerStack::new(
+        vec![
+            ConfigLayerEntry::new(
+                ConfigLayerSource::User {
+                    file: user_config_path,
+                },
+                user_config,
+            ),
+            ConfigLayerEntry::new(
+                ConfigLayerSource::Project {
+                    dot_codex_folder: project_dot_codex,
+                },
+                TomlValue::Table(Default::default()),
+            ),
+        ],
+        ConfigRequirements::default(),
+        ConfigRequirementsToml::default(),
+    )
+    .expect("config layer stack");
+
+    let engine = ClaudeHooksEngine::new(
+        /*enabled*/ true,
+        Some(&config_layer_stack),
+        Vec::new(),
         CommandShell {
             program: String::new(),
             args: Vec::new(),

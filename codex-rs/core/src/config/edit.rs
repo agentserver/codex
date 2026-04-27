@@ -61,10 +61,9 @@ pub enum ConfigEdit {
     SetSkillConfig { path: PathBuf, enabled: bool },
     /// Set or clear a skill config entry under `[[skills.config]]` by name.
     SetSkillConfigByName { name: String, enabled: bool },
-    /// Set or clear a plugin hook config entry under `[[hooks.config]]`.
+    /// Set or clear a hook config entry under `[[hooks.config]]`.
     SetHookConfig {
-        plugin_id: String,
-        key: String,
+        selector: HookConfigEditSelector,
         enabled: bool,
     },
     /// Set trust_level under `[projects."<path>"]`,
@@ -86,8 +85,10 @@ enum SkillConfigSelector {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum HookConfigSelector {
+pub enum HookConfigEditSelector {
     Plugin { plugin_id: String, key: String },
+    User { source_path: PathBuf, key: String },
+    Project { source_path: PathBuf, key: String },
 }
 
 /// Produces a config edit that sets `[tui].theme = "<name>"`.
@@ -530,17 +531,9 @@ impl ConfigDocument {
             ConfigEdit::SetSkillConfigByName { name, enabled } => {
                 Ok(self.set_skill_config(SkillConfigSelector::Name(name.clone()), *enabled))
             }
-            ConfigEdit::SetHookConfig {
-                plugin_id,
-                key,
-                enabled,
-            } => Ok(self.set_hook_config(
-                HookConfigSelector::Plugin {
-                    plugin_id: plugin_id.clone(),
-                    key: key.clone(),
-                },
-                *enabled,
-            )),
+            ConfigEdit::SetHookConfig { selector, enabled } => {
+                Ok(self.set_hook_config(selector.clone(), *enabled))
+            }
             ConfigEdit::SetPath { segments, value } => Ok(self.insert(segments, value.clone())),
             ConfigEdit::ClearPath { segments } => Ok(self.clear_owned(segments)),
             ConfigEdit::SetProjectTrustLevel { path, level } => {
@@ -741,20 +734,51 @@ impl ConfigDocument {
         mutated
     }
 
-    fn set_hook_config(&mut self, selector: HookConfigSelector, enabled: bool) -> bool {
+    fn set_hook_config(&mut self, selector: HookConfigEditSelector, enabled: bool) -> bool {
         let selector = match selector {
-            HookConfigSelector::Plugin { plugin_id, key } => HookConfigSelector::Plugin {
+            HookConfigEditSelector::Plugin { plugin_id, key } => HookConfigEditSelector::Plugin {
                 plugin_id: plugin_id.trim().to_string(),
                 key: key.trim().to_string(),
             },
+            HookConfigEditSelector::User { source_path, key } => HookConfigEditSelector::User {
+                source_path,
+                key: key.trim().to_string(),
+            },
+            HookConfigEditSelector::Project { source_path, key } => {
+                HookConfigEditSelector::Project {
+                    source_path,
+                    key: key.trim().to_string(),
+                }
+            }
         };
-        if matches!(
-            &selector,
-            HookConfigSelector::Plugin { plugin_id, key }
-                if plugin_id.is_empty() || key.is_empty()
-        ) {
+        if match &selector {
+            HookConfigEditSelector::Plugin { plugin_id, key } => {
+                plugin_id.is_empty() || key.is_empty()
+            }
+            HookConfigEditSelector::User { source_path, key }
+            | HookConfigEditSelector::Project { source_path, key } => {
+                source_path.as_os_str().is_empty() || key.is_empty()
+            }
+        } {
             return false;
         }
+
+        let selector = match selector {
+            HookConfigEditSelector::Plugin { plugin_id, key } => HookConfigEditSelector::Plugin {
+                plugin_id: plugin_id.trim().to_string(),
+                key: key.trim().to_string(),
+            },
+            HookConfigEditSelector::User { source_path, key } => HookConfigEditSelector::User {
+                source_path: normalize_hook_config_source_path(&source_path),
+                key,
+            },
+            HookConfigEditSelector::Project { source_path, key } => {
+                HookConfigEditSelector::Project {
+                    source_path: normalize_hook_config_source_path(&source_path),
+                    key,
+                }
+            }
+        };
 
         let mut remove_hooks_table = false;
         let mut mutated = false;
@@ -1003,7 +1027,7 @@ fn write_skill_config_selector(table: &mut TomlTable, selector: &SkillConfigSele
     }
 }
 
-fn hook_config_selector_from_table(table: &TomlTable) -> Option<HookConfigSelector> {
+fn hook_config_selector_from_table(table: &TomlTable) -> Option<HookConfigEditSelector> {
     let source = table
         .get("source")
         .and_then(|item| item.as_str())
@@ -1018,24 +1042,60 @@ fn hook_config_selector_from_table(table: &TomlTable) -> Option<HookConfigSelect
         .and_then(|item| item.as_str())
         .map(str::trim)
         .filter(|key| !key.is_empty());
+    let source_path = table
+        .get("source_path")
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .map(|path| normalize_hook_config_source_path(&path));
 
-    match (source, plugin_id, key) {
-        (Some("plugin"), Some(plugin_id), Some(key)) => Some(HookConfigSelector::Plugin {
-            plugin_id: plugin_id.to_string(),
+    match (source, plugin_id, source_path, key) {
+        (Some("plugin"), Some(plugin_id), None, Some(key)) => {
+            Some(HookConfigEditSelector::Plugin {
+                plugin_id: plugin_id.to_string(),
+                key: key.to_string(),
+            })
+        }
+        (Some("user"), None, Some(source_path), Some(key)) => Some(HookConfigEditSelector::User {
+            source_path,
             key: key.to_string(),
         }),
+        (Some("project"), None, Some(source_path), Some(key)) => {
+            Some(HookConfigEditSelector::Project {
+                source_path,
+                key: key.to_string(),
+            })
+        }
         _ => None,
     }
 }
 
-fn write_hook_config_selector(table: &mut TomlTable, selector: &HookConfigSelector) {
+fn write_hook_config_selector(table: &mut TomlTable, selector: &HookConfigEditSelector) {
     match selector {
-        HookConfigSelector::Plugin { plugin_id, key } => {
+        HookConfigEditSelector::Plugin { plugin_id, key } => {
             table["source"] = value("plugin");
             table["plugin_id"] = value(plugin_id.clone());
+            table.remove("source_path");
+            table["key"] = value(key.clone());
+        }
+        HookConfigEditSelector::User { source_path, key } => {
+            table["source"] = value("user");
+            table.remove("plugin_id");
+            table["source_path"] = value(source_path.to_string_lossy().to_string());
+            table["key"] = value(key.clone());
+        }
+        HookConfigEditSelector::Project { source_path, key } => {
+            table["source"] = value("project");
+            table.remove("plugin_id");
+            table["source_path"] = value(source_path.to_string_lossy().to_string());
             table["key"] = value(key.clone());
         }
     }
+}
+
+fn normalize_hook_config_source_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Persist edits using a blocking strategy.

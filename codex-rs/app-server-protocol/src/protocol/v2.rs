@@ -149,7 +149,7 @@ macro_rules! v2_enum_from_core {
     };
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub enum NonSteerableTurnKind {
@@ -4669,6 +4669,8 @@ pub struct HookMetadata {
 #[ts(export_to = "v2/")]
 pub enum HookConfigSource {
     Plugin,
+    User,
+    Project,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -4678,6 +4680,8 @@ pub struct HooksConfigWriteParams {
     pub source: HookConfigSource,
     #[ts(optional = nullable)]
     pub plugin_id: Option<String>,
+    #[ts(optional = nullable)]
+    pub source_path: Option<PathBuf>,
     pub key: String,
     pub enabled: bool,
 }

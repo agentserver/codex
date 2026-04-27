@@ -1,4 +1,5 @@
 use pretty_assertions::assert_eq;
+use std::path::PathBuf;
 
 use super::HookConfig;
 use super::HookConfigSource;
@@ -101,7 +102,33 @@ enabled = false
         vec![HookConfig {
             source: HookConfigSource::Plugin,
             plugin_id: Some("openai-curated/superpowers".to_string()),
+            source_path: None,
             key: "hooks/hooks.json:SessionStart:0:0".to_string(),
+            enabled: false,
+        }]
+    );
+}
+
+#[test]
+fn hook_events_deserialize_project_config_overrides() {
+    let parsed: HookEventsToml = toml::from_str(
+        r#"
+[[config]]
+source = "project"
+source_path = "/repo/.codex/hooks.json"
+key = "PreToolUse:0:0"
+enabled = false
+"#,
+    )
+    .expect("hook config TOML should deserialize");
+
+    assert_eq!(
+        parsed.config,
+        vec![HookConfig {
+            source: HookConfigSource::Project,
+            plugin_id: None,
+            source_path: Some(PathBuf::from("/repo/.codex/hooks.json")),
+            key: "PreToolUse:0:0".to_string(),
             enabled: false,
         }]
     );

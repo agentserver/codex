@@ -85,10 +85,12 @@ impl HookEventsToml {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HookConfigSource {
     Plugin,
+    User,
+    Project,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -96,6 +98,8 @@ pub struct HookConfig {
     pub source: HookConfigSource,
     #[serde(default)]
     pub plugin_id: Option<String>,
+    #[serde(default)]
+    pub source_path: Option<PathBuf>,
     pub key: String,
     pub enabled: bool,
 }

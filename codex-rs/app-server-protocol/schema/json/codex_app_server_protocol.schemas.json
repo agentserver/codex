@@ -9617,7 +9617,9 @@
       },
       "HookConfigSource": {
         "enum": [
-          "plugin"
+          "plugin",
+          "user",
+          "project"
         ],
         "type": "string"
       },
@@ -9922,6 +9924,12 @@
           },
           "source": {
             "$ref": "#/definitions/v2/HookConfigSource"
+          },
+          "sourcePath": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [

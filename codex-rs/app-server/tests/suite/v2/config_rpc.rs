@@ -14,6 +14,11 @@ use codex_app_server_protocol::ConfigReadParams;
 use codex_app_server_protocol::ConfigReadResponse;
 use codex_app_server_protocol::ConfigValueWriteParams;
 use codex_app_server_protocol::ConfigWriteResponse;
+use codex_app_server_protocol::HookConfigSource;
+use codex_app_server_protocol::HookEventName;
+use codex_app_server_protocol::HookSource;
+use codex_app_server_protocol::HooksConfigWriteResponse;
+use codex_app_server_protocol::HooksListResponse;
 use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::MergeStrategy;
@@ -42,6 +47,95 @@ fn write_config(codex_home: &TempDir, contents: &str) -> Result<()> {
         codex_home.path().join("config.toml"),
         contents,
     )?)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hooks_list_returns_user_config_hooks() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    write_config(
+        &codex_home,
+        r#"
+[hooks]
+
+[[hooks.SessionStart]]
+matcher = "startup"
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "echo user"
+"#,
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let request_id = mcp
+        .send_raw_request(
+            "hooks/list",
+            Some(json!({
+                "cwds": [codex_home.path()],
+            })),
+        )
+        .await?;
+    let resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    let response: HooksListResponse = to_response(resp)?;
+
+    assert_eq!(response.data.len(), 1);
+    assert_eq!(response.data[0].errors, Vec::new());
+    assert_eq!(response.data[0].hooks.len(), 1);
+    let hook = &response.data[0].hooks[0];
+    assert_eq!(hook.source, HookSource::User);
+    assert_eq!(hook.event_name, HookEventName::SessionStart);
+    assert_eq!(hook.key, "SessionStart:0:0");
+    assert_eq!(hook.enabled, true);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hooks_config_write_persists_project_selector() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let project_hook_path = codex_home.path().join("repo/.codex/hooks.json");
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let request_id = mcp
+        .send_raw_request(
+            "hooks/config/write",
+            Some(json!({
+                "source": HookConfigSource::Project,
+                "sourcePath": project_hook_path.clone(),
+                "key": "PreToolUse:0:0",
+                "enabled": false,
+            })),
+        )
+        .await?;
+    let resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    let response: HooksConfigWriteResponse = to_response(resp)?;
+    assert_eq!(response.effective_enabled, false);
+
+    let contents = std::fs::read_to_string(codex_home.path().join("config.toml"))?;
+    let expected = format!(
+        r#"[[hooks.config]]
+source = "project"
+source_path = "{}"
+key = "PreToolUse:0:0"
+enabled = false
+"#,
+        project_hook_path.display(),
+    );
+    assert_eq!(contents, expected);
+
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

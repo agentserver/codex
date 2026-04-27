@@ -20,6 +20,7 @@ use std::collections::HashMap;
 use super::ConfiguredHandler;
 use super::config_rules::HookConfigRules;
 use super::config_rules::hook_config_key;
+use super::config_rules::local_hook_config_key;
 use crate::events::common::matcher_pattern_for_event;
 use crate::events::common::validate_matcher_pattern;
 use codex_protocol::protocol::HookSource;
@@ -217,7 +218,7 @@ fn append_plugin_hook_sources(
     }
 }
 
-fn managed_hooks_source_path(
+pub(crate) fn managed_hooks_source_path(
     managed_hooks: &ManagedHooksRequirementsToml,
     requirement_source: Option<&RequirementSource>,
     warnings: &mut Vec<String>,
@@ -262,7 +263,7 @@ fn managed_hooks_source_path(
     }
 }
 
-fn load_hooks_json(
+pub(crate) fn load_hooks_json(
     config_folder: Option<&Path>,
     warnings: &mut Vec<String>,
 ) -> Option<(AbsolutePathBuf, HookEventsToml)> {
@@ -305,7 +306,7 @@ fn load_hooks_json(
     (!parsed.hooks.is_empty()).then_some((source_path, parsed.hooks))
 }
 
-fn load_toml_hooks_from_layer(
+pub(crate) fn load_toml_hooks_from_layer(
     layer: &ConfigLayerEntry,
     warnings: &mut Vec<String>,
 ) -> Option<(AbsolutePathBuf, HookEventsToml)> {
@@ -420,19 +421,27 @@ fn append_group_handlers(
     }
 
     for (handler_index, handler) in group_handlers.into_iter().enumerate() {
-        if let Some(plugin) = &source.plugin {
-            let key = hook_config_key(
-                &plugin.source_relative_path,
-                event_name,
-                group_index,
-                handler_index,
-            );
-            if !context
-                .hook_config_rules
-                .enabled_for_plugin_hook(&plugin.plugin_id, &key)
-            {
-                continue;
-            }
+        let (key, plugin_id) = if let Some(plugin) = &source.plugin {
+            (
+                hook_config_key(
+                    &plugin.source_relative_path,
+                    event_name,
+                    group_index,
+                    handler_index,
+                ),
+                Some(plugin.plugin_id.as_str()),
+            )
+        } else {
+            (
+                local_hook_config_key(event_name, group_index, handler_index),
+                None,
+            )
+        };
+        if !context
+            .hook_config_rules
+            .enabled_for_hook(source.source, plugin_id, source.path, &key)
+        {
+            continue;
         }
 
         match handler {
@@ -483,7 +492,7 @@ fn append_group_handlers(
     }
 }
 
-fn hook_source_for_config_layer_source(source: &ConfigLayerSource) -> HookSource {
+pub(crate) fn hook_source_for_config_layer_source(source: &ConfigLayerSource) -> HookSource {
     match source {
         ConfigLayerSource::System { .. } => HookSource::System,
         ConfigLayerSource::User { .. } => HookSource::User,
@@ -497,7 +506,7 @@ fn hook_source_for_config_layer_source(source: &ConfigLayerSource) -> HookSource
     }
 }
 
-fn hook_source_for_requirement_source(source: Option<&RequirementSource>) -> HookSource {
+pub(crate) fn hook_source_for_requirement_source(source: Option<&RequirementSource>) -> HookSource {
     match source {
         Some(RequirementSource::MdmManagedPreferences { .. }) => HookSource::Mdm,
         Some(RequirementSource::SystemRequirementsToml { .. }) => HookSource::System,

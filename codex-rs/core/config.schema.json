@@ -873,6 +873,10 @@
         },
         "source": {
           "$ref": "#/definitions/HookConfigSource"
+        },
+        "source_path": {
+          "default": null,
+          "type": "string"
         }
       },
       "required": [
@@ -884,7 +888,9 @@
     },
     "HookConfigSource": {
       "enum": [
-        "plugin"
+        "plugin",
+        "user",
+        "project"
       ],
       "type": "string"
     },

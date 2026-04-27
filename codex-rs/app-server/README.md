@@ -206,8 +206,8 @@ Example with notification opt-out:
 - `device/key/public` — return a device key's SPKI DER public key as base64 plus its `algorithm` and `protectionClass`.
 - `device/key/sign` — sign one of the accepted structured payload variants with a controller-local device key. The only accepted payload today is `remoteControlClientConnection`, which binds a server-issued `/client` websocket challenge to the enrolled controller device without signing the bearer token itself; this is intentionally not an arbitrary-byte signing API.
 - `skills/config/write` — write user-level skill config by name or absolute path.
-- `hooks/list` — list plugin-bundled hooks for one or more `cwd` values, including stable hook keys and effective per-hook enabled state from user/session config.
-- `hooks/config/write` — write user-level plugin hook enablement config by `pluginId` and stable hook `key`.
+- `hooks/list` — list discovered hooks for one or more `cwd` values, including source metadata, stable hook keys, and effective per-hook enabled state from user/session config.
+- `hooks/config/write` — write user-level hook enablement config for plugin hooks by `pluginId` and for user/project hooks by `sourcePath`.
 - `plugin/install` — install a plugin from a discovered marketplace entry, rejecting marketplace entries marked unavailable for install, install MCPs if any, and return the effective plugin auth policy plus any apps that still need auth (**under development; do not call from production clients yet**).
 - `plugin/uninstall` — uninstall a plugin by id by removing its cached files and clearing its user-level config entry (**under development; do not call from production clients yet**).
 - `mcpServer/oauth/login` — start an OAuth login for a configured MCP server; returns an `authorization_url` and later emits `mcpServer/oauthLogin/completed` once the browser flow finishes.
@@ -1452,7 +1452,7 @@ To enable or disable a skill by name:
 }
 ```
 
-To list plugin-bundled hooks:
+To list discovered hooks:
 
 ```json
 {
@@ -1474,6 +1474,21 @@ To enable or disable a plugin-bundled hook:
     "source": "plugin",
     "pluginId": "demo-plugin@test-marketplace",
     "key": "hooks/hooks.json:PreToolUse:0:0",
+    "enabled": false
+  }
+}
+```
+
+To enable or disable a user or project hook, use the hook's `sourcePath` and `key` returned by `hooks/list`:
+
+```json
+{
+  "method": "hooks/config/write",
+  "id": 30,
+  "params": {
+    "source": "project",
+    "sourcePath": "/Users/alice/project/.codex/hooks.json",
+    "key": "PreToolUse:0:0",
     "enabled": false
   }
 }

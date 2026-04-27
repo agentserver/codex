@@ -6,6 +6,7 @@ use codex_protocol::openai_models::ReasoningEffort;
 use pretty_assertions::assert_eq;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
+use std::path::PathBuf;
 use tempfile::tempdir;
 use toml::Value as TomlValue;
 
@@ -140,8 +141,10 @@ fn set_hook_config_writes_disabled_plugin_entry() {
 
     ConfigEditsBuilder::new(codex_home)
         .with_edits([ConfigEdit::SetHookConfig {
-            plugin_id: "demo-plugin@test-marketplace".to_string(),
-            key: "hooks/hooks.json:PreToolUse:0:0".to_string(),
+            selector: HookConfigEditSelector::Plugin {
+                plugin_id: "demo-plugin@test-marketplace".to_string(),
+                key: "hooks/hooks.json:PreToolUse:0:0".to_string(),
+            },
             enabled: false,
         }])
         .apply_blocking()
@@ -174,8 +177,10 @@ enabled = false
 
     ConfigEditsBuilder::new(codex_home)
         .with_edits([ConfigEdit::SetHookConfig {
-            plugin_id: "demo-plugin@test-marketplace".to_string(),
-            key: "hooks/hooks.json:PreToolUse:0:0".to_string(),
+            selector: HookConfigEditSelector::Plugin {
+                plugin_id: "demo-plugin@test-marketplace".to_string(),
+                key: "hooks/hooks.json:PreToolUse:0:0".to_string(),
+            },
             enabled: true,
         }])
         .apply_blocking()
@@ -183,6 +188,32 @@ enabled = false
 
     let contents = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
     assert_eq!(contents, "");
+}
+
+#[test]
+fn set_hook_config_writes_disabled_project_entry() {
+    let tmp = tempdir().expect("tmpdir");
+    let codex_home = tmp.path();
+
+    ConfigEditsBuilder::new(codex_home)
+        .with_edits([ConfigEdit::SetHookConfig {
+            selector: HookConfigEditSelector::Project {
+                source_path: PathBuf::from("/repo/.codex/hooks.json"),
+                key: "PreToolUse:0:0".to_string(),
+            },
+            enabled: false,
+        }])
+        .apply_blocking()
+        .expect("persist");
+
+    let contents = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
+    let expected = r#"[[hooks.config]]
+source = "project"
+source_path = "/repo/.codex/hooks.json"
+key = "PreToolUse:0:0"
+enabled = false
+"#;
+    assert_eq!(contents, expected);
 }
 
 #[test]

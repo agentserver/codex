@@ -17,6 +17,13 @@ impl HookConfigRules {
     }
 }
 
+/// Build hook enablement rules from config layers that are allowed to override
+/// user preferences.
+///
+/// This intentionally reads only user and session flag layers, including
+/// disabled layers, to match the skills config behavior. Project, managed, and
+/// plugin layers can discover hooks, but they do not get to write user
+/// enablement state.
 pub(crate) fn hook_config_rules_from_stack(
     config_layer_stack: Option<&ConfigLayerStack>,
 ) -> HookConfigRules {
@@ -50,6 +57,8 @@ pub(crate) fn hook_config_rules_from_stack(
             let Some(key) = hook_config_key(&entry) else {
                 continue;
             };
+            // Later layers win: an enabled entry removes a disabled override
+            // for the same key, while a disabled entry inserts it.
             if entry.enabled {
                 disabled_keys.remove(&key);
             } else {

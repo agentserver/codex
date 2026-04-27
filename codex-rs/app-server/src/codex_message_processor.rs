@@ -6910,6 +6910,11 @@ impl CodexMessageProcessor {
             .await;
     }
 
+    /// Handle `hooks/list` by resolving hooks for each requested cwd.
+    ///
+    /// The response includes every discovered hook, including hooks disabled by
+    /// user-level hook config, so clients can render disabled entries and allow
+    /// users to re-enable them later.
     async fn hooks_list(&self, request_id: ConnectionRequestId, params: HooksListParams) {
         let HooksListParams { cwds } = params;
         let cwds = if cwds.is_empty() {
@@ -6968,6 +6973,9 @@ impl CodexMessageProcessor {
                     continue;
                 }
             };
+            // Plugin hook sources are discovered from the same effective plugin
+            // view used by runtime loading, but only when both plugin feature
+            // gates are enabled for this workspace.
             let plugin_hook_sources = plugins_manager
                 .effective_plugin_hook_sources_for_layer_stack(
                     &config_layer_stack,
@@ -7174,6 +7182,11 @@ impl CodexMessageProcessor {
         }
     }
 
+    /// Handle `hooks/config/write` by updating user-level hook enablement.
+    ///
+    /// Hook config is keyed by the stable key returned from `hooks/list`. A
+    /// disabled hook is persisted in `config.toml`; enabling the hook removes
+    /// the user override so future discovery falls back to the default.
     async fn hooks_config_write(
         &self,
         request_id: ConnectionRequestId,

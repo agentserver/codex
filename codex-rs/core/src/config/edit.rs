@@ -724,6 +724,11 @@ impl ConfigDocument {
         mutated
     }
 
+    /// Set or clear a `[[hooks.config]]` entry by hook key.
+    ///
+    /// Disabled state is represented explicitly as `enabled = false`. Enabled
+    /// state is represented by removing the matching override, matching the
+    /// skills config behavior.
     fn set_hook_config(&mut self, key: String, enabled: bool) -> bool {
         let key = key.trim().to_string();
         if key.is_empty() {
@@ -786,6 +791,8 @@ impl ConfigDocument {
                 return false;
             };
 
+            // Only persist negative overrides. Re-enabling removes the entry so
+            // the hook's default discovered state applies again.
             let existing_index = overrides.iter().enumerate().find_map(|(idx, table)| {
                 hook_config_key_from_table(table)
                     .filter(|value| value == &key)
@@ -822,6 +829,8 @@ impl ConfigDocument {
             }
         }
 
+        // Defer removing the parent table until the nested borrows above are
+        // dropped.
         if remove_hooks_table {
             let root = self.doc.as_table_mut();
             root.remove("hooks");

@@ -355,6 +355,9 @@
             "apps": {
               "type": "boolean"
             },
+            "auth_elicitation": {
+              "type": "boolean"
+            },
             "browser_use": {
               "type": "boolean"
             },
@@ -2563,6 +2566,9 @@
           "type": "boolean"
         },
         "apps": {
+          "type": "boolean"
+        },
+        "auth_elicitation": {
           "type": "boolean"
         },
         "browser_use": {

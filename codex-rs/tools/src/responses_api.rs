@@ -122,21 +122,11 @@ pub fn coalesce_loadable_tool_specs(
 pub fn mcp_tool_to_responses_api_tool(
     tool_name: &ToolName,
     tool: &rmcp::model::Tool,
+    defer_loading: bool,
 ) -> Result<ResponsesApiTool, serde_json::Error> {
-    Ok(tool_definition_to_responses_api_tool(
-        parse_mcp_tool(tool)?.renamed(tool_name.name.clone()),
-    ))
-}
-
-pub fn mcp_tool_to_deferred_responses_api_tool(
-    tool_name: &ToolName,
-    tool: &rmcp::model::Tool,
-) -> Result<ResponsesApiTool, serde_json::Error> {
-    Ok(tool_definition_to_responses_api_tool(
-        parse_mcp_tool(tool)?
-            .renamed(tool_name.name.clone())
-            .into_deferred(),
-    ))
+    let mut tool_definition = parse_mcp_tool(tool)?.renamed(tool_name.name.clone());
+    tool_definition.defer_loading = defer_loading;
+    Ok(tool_definition_to_responses_api_tool(tool_definition))
 }
 
 pub fn tool_definition_to_responses_api_tool(tool_definition: ToolDefinition) -> ResponsesApiTool {

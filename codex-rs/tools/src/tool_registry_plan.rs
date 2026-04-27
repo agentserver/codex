@@ -112,10 +112,7 @@ pub fn build_tool_registry_plan(
                 &enabled_tools,
                 &namespace_descriptions,
                 config.code_mode_only_enabled,
-                config.search_tool
-                    && params
-                        .deferred_mcp_tools
-                        .is_some_and(|tools| !tools.is_empty()),
+                config.search_tool && deferred_tools_available(params),
             ),
             /*supports_parallel_tool_calls*/ false,
             config.code_mode_enabled,
@@ -260,29 +257,27 @@ pub fn build_tool_registry_plan(
         plan.register_handler("request_permissions", ToolHandlerKind::RequestPermissions);
     }
 
-    let deferred_dynamic_tools = params
-        .dynamic_tools
-        .iter()
-        .filter(|tool| tool.defer_loading)
-        .collect::<Vec<_>>();
-
-    if config.search_tool
-        && (params.deferred_mcp_tools.is_some() || !deferred_dynamic_tools.is_empty())
-    {
+    let deferred_dynamic_tools_available =
+        params.dynamic_tools.iter().any(|tool| tool.defer_loading);
+    if config.search_tool && deferred_tools_available(params) {
         let mut search_source_infos = params
-            .deferred_mcp_tools
-            .map(|deferred_mcp_tools| {
-                collect_tool_search_source_infos(deferred_mcp_tools.iter().map(|tool| {
-                    ToolSearchSource {
+            .mcp_tools
+            .map(|mcp_tools| {
+                collect_tool_search_source_infos(mcp_tools.iter().filter_map(|tool| {
+                    if !tool.defer_loading {
+                        return None;
+                    }
+
+                    Some(ToolSearchSource {
                         server_name: tool.server_name,
                         connector_name: tool.connector_name,
                         connector_description: tool.connector_description,
-                    }
+                    })
                 }))
             })
             .unwrap_or_default();
 
-        if !deferred_dynamic_tools.is_empty() {
+        if deferred_dynamic_tools_available {
             search_source_infos.push(ToolSearchSourceInfo {
                 name: "Dynamic tools".to_string(),
                 description: Some("Tools provided by the current Codex thread.".to_string()),
@@ -295,12 +290,6 @@ pub fn build_tool_registry_plan(
             config.code_mode_enabled,
         );
         plan.register_handler(TOOL_SEARCH_TOOL_NAME, ToolHandlerKind::ToolSearch);
-
-        if let Some(deferred_mcp_tools) = params.deferred_mcp_tools {
-            for tool in deferred_mcp_tools {
-                plan.register_handler(tool.name.clone(), ToolHandlerKind::Mcp);
-            }
-        }
     }
 
     if config.tool_suggest
@@ -537,7 +526,11 @@ pub fn build_tool_registry_plan(
                 });
             let mut tools = Vec::new();
             for tool in entries {
-                match mcp_tool_to_responses_api_tool(&tool.name, tool.tool) {
+                match mcp_tool_to_responses_api_tool(
+                    &tool.name,
+                    tool.tool,
+                    /*defer_loading*/ tool.defer_loading,
+                ) {
                     Ok(converted_tool) => {
                         tools.push(ResponsesApiNamespaceTool::Function(converted_tool));
                         plan.register_handler(tool.name, ToolHandlerKind::Mcp);
@@ -590,6 +583,13 @@ pub fn build_tool_registry_plan(
     }
 
     plan
+}
+
+fn deferred_tools_available(params: ToolRegistryPlanParams<'_>) -> bool {
+    params
+        .mcp_tools
+        .is_some_and(|tools| tools.iter().any(|tool| tool.defer_loading))
+        || params.dynamic_tools.iter().any(|tool| tool.defer_loading)
 }
 
 fn compare_code_mode_tools(

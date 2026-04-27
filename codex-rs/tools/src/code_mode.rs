@@ -82,7 +82,7 @@ pub fn collect_code_mode_exec_prompt_tool_definitions<'a>(
 ) -> Vec<CodeModeToolDefinition> {
     let mut tool_definitions = specs
         .into_iter()
-        .flat_map(code_mode_tool_definitions_for_spec)
+        .flat_map(code_mode_exec_prompt_tool_definitions_for_spec)
         .filter(|definition| codex_code_mode::is_code_mode_nested_tool(&definition.name))
         .collect::<Vec<_>>();
     tool_definitions.sort_by(|left, right| left.name.cmp(&right.name));
@@ -178,8 +178,22 @@ fn code_mode_tool_definition_for_spec(spec: &ToolSpec) -> Option<CodeModeToolDef
 }
 
 fn code_mode_tool_definitions_for_spec(spec: &ToolSpec) -> Vec<CodeModeToolDefinition> {
+    code_mode_tool_definitions_for_spec_with_deferred(spec, /*include_deferred*/ true)
+}
+
+fn code_mode_exec_prompt_tool_definitions_for_spec(spec: &ToolSpec) -> Vec<CodeModeToolDefinition> {
+    code_mode_tool_definitions_for_spec_with_deferred(spec, /*include_deferred*/ false)
+}
+
+fn code_mode_tool_definitions_for_spec_with_deferred(
+    spec: &ToolSpec,
+    include_deferred: bool,
+) -> Vec<CodeModeToolDefinition> {
     match spec {
         ToolSpec::Function(tool) => {
+            if !include_deferred && tool.defer_loading == Some(true) {
+                return Vec::new();
+            }
             let name = tool.name.clone();
             vec![CodeModeToolDefinition {
                 tool_name: ToolName::plain(name.clone()),
@@ -204,17 +218,20 @@ fn code_mode_tool_definitions_for_spec(spec: &ToolSpec) -> Vec<CodeModeToolDefin
         ToolSpec::Namespace(namespace) => namespace
             .tools
             .iter()
-            .map(|tool| match tool {
+            .filter_map(|tool| match tool {
                 ResponsesApiNamespaceTool::Function(tool) => {
+                    if !include_deferred && tool.defer_loading == Some(true) {
+                        return None;
+                    }
                     let tool_name = ToolName::namespaced(namespace.name.clone(), tool.name.clone());
-                    CodeModeToolDefinition {
+                    Some(CodeModeToolDefinition {
                         name: code_mode_name_for_tool_name(&tool_name),
                         tool_name,
                         description: tool.description.clone(),
                         kind: CodeModeToolKind::Function,
                         input_schema: serde_json::to_value(&tool.parameters).ok(),
                         output_schema: tool.output_schema.clone(),
-                    }
+                    })
                 }
             })
             .collect(),

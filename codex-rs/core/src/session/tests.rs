@@ -463,7 +463,6 @@ fn test_tool_runtime(session: Arc<Session>, turn_context: Arc<TurnContext>) -> T
         &turn_context.tools_config,
         crate::tools::router::ToolRouterParams {
             mcp_tools: None,
-            deferred_mcp_tools: None,
             unavailable_called_tools: Vec::new(),
             parallel_mcp_server_names: HashSet::new(),
             discoverable_tools: None,
@@ -7359,11 +7358,21 @@ async fn fatal_tool_error_stops_turn_and_reports_error() {
             .list_all_tools()
             .await
     };
-    let deferred_mcp_tools = Some(tools.clone());
+    let tools = tools
+        .into_iter()
+        .map(|(name, tool_info)| {
+            (
+                name,
+                crate::tools::mcp_tool_input::McpToolInput {
+                    tool_info,
+                    defer_loading: false,
+                },
+            )
+        })
+        .collect();
     let router = ToolRouter::from_config(
         &turn_context.tools_config,
         crate::tools::router::ToolRouterParams {
-            deferred_mcp_tools,
             mcp_tools: Some(tools),
             unavailable_called_tools: Vec::new(),
             parallel_mcp_server_names: HashSet::new(),

@@ -3,11 +3,12 @@ use super::ResponsesApiNamespace;
 use super::ResponsesApiNamespaceTool;
 use super::ResponsesApiTool;
 use super::dynamic_tool_to_responses_api_tool;
-use super::mcp_tool_to_deferred_responses_api_tool;
+use super::mcp_tool_to_responses_api_tool;
 use super::tool_definition_to_responses_api_tool;
 use crate::JsonSchema;
 use crate::ToolDefinition;
 use crate::ToolName;
+use crate::mcp_call_tool_result_output_schema;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -86,7 +87,7 @@ fn dynamic_tool_to_responses_api_tool_preserves_defer_loading() {
 }
 
 #[test]
-fn mcp_tool_to_deferred_responses_api_tool_sets_defer_loading() {
+fn mcp_tool_to_responses_api_tool_sets_defer_loading_from_argument() {
     let tool = rmcp::model::Tool {
         name: "lookup_order".to_string().into(),
         title: None,
@@ -107,9 +108,10 @@ fn mcp_tool_to_deferred_responses_api_tool_sets_defer_loading() {
     };
 
     assert_eq!(
-        mcp_tool_to_deferred_responses_api_tool(
+        mcp_tool_to_responses_api_tool(
             &ToolName::namespaced("mcp__codex_apps__", "lookup_order"),
             &tool,
+            /*defer_loading*/ true,
         )
         .expect("convert deferred tool"),
         ResponsesApiTool {
@@ -125,7 +127,7 @@ fn mcp_tool_to_deferred_responses_api_tool_sets_defer_loading() {
                 Some(vec!["order_id".to_string()]),
                 Some(false.into())
             ),
-            output_schema: None,
+            output_schema: Some(mcp_call_tool_result_output_schema(json!({}))),
         }
     );
 }

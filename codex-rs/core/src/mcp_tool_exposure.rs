@@ -9,12 +9,12 @@ use codex_tools::ToolsConfig;
 
 use crate::config::Config;
 use crate::connectors;
+use crate::tools::mcp_tool_input::McpToolInput;
 
 pub(crate) const DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD: usize = 100;
 
 pub(crate) struct McpToolExposure {
-    pub(crate) direct_tools: HashMap<String, McpToolInfo>,
-    pub(crate) deferred_tools: Option<HashMap<String, McpToolInfo>>,
+    pub(crate) tools: HashMap<String, McpToolInput>,
 }
 
 pub(crate) fn build_mcp_tool_exposure(
@@ -24,9 +24,9 @@ pub(crate) fn build_mcp_tool_exposure(
     config: &Config,
     tools_config: &ToolsConfig,
 ) -> McpToolExposure {
-    let mut deferred_tools = filter_non_codex_apps_mcp_tools_only(all_mcp_tools);
+    let mut candidate_tools = filter_non_codex_apps_mcp_tools_only(all_mcp_tools);
     if let Some(connectors) = connectors {
-        deferred_tools.extend(filter_codex_apps_mcp_tools(
+        candidate_tools.extend(filter_codex_apps_mcp_tools(
             all_mcp_tools,
             connectors,
             config,
@@ -37,25 +37,49 @@ pub(crate) fn build_mcp_tool_exposure(
         && (config
             .features
             .enabled(Feature::ToolSearchAlwaysDeferMcpTools)
-            || deferred_tools.len() >= DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD);
+            || candidate_tools.len() >= DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD);
 
     if !should_defer {
         return McpToolExposure {
-            direct_tools: deferred_tools,
-            deferred_tools: None,
+            tools: candidate_tools
+                .into_iter()
+                .map(|(name, tool_info)| {
+                    (
+                        name,
+                        McpToolInput {
+                            tool_info,
+                            defer_loading: false,
+                        },
+                    )
+                })
+                .collect(),
         };
     }
 
     let direct_tools =
         filter_codex_apps_mcp_tools(all_mcp_tools, explicitly_enabled_connectors, config);
-    for direct_tool_name in direct_tools.keys() {
-        deferred_tools.remove(direct_tool_name);
+    let mut tools = HashMap::new();
+    for (name, tool_info) in direct_tools {
+        candidate_tools.remove(&name);
+        tools.insert(
+            name,
+            McpToolInput {
+                tool_info,
+                defer_loading: false,
+            },
+        );
+    }
+    for (name, tool_info) in candidate_tools {
+        tools.insert(
+            name,
+            McpToolInput {
+                tool_info,
+                defer_loading: true,
+            },
+        );
     }
 
-    McpToolExposure {
-        direct_tools,
-        deferred_tools: (!deferred_tools.is_empty()).then_some(deferred_tools),
-    }
+    McpToolExposure { tools }
 }
 
 fn filter_codex_apps_mcp_tools(

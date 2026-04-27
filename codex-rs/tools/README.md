@@ -37,7 +37,6 @@ schema and Responses API tool primitives that no longer need to live in
 - `dynamic_tool_to_loadable_tool_spec()`
 - `dynamic_tool_to_responses_api_tool()`
 - `mcp_tool_to_responses_api_tool()`
-- `mcp_tool_to_deferred_responses_api_tool()`
 - `augment_tool_spec_for_code_mode()`
 - `tool_spec_to_code_mode_tool_definition()`
 

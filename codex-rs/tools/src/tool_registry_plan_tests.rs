@@ -14,7 +14,6 @@ use crate::ResponsesApiWebSearchUserLocation;
 use crate::ToolHandlerSpec;
 use crate::ToolName;
 use crate::ToolNamespace;
-use crate::ToolRegistryPlanDeferredTool;
 use crate::ToolRegistryPlanMcpTool;
 use crate::ToolsConfigParams;
 use crate::WaitAgentTimeoutOptions;
@@ -60,12 +59,7 @@ fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&config, /*mcp_tools*/ None, &[]);
 
     let mut actual = BTreeMap::new();
     let mut duplicate_names = Vec::new();
@@ -172,12 +166,7 @@ fn test_build_specs_collab_tools_enabled() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
 
     assert_contains_tool_names(
         &tools,
@@ -210,12 +199,7 @@ fn goal_tools_require_goals_feature() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
     assert_lacks_tool_name(&tools, "get_goal");
     assert_lacks_tool_name(&tools, "create_goal");
     assert_lacks_tool_name(&tools, "update_goal");
@@ -231,12 +215,7 @@ fn goal_tools_require_goals_feature() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
     assert_contains_tool_names(&tools, &["get_goal", "create_goal", "update_goal"]);
 }
 
@@ -257,12 +236,7 @@ fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
 
     assert_contains_tool_names(
         &tools,
@@ -400,12 +374,7 @@ fn test_build_specs_enable_fanout_enables_agent_jobs_and_collab_tools() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
 
     assert_contains_tool_names(
         &tools,
@@ -435,12 +404,7 @@ fn view_image_tool_omits_detail_without_original_detail_support() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
     let view_image = find_tool(&tools, VIEW_IMAGE_TOOL_NAME);
     let ToolSpec::Function(ResponsesApiTool { parameters, .. }) = &view_image.spec else {
         panic!("view_image should be a function tool");
@@ -465,12 +429,7 @@ fn view_image_tool_includes_detail_with_original_detail_support() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
     let view_image = find_tool(&tools, VIEW_IMAGE_TOOL_NAME);
     let ToolSpec::Function(ResponsesApiTool { parameters, .. }) = &view_image.spec else {
         panic!("view_image should be a function tool");
@@ -506,12 +465,7 @@ fn disabled_environment_omits_environment_backed_tools() {
     tools_config
         .experimental_supported_tools
         .push("list_dir".to_string());
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
 
     assert_lacks_tool_name(&tools, "exec_command");
     assert_lacks_tool_name(&tools, "write_stdin");
@@ -540,12 +494,7 @@ fn test_build_specs_agent_job_worker_tools_enabled() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
 
     assert_contains_tool_names(
         &tools,
@@ -577,12 +526,7 @@ fn request_user_input_description_reflects_default_mode_feature_flag() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
     let request_user_input_tool = find_tool(&tools, REQUEST_USER_INPUT_TOOL_NAME);
     assert_eq!(
         request_user_input_tool.spec,
@@ -600,12 +544,7 @@ fn request_user_input_description_reflects_default_mode_feature_flag() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
     let request_user_input_tool = find_tool(&tools, REQUEST_USER_INPUT_TOOL_NAME);
     assert_eq!(
         request_user_input_tool.spec,
@@ -628,12 +567,7 @@ fn request_permissions_requires_feature_flag() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
     assert_lacks_tool_name(&tools, "request_permissions");
 
     let mut features = Features::with_defaults();
@@ -648,12 +582,7 @@ fn request_permissions_requires_feature_flag() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
     let request_permissions_tool = find_tool(&tools, "request_permissions");
     assert_eq!(
         request_permissions_tool.spec,
@@ -677,12 +606,7 @@ fn request_permissions_tool_is_independent_from_additional_permissions() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
 
     assert_lacks_tool_name(&tools, "request_permissions");
 }
@@ -708,12 +632,7 @@ fn image_generation_tools_require_feature_and_supported_model() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (default_tools, _) = build_specs(
-        &default_tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (default_tools, _) = build_specs(&default_tools_config, /*mcp_tools*/ None, &[]);
     assert!(
         !default_tools
             .iter()
@@ -731,12 +650,7 @@ fn image_generation_tools_require_feature_and_supported_model() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (supported_tools, _) = build_specs(
-        &supported_tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (supported_tools, _) = build_specs(&supported_tools_config, /*mcp_tools*/ None, &[]);
     assert_contains_tool_names(&supported_tools, &["image_generation"]);
     let image_generation_tool = find_tool(&supported_tools, "image_generation");
     assert_eq!(
@@ -757,12 +671,7 @@ fn image_generation_tools_require_feature_and_supported_model() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
     assert!(
         !tools
             .iter()
@@ -787,12 +696,7 @@ fn web_search_mode_cached_sets_external_web_access_false() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
 
     let tool = find_tool(&tools, "web_search");
     assert_eq!(
@@ -823,12 +727,7 @@ fn web_search_mode_live_sets_external_web_access_true() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
 
     let tool = find_tool(&tools, "web_search");
     assert_eq!(
@@ -873,12 +772,7 @@ fn web_search_config_is_forwarded_to_tool_spec() {
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     })
     .with_web_search_config(Some(web_search_config.clone()));
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
 
     let tool = find_tool(&tools, "web_search");
     assert_eq!(
@@ -914,12 +808,7 @@ fn web_search_tool_type_text_and_image_sets_search_content_types() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
 
     let tool = find_tool(&tools, "web_search");
     assert_eq!(
@@ -949,12 +838,7 @@ fn mcp_resource_tools_are_hidden_without_mcp_servers() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
 
     assert!(
         !tools.iter().any(|tool| matches!(
@@ -980,12 +864,7 @@ fn mcp_resource_tools_are_included_when_mcp_servers_are_present() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        Some(HashMap::new()),
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, Some(Vec::new()), &[]);
 
     assert_contains_tool_names(
         &tools,
@@ -1014,12 +893,7 @@ fn test_parallel_support_flags() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
 
     assert!(find_tool(&tools, "exec_command").supports_parallel_tool_calls);
     assert!(!find_tool(&tools, "write_stdin").supports_parallel_tool_calls);
@@ -1041,12 +915,7 @@ fn test_test_model_info_includes_sync_tool() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
 
     assert!(tools.iter().any(|tool| tool.name() == "test_sync_tool"));
 }
@@ -1069,30 +938,32 @@ fn test_build_specs_mcp_tools_converted() {
     });
     let (tools, _) = build_specs(
         &tools_config,
-        Some(HashMap::from([(
-            ToolName::namespaced("test_server/", "do_something_cool"),
-            mcp_tool(
-                "do_something_cool",
-                "Do something cool",
-                serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "string_argument": { "type": "string" },
-                        "number_argument": { "type": "number" },
-                        "object_argument": {
-                            "type": "object",
-                            "properties": {
-                                "string_property": { "type": "string" },
-                                "number_property": { "type": "number" },
+        Some(mcp_tool_inputs(
+            HashMap::from([(
+                ToolName::namespaced("test_server/", "do_something_cool"),
+                mcp_tool(
+                    "do_something_cool",
+                    "Do something cool",
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "string_argument": { "type": "string" },
+                            "number_argument": { "type": "number" },
+                            "object_argument": {
+                                "type": "object",
+                                "properties": {
+                                    "string_property": { "type": "string" },
+                                    "number_property": { "type": "number" },
+                                },
+                                "required": ["string_property", "number_property"],
+                                "additionalProperties": false,
                             },
-                            "required": ["string_property", "number_property"],
-                            "additionalProperties": false,
                         },
-                    },
-                }),
-            ),
-        )])),
-        /*deferred_mcp_tools*/ None,
+                    }),
+                ),
+            )]),
+            /*defer_loading*/ false,
+        )),
         &[],
     );
 
@@ -1161,15 +1032,17 @@ fn test_build_specs_mcp_namespace_description_falls_back_when_missing() {
     });
     let (tools, _) = build_specs(
         &tools_config,
-        Some(HashMap::from([(
-            ToolName::namespaced("test_server/", "do_something_cool"),
-            mcp_tool(
-                "do_something_cool",
-                "Do something cool",
-                serde_json::json!({"type": "object"}),
-            ),
-        )])),
-        /*deferred_mcp_tools*/ None,
+        Some(mcp_tool_inputs(
+            HashMap::from([(
+                ToolName::namespaced("test_server/", "do_something_cool"),
+                mcp_tool(
+                    "do_something_cool",
+                    "Do something cool",
+                    serde_json::json!({"type": "object"}),
+                ),
+            )]),
+            /*defer_loading*/ false,
+        )),
         &[],
     );
 
@@ -1217,8 +1090,7 @@ fn test_build_specs_mcp_tools_sorted_by_name() {
 
     let (tools, _) = build_specs(
         &tools_config,
-        Some(tools_map),
-        /*deferred_mcp_tools*/ None,
+        Some(mcp_tool_inputs(tools_map, /*defer_loading*/ false)),
         &[],
     );
 
@@ -1250,9 +1122,8 @@ fn search_tool_description_lists_each_mcp_source_once() {
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
 
-    let (tools, handlers) = build_specs(
-        &tools_config,
-        Some(HashMap::from([
+    let mut mcp_tools = mcp_tool_inputs(
+        HashMap::from([
             (
                 ToolName::namespaced("mcp__codex_apps__calendar", "_create_event"),
                 mcp_tool(
@@ -1265,39 +1136,37 @@ fn search_tool_description_lists_each_mcp_source_once() {
                 ToolName::namespaced("mcp__rmcp__", "echo"),
                 mcp_tool("echo", "Echo", serde_json::json!({"type": "object"})),
             ),
-        ])),
-        Some(vec![
-            deferred_mcp_tool(
-                "_create_event",
-                "mcp__codex_apps__calendar",
-                CODEX_APPS_MCP_SERVER_NAME,
-                Some("Calendar"),
-                Some("Plan events and manage your calendar."),
-            ),
-            deferred_mcp_tool(
-                "_list_events",
-                "mcp__codex_apps__calendar",
-                CODEX_APPS_MCP_SERVER_NAME,
-                Some("Calendar"),
-                Some("Plan events and manage your calendar."),
-            ),
-            deferred_mcp_tool(
-                "_search_threads",
-                "mcp__codex_apps__gmail",
-                CODEX_APPS_MCP_SERVER_NAME,
-                Some("Gmail"),
-                Some("Find and summarize email threads."),
-            ),
-            deferred_mcp_tool(
-                "echo",
-                "mcp__rmcp__",
-                "rmcp",
-                /*connector_name*/ None,
-                /*connector_description*/ None,
-            ),
         ]),
-        &[],
+        /*defer_loading*/ false,
     );
+    mcp_tools.extend([
+        mcp_tool_input(
+            "_list_events",
+            "mcp__codex_apps__calendar",
+            CODEX_APPS_MCP_SERVER_NAME,
+            Some("Calendar"),
+            Some("Plan events and manage your calendar."),
+            /*defer_loading*/ true,
+        ),
+        mcp_tool_input(
+            "_search_threads",
+            "mcp__codex_apps__gmail",
+            CODEX_APPS_MCP_SERVER_NAME,
+            Some("Gmail"),
+            Some("Find and summarize email threads."),
+            /*defer_loading*/ true,
+        ),
+        mcp_tool_input(
+            "deferred_echo",
+            "mcp__rmcp__",
+            "rmcp",
+            /*connector_name*/ None,
+            /*connector_description*/ None,
+            /*defer_loading*/ true,
+        ),
+    ]);
+
+    let (tools, handlers) = build_specs(&tools_config, Some(mcp_tools), &[]);
 
     let search_tool = find_tool(&tools, TOOL_SEARCH_TOOL_NAME);
     let ToolSpec::ToolSearch { description, .. } = &search_tool.spec else {
@@ -1328,13 +1197,14 @@ fn search_tool_description_lists_each_mcp_source_once() {
 #[test]
 fn search_tool_requires_model_capability_and_enabled_feature() {
     let model_info = search_capable_model_info();
-    let deferred_mcp_tools = Some(vec![deferred_mcp_tool(
+    let mcp_tools = vec![mcp_tool_input(
         "_create_event",
         "mcp__codex_apps__calendar",
         CODEX_APPS_MCP_SERVER_NAME,
         Some("Calendar"),
         /*connector_description*/ None,
-    )]);
+        /*defer_loading*/ true,
+    )];
 
     let features = Features::with_defaults();
     let available_models = Vec::new();
@@ -1351,12 +1221,7 @@ fn search_tool_requires_model_capability_and_enabled_feature() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        deferred_mcp_tools.clone(),
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, Some(mcp_tools.clone()), &[]);
     assert_lacks_tool_name(&tools, TOOL_SEARCH_TOOL_NAME);
 
     let mut features_without_tool_search = Features::with_defaults();
@@ -1371,12 +1236,7 @@ fn search_tool_requires_model_capability_and_enabled_feature() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        deferred_mcp_tools.clone(),
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, Some(mcp_tools.clone()), &[]);
     assert_lacks_tool_name(&tools, TOOL_SEARCH_TOOL_NAME);
 
     let tools_config = ToolsConfig::new(&ToolsConfigParams {
@@ -1389,12 +1249,7 @@ fn search_tool_requires_model_capability_and_enabled_feature() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        deferred_mcp_tools,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, Some(mcp_tools), &[]);
     assert_contains_tool_names(&tools, &[TOOL_SEARCH_TOOL_NAME]);
 }
 
@@ -1439,12 +1294,7 @@ fn search_tool_registers_for_deferred_dynamic_tools() {
         },
     ];
 
-    let (tools, handlers) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &dynamic_tools,
-    );
+    let (tools, handlers) = build_specs(&tools_config, /*mcp_tools*/ None, &dynamic_tools);
 
     let search_tool = find_tool(&tools, TOOL_SEARCH_TOOL_NAME);
     let ToolSpec::ToolSearch { description, .. } = &search_tool.spec else {
@@ -1506,7 +1356,6 @@ fn tool_suggest_is_not_registered_without_feature_flag() {
     let (tools, _) = build_specs_with_discoverable_tools(
         &tools_config,
         /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
         Some(vec![discoverable_connector(
             "connector_2128aebfecb84f64a069897515042a44",
             "Google Calendar",
@@ -1546,7 +1395,6 @@ fn tool_suggest_can_be_registered_without_search_tool() {
     let (tools, _) = build_specs_with_discoverable_tools(
         &tools_config,
         /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
         Some(vec![discoverable_connector(
             "connector_2128aebfecb84f64a069897515042a44",
             "Google Calendar",
@@ -1614,7 +1462,6 @@ fn tool_suggest_description_lists_discoverable_tools() {
     let (tools, _) = build_specs_with_discoverable_tools(
         &tools_config,
         /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
         Some(discoverable_tools),
         &[],
     );
@@ -1694,22 +1541,24 @@ fn code_mode_augments_mcp_tool_descriptions_with_namespaced_sample() {
 
     let (tools, _) = build_specs(
         &tools_config,
-        Some(HashMap::from([(
-            ToolName::namespaced("mcp__sample__", "echo"),
-            mcp_tool(
-                "echo",
-                "Echo text",
-                serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "message": {"type": "string"}
-                    },
-                    "required": ["message"],
-                    "additionalProperties": false
-                }),
-            ),
-        )])),
-        /*deferred_mcp_tools*/ None,
+        Some(mcp_tool_inputs(
+            HashMap::from([(
+                ToolName::namespaced("mcp__sample__", "echo"),
+                mcp_tool(
+                    "echo",
+                    "Echo text",
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "message": {"type": "string"}
+                        },
+                        "required": ["message"],
+                        "additionalProperties": false
+                    }),
+                ),
+            )]),
+            /*defer_loading*/ false,
+        )),
         &[],
     );
 
@@ -1747,55 +1596,57 @@ fn code_mode_preserves_nullable_and_literal_mcp_input_shapes() {
 
     let (tools, _) = build_specs(
         &tools_config,
-        Some(HashMap::from([(
-            ToolName::namespaced("mcp__sample__", "fn"),
-            mcp_tool(
-                "fn",
-                "Sample fn",
-                serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "open": {
-                            "anyOf": [
-                                {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "ref_id": {"type": "string"},
-                                            "lineno": {"anyOf": [{"type": "integer"}, {"type": "null"}]}
-                                        },
-                                        "required": ["ref_id"],
-                                        "additionalProperties": false
-                                    }
-                                },
-                                {"type": "null"}
-                            ]
+        Some(mcp_tool_inputs(
+            HashMap::from([(
+                ToolName::namespaced("mcp__sample__", "fn"),
+                mcp_tool(
+                    "fn",
+                    "Sample fn",
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "open": {
+                                "anyOf": [
+                                    {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "ref_id": {"type": "string"},
+                                                "lineno": {"anyOf": [{"type": "integer"}, {"type": "null"}]}
+                                            },
+                                            "required": ["ref_id"],
+                                            "additionalProperties": false
+                                        }
+                                    },
+                                    {"type": "null"}
+                                ]
+                            },
+                            "tagged_list": {
+                                "anyOf": [
+                                    {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "kind": {"type": "const", "const": "tagged"},
+                                                "variant": {"type": "enum", "enum": ["alpha", "beta"]},
+                                                "scope": {"type": "enum", "enum": ["one", "two"]}
+                                            },
+                                            "required": ["kind", "variant", "scope"]
+                                        }
+                                    },
+                                    {"type": "null"}
+                                ]
+                            },
+                            "response_length": {"type": "enum", "enum": ["short", "medium", "long"]}
                         },
-                        "tagged_list": {
-                            "anyOf": [
-                                {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "kind": {"type": "const", "const": "tagged"},
-                                            "variant": {"type": "enum", "enum": ["alpha", "beta"]},
-                                            "scope": {"type": "enum", "enum": ["one", "two"]}
-                                        },
-                                        "required": ["kind", "variant", "scope"]
-                                    }
-                                },
-                                {"type": "null"}
-                            ]
-                        },
-                        "response_length": {"type": "enum", "enum": ["short", "medium", "long"]}
-                    },
-                    "additionalProperties": false
-                }),
-            ),
-        )])),
-        /*deferred_mcp_tools*/ None,
+                        "additionalProperties": false
+                    }),
+                ),
+            )]),
+            /*defer_loading*/ false,
+        )),
         &[],
     );
 
@@ -1828,12 +1679,7 @@ fn code_mode_augments_builtin_tool_descriptions_with_typed_sample() {
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
 
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
     let ToolSpec::Function(ResponsesApiTool { description, .. }) =
         &find_tool(&tools, VIEW_IMAGE_TOOL_NAME).spec
     else {
@@ -1864,12 +1710,7 @@ fn code_mode_only_exec_description_includes_full_nested_tool_details() {
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
 
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
     let ToolSpec::Freeform(FreeformTool { description, .. }) = &find_tool(&tools, "exec").spec
     else {
         panic!("expected freeform tool");
@@ -1901,12 +1742,7 @@ fn code_mode_exec_description_omits_nested_tool_details_when_not_code_mode_only(
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
 
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]);
     let ToolSpec::Freeform(FreeformTool { description, .. }) = &find_tool(&tools, "exec").spec
     else {
         panic!("expected freeform tool");
@@ -1961,60 +1797,51 @@ fn search_capable_model_info() -> ModelInfo {
     }
 }
 
-fn build_specs<'a>(
+fn build_specs(
     config: &ToolsConfig,
-    mcp_tools: Option<HashMap<ToolName, rmcp::model::Tool>>,
-    deferred_mcp_tools: Option<Vec<ToolRegistryPlanDeferredTool<'a>>>,
+    mcp_tools: Option<Vec<TestMcpTool>>,
     dynamic_tools: &[DynamicToolSpec],
 ) -> (Vec<ConfiguredToolSpec>, Vec<ToolHandlerSpec>) {
     build_specs_with_discoverable_tools(
         config,
         mcp_tools,
-        deferred_mcp_tools,
         /*discoverable_tools*/ None,
         dynamic_tools,
     )
 }
 
-fn build_specs_with_discoverable_tools<'a>(
+fn build_specs_with_discoverable_tools(
     config: &ToolsConfig,
-    mcp_tools: Option<HashMap<ToolName, rmcp::model::Tool>>,
-    deferred_mcp_tools: Option<Vec<ToolRegistryPlanDeferredTool<'a>>>,
+    mcp_tools: Option<Vec<TestMcpTool>>,
     discoverable_tools: Option<Vec<DiscoverableTool>>,
     dynamic_tools: &[DynamicToolSpec],
 ) -> (Vec<ConfiguredToolSpec>, Vec<ToolHandlerSpec>) {
     build_specs_with_optional_tool_namespaces(
         config,
         mcp_tools,
-        deferred_mcp_tools,
         /*tool_namespaces*/ None,
         discoverable_tools,
         dynamic_tools,
     )
 }
 
-fn build_specs_with_optional_tool_namespaces<'a>(
+fn build_specs_with_optional_tool_namespaces(
     config: &ToolsConfig,
-    mcp_tools: Option<HashMap<ToolName, rmcp::model::Tool>>,
-    deferred_mcp_tools: Option<Vec<ToolRegistryPlanDeferredTool<'a>>>,
+    mcp_tools: Option<Vec<TestMcpTool>>,
     tool_namespaces: Option<HashMap<String, ToolNamespace>>,
     discoverable_tools: Option<Vec<DiscoverableTool>>,
     dynamic_tools: &[DynamicToolSpec],
 ) -> (Vec<ConfiguredToolSpec>, Vec<ToolHandlerSpec>) {
-    let mcp_tool_inputs = mcp_tools.as_ref().map(|mcp_tools| {
-        mcp_tools
-            .iter()
-            .map(|(name, tool)| ToolRegistryPlanMcpTool {
-                name: name.clone(),
-                tool,
-            })
-            .collect::<Vec<_>>()
-    });
+    let mcp_tool_inputs = mcp_tools
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(TestMcpTool::as_plan_tool)
+        .collect::<Vec<_>>();
     let plan = build_tool_registry_plan(
         config,
         ToolRegistryPlanParams {
-            mcp_tools: mcp_tool_inputs.as_deref(),
-            deferred_mcp_tools: deferred_mcp_tools.as_deref(),
+            mcp_tools: mcp_tools.as_ref().map(|_| mcp_tool_inputs.as_slice()),
             tool_namespaces: tool_namespaces.as_ref(),
             discoverable_tools: discoverable_tools.as_deref(),
             dynamic_tools,
@@ -2023,6 +1850,29 @@ fn build_specs_with_optional_tool_namespaces<'a>(
         },
     );
     (plan.specs, plan.handlers)
+}
+
+#[derive(Clone)]
+struct TestMcpTool {
+    name: ToolName,
+    tool: rmcp::model::Tool,
+    server_name: String,
+    connector_name: Option<String>,
+    connector_description: Option<String>,
+    defer_loading: bool,
+}
+
+impl TestMcpTool {
+    fn as_plan_tool(&self) -> ToolRegistryPlanMcpTool<'_> {
+        ToolRegistryPlanMcpTool {
+            name: self.name.clone(),
+            tool: &self.tool,
+            server_name: self.server_name.as_str(),
+            connector_name: self.connector_name.as_deref(),
+            connector_description: self.connector_description.as_deref(),
+            defer_loading: self.defer_loading,
+        }
+    }
 }
 
 fn mcp_tool(name: &str, description: &str, input_schema: serde_json::Value) -> rmcp::model::Tool {
@@ -2089,11 +1939,10 @@ fn code_mode_augments_mcp_tool_descriptions_with_structured_output_sample() {
 
     let (tools, _) = build_specs(
         &tools_config,
-        Some(HashMap::from([(
-            ToolName::namespaced("mcp__sample__", "echo"),
-            tool,
-        )])),
-        /*deferred_mcp_tools*/ None,
+        Some(mcp_tool_inputs(
+            HashMap::from([(ToolName::namespaced("mcp__sample__", "echo"), tool)]),
+            /*defer_loading*/ false,
+        )),
         &[],
     );
 
@@ -2130,19 +1979,43 @@ fn discoverable_connector(id: &str, name: &str, description: &str) -> Discoverab
     }))
 }
 
-fn deferred_mcp_tool<'a>(
-    tool_name: &'a str,
-    tool_namespace: &'a str,
-    server_name: &'a str,
-    connector_name: Option<&'a str>,
-    connector_description: Option<&'a str>,
-) -> ToolRegistryPlanDeferredTool<'a> {
-    ToolRegistryPlanDeferredTool {
+fn mcp_tool_input(
+    tool_name: &str,
+    tool_namespace: &str,
+    server_name: &str,
+    connector_name: Option<&str>,
+    connector_description: Option<&str>,
+    defer_loading: bool,
+) -> TestMcpTool {
+    TestMcpTool {
         name: ToolName::namespaced(tool_namespace, tool_name),
-        server_name,
-        connector_name,
-        connector_description,
+        tool: mcp_tool(
+            tool_name,
+            "Deferred MCP test tool",
+            serde_json::json!({"type": "object"}),
+        ),
+        server_name: server_name.to_string(),
+        connector_name: connector_name.map(str::to_string),
+        connector_description: connector_description.map(str::to_string),
+        defer_loading,
     }
+}
+
+fn mcp_tool_inputs(
+    mcp_tools: HashMap<ToolName, rmcp::model::Tool>,
+    defer_loading: bool,
+) -> Vec<TestMcpTool> {
+    mcp_tools
+        .into_iter()
+        .map(|(name, tool)| TestMcpTool {
+            server_name: name.namespace.as_deref().unwrap_or("mcp").to_string(),
+            name,
+            tool,
+            connector_name: None,
+            connector_description: None,
+            defer_loading,
+        })
+        .collect()
 }
 
 fn assert_contains_tool_names(tools: &[ConfiguredToolSpec], expected_subset: &[&str]) {

@@ -1,8 +1,11 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::session::tests::make_session_and_context;
 use crate::tools::context::ToolPayload;
+use crate::tools::mcp_tool_input::McpToolInput;
+use codex_mcp::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::ResponseItem;
 use codex_tools::ResponsesApiNamespaceTool;
@@ -29,10 +32,10 @@ async fn parallel_support_does_not_match_namespaced_local_tool_names() -> anyhow
         .await
         .list_all_tools()
         .await;
+    let mcp_tools = expose_mcp_tools(mcp_tools, /*defer_loading*/ false);
     let router = ToolRouter::from_config(
         &turn.tools_config,
         ToolRouterParams {
-            deferred_mcp_tools: None,
             mcp_tools: Some(mcp_tools),
             unavailable_called_tools: Vec::new(),
             parallel_mcp_server_names: HashSet::new(),
@@ -105,7 +108,6 @@ async fn mcp_parallel_support_uses_exact_payload_server() -> anyhow::Result<()> 
     let router = ToolRouter::from_config(
         &turn.tools_config,
         ToolRouterParams {
-            deferred_mcp_tools: None,
             mcp_tools: None,
             unavailable_called_tools: Vec::new(),
             parallel_mcp_server_names: HashSet::from(["echo".to_string()]),
@@ -172,7 +174,6 @@ async fn model_visible_specs_filter_deferred_dynamic_tools() -> anyhow::Result<(
     let router = ToolRouter::from_config(
         &turn.tools_config,
         ToolRouterParams {
-            deferred_mcp_tools: None,
             mcp_tools: None,
             unavailable_called_tools: Vec::new(),
             parallel_mcp_server_names: HashSet::new(),
@@ -187,7 +188,7 @@ async fn model_visible_specs_filter_deferred_dynamic_tools() -> anyhow::Result<(
             .is_some()
     );
     assert_eq!(
-        namespace_function_names(&router.specs(), "codex_app"),
+        namespace_function_names(&router.specs_including_deferred(), "codex_app"),
         vec![hidden_tool.to_string(), visible_tool.to_string()]
     );
     assert_eq!(
@@ -196,6 +197,100 @@ async fn model_visible_specs_filter_deferred_dynamic_tools() -> anyhow::Result<(
     );
 
     Ok(())
+}
+
+#[tokio::test]
+async fn model_visible_specs_filter_deferred_mcp_tools() -> anyhow::Result<()> {
+    let (_, turn) = make_session_and_context().await;
+    let hidden_tool = "hidden_mcp_tool";
+    let visible_tool = "visible_mcp_tool";
+    let mcp_tools = HashMap::from([
+        (
+            format!("mcp__test__{hidden_tool}"),
+            exposed_mcp_tool(hidden_tool, /*defer_loading*/ true),
+        ),
+        (
+            format!("mcp__test__{visible_tool}"),
+            exposed_mcp_tool(visible_tool, /*defer_loading*/ false),
+        ),
+    ]);
+
+    let router = ToolRouter::from_config(
+        &turn.tools_config,
+        ToolRouterParams {
+            mcp_tools: Some(mcp_tools),
+            unavailable_called_tools: Vec::new(),
+            parallel_mcp_server_names: HashSet::new(),
+            discoverable_tools: None,
+            dynamic_tools: &[],
+        },
+    );
+
+    assert!(
+        router
+            .find_spec(&ToolName::namespaced("mcp__test__", hidden_tool))
+            .is_some()
+    );
+    assert_eq!(
+        namespace_function_names(&router.specs_including_deferred(), "mcp__test__"),
+        vec![hidden_tool.to_string(), visible_tool.to_string()]
+    );
+    assert_eq!(
+        namespace_function_names(&router.model_visible_specs(), "mcp__test__"),
+        vec![visible_tool.to_string()]
+    );
+
+    Ok(())
+}
+
+fn expose_mcp_tools(
+    mcp_tools: HashMap<String, ToolInfo>,
+    defer_loading: bool,
+) -> HashMap<String, McpToolInput> {
+    mcp_tools
+        .into_iter()
+        .map(|(name, tool_info)| {
+            (
+                name,
+                McpToolInput {
+                    tool_info,
+                    defer_loading,
+                },
+            )
+        })
+        .collect()
+}
+
+fn exposed_mcp_tool(tool_name: &str, defer_loading: bool) -> McpToolInput {
+    let tool = rmcp::model::Tool {
+        name: tool_name.to_string().into(),
+        title: None,
+        description: Some(format!("Test MCP tool {tool_name}").into()),
+        input_schema: std::sync::Arc::new(rmcp::model::object(json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false,
+        }))),
+        output_schema: None,
+        annotations: None,
+        execution: None,
+        icons: None,
+        meta: None,
+    };
+    McpToolInput {
+        tool_info: ToolInfo {
+            server_name: "test".to_string(),
+            callable_name: tool_name.to_string(),
+            callable_namespace: "mcp__test__".to_string(),
+            server_instructions: None,
+            tool,
+            connector_id: None,
+            connector_name: None,
+            plugin_display_names: Vec::new(),
+            connector_description: None,
+        },
+        defer_loading,
+    }
 }
 
 fn namespace_function_names(specs: &[ToolSpec], namespace_name: &str) -> Vec<String> {

@@ -4,8 +4,8 @@ use crate::tools::handlers::agent_jobs::BatchJobHandler;
 use crate::tools::handlers::multi_agents_common::DEFAULT_WAIT_TIMEOUT_MS;
 use crate::tools::handlers::multi_agents_common::MAX_WAIT_TIMEOUT_MS;
 use crate::tools::handlers::multi_agents_common::MIN_WAIT_TIMEOUT_MS;
+use crate::tools::mcp_tool_input::McpToolInput;
 use crate::tools::registry::ToolRegistryBuilder;
-use codex_mcp::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_tools::AdditionalProperties;
 use codex_tools::DiscoverableTool;
@@ -14,7 +14,6 @@ use codex_tools::ResponsesApiTool;
 use codex_tools::ToolHandlerKind;
 use codex_tools::ToolName;
 use codex_tools::ToolNamespace;
-use codex_tools::ToolRegistryPlanDeferredTool;
 use codex_tools::ToolRegistryPlanMcpTool;
 use codex_tools::ToolRegistryPlanParams;
 use codex_tools::ToolUserShellType;
@@ -41,18 +40,26 @@ struct McpToolPlanInputs<'a> {
     tool_namespaces: HashMap<String, ToolNamespace>,
 }
 
-fn map_mcp_tools_for_plan(mcp_tools: &HashMap<String, ToolInfo>) -> McpToolPlanInputs<'_> {
+fn map_mcp_tools_for_plan(mcp_tools: &HashMap<String, McpToolInput>) -> McpToolPlanInputs<'_> {
     McpToolPlanInputs {
         mcp_tools: mcp_tools
             .values()
-            .map(|tool| ToolRegistryPlanMcpTool {
-                name: tool.canonical_tool_name(),
-                tool: &tool.tool,
+            .map(|exposed_tool| {
+                let tool = &exposed_tool.tool_info;
+                ToolRegistryPlanMcpTool {
+                    name: tool.canonical_tool_name(),
+                    tool: &tool.tool,
+                    server_name: tool.server_name.as_str(),
+                    connector_name: tool.connector_name.as_deref(),
+                    connector_description: tool.connector_description.as_deref(),
+                    defer_loading: exposed_tool.defer_loading,
+                }
             })
             .collect(),
         tool_namespaces: mcp_tools
             .values()
-            .map(|tool| {
+            .map(|exposed_tool| {
+                let tool = &exposed_tool.tool_info;
                 (
                     tool.callable_namespace.clone(),
                     ToolNamespace {
@@ -70,8 +77,7 @@ fn map_mcp_tools_for_plan(mcp_tools: &HashMap<String, ToolInfo>) -> McpToolPlanI
 
 pub(crate) fn build_specs_with_discoverable_tools(
     config: &ToolsConfig,
-    mcp_tools: Option<HashMap<String, ToolInfo>>,
-    deferred_mcp_tools: Option<HashMap<String, ToolInfo>>,
+    mcp_tools: Option<HashMap<String, McpToolInput>>,
     unavailable_called_tools: Vec<ToolName>,
     discoverable_tools: Option<Vec<DiscoverableTool>>,
     dynamic_tools: &[DynamicToolSpec],
@@ -111,17 +117,6 @@ pub(crate) fn build_specs_with_discoverable_tools(
 
     let mut builder = ToolRegistryBuilder::new();
     let mcp_tool_plan_inputs = mcp_tools.as_ref().map(map_mcp_tools_for_plan);
-    let deferred_mcp_tool_sources = deferred_mcp_tools.as_ref().map(|tools| {
-        tools
-            .values()
-            .map(|tool| ToolRegistryPlanDeferredTool {
-                name: tool.canonical_tool_name(),
-                server_name: tool.server_name.as_str(),
-                connector_name: tool.connector_name.as_deref(),
-                connector_description: tool.connector_description.as_deref(),
-            })
-            .collect::<Vec<_>>()
-    });
     let default_agent_type_description =
         crate::agent::role::spawn_tool_spec::build(&std::collections::BTreeMap::new());
     let plan = build_tool_registry_plan(
@@ -130,7 +125,6 @@ pub(crate) fn build_specs_with_discoverable_tools(
             mcp_tools: mcp_tool_plan_inputs
                 .as_ref()
                 .map(|inputs| inputs.mcp_tools.as_slice()),
-            deferred_mcp_tools: deferred_mcp_tool_sources.as_deref(),
             tool_namespaces: mcp_tool_plan_inputs
                 .as_ref()
                 .map(|inputs| &inputs.tool_namespaces),
@@ -260,10 +254,8 @@ pub(crate) fn build_specs_with_discoverable_tools(
             }
             ToolHandlerKind::ToolSearch => {
                 if tool_search_handler.is_none() {
-                    let entries = build_tool_search_entries(
-                        deferred_mcp_tools.as_ref(),
-                        &deferred_dynamic_tools,
-                    );
+                    let entries =
+                        build_tool_search_entries(mcp_tools.as_ref(), &deferred_dynamic_tools);
                     tool_search_handler = Some(Arc::new(ToolSearchHandler::new(entries)));
                 }
                 if let Some(tool_search_handler) = tool_search_handler.as_ref() {
@@ -287,16 +279,6 @@ pub(crate) fn build_specs_with_discoverable_tools(
             }
         }
     }
-    if let Some(deferred_mcp_tools) = deferred_mcp_tools.as_ref() {
-        for (name, _) in deferred_mcp_tools.iter().filter(|(name, _)| {
-            !mcp_tools
-                .as_ref()
-                .is_some_and(|tools| tools.contains_key(*name))
-        }) {
-            builder.register_handler(name.clone(), mcp_handler.clone());
-        }
-    }
-
     for unavailable_tool in unavailable_called_tools {
         let tool_name = unavailable_tool.display();
         if existing_spec_names.insert(tool_name.clone()) {

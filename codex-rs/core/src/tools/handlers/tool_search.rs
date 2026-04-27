@@ -173,6 +173,7 @@ fn default_limit_for_bucket(bucket: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::mcp_tool_input::McpToolInput;
     use crate::tools::tool_search_entry::build_tool_search_entries;
     use codex_mcp::ToolInfo;
     use codex_protocol::dynamic_tools::DynamicToolSpec;
@@ -239,7 +240,9 @@ mod tests {
                                 /*required*/ None,
                                 Some(false.into()),
                             ),
-                            output_schema: None,
+                            output_schema: Some(codex_tools::mcp_call_tool_result_output_schema(
+                                serde_json::json!({}),
+                            )),
                         }),
                         ResponsesApiNamespaceTool::Function(ResponsesApiTool {
                             name: "list_events".to_string(),
@@ -251,7 +254,9 @@ mod tests {
                                 /*required*/ None,
                                 Some(false.into()),
                             ),
-                            output_schema: None,
+                            output_schema: Some(codex_tools::mcp_call_tool_result_output_schema(
+                                serde_json::json!({}),
+                            )),
                         }),
                     ],
                 }),
@@ -426,6 +431,23 @@ mod tests {
         mcp_tools: Option<&std::collections::HashMap<String, ToolInfo>>,
         dynamic_tools: &[DynamicToolSpec],
     ) -> ToolSearchHandler {
-        ToolSearchHandler::new(build_tool_search_entries(mcp_tools, dynamic_tools))
+        let exposed_mcp_tools = mcp_tools.map(|mcp_tools| {
+            mcp_tools
+                .iter()
+                .map(|(name, tool_info)| {
+                    (
+                        name.clone(),
+                        McpToolInput {
+                            tool_info: tool_info.clone(),
+                            defer_loading: true,
+                        },
+                    )
+                })
+                .collect::<std::collections::HashMap<_, _>>()
+        });
+        ToolSearchHandler::new(build_tool_search_entries(
+            exposed_mcp_tools.as_ref(),
+            dynamic_tools,
+        ))
     }
 }

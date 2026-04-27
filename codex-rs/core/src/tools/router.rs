@@ -5,11 +5,11 @@ use crate::session::turn_context::TurnContext;
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
+use crate::tools::mcp_tool_input::McpToolInput;
 use crate::tools::registry::AnyToolResult;
 use crate::tools::registry::ToolArgumentDiffConsumer;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::spec::build_specs_with_discoverable_tools;
-use codex_mcp::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::LocalShellAction;
 use codex_protocol::models::ResponseItem;
@@ -44,8 +44,7 @@ pub struct ToolRouter {
 }
 
 pub(crate) struct ToolRouterParams<'a> {
-    pub(crate) mcp_tools: Option<HashMap<String, ToolInfo>>,
-    pub(crate) deferred_mcp_tools: Option<HashMap<String, ToolInfo>>,
+    pub(crate) mcp_tools: Option<HashMap<String, McpToolInput>>,
     pub(crate) unavailable_called_tools: Vec<ToolName>,
     pub(crate) parallel_mcp_server_names: HashSet<String>,
     pub(crate) discoverable_tools: Option<Vec<DiscoverableTool>>,
@@ -56,7 +55,6 @@ impl ToolRouter {
     pub fn from_config(config: &ToolsConfig, params: ToolRouterParams<'_>) -> Self {
         let ToolRouterParams {
             mcp_tools,
-            deferred_mcp_tools,
             unavailable_called_tools,
             parallel_mcp_server_names,
             discoverable_tools,
@@ -65,17 +63,11 @@ impl ToolRouter {
         let builder = build_specs_with_discoverable_tools(
             config,
             mcp_tools,
-            deferred_mcp_tools,
             unavailable_called_tools,
             discoverable_tools,
             dynamic_tools,
         );
         let (specs, registry) = builder.build();
-        let deferred_dynamic_tools = dynamic_tools
-            .iter()
-            .filter(|tool| tool.defer_loading)
-            .map(|tool| ToolName::new(tool.namespace.clone(), tool.name.clone()))
-            .collect::<HashSet<_>>();
         let model_visible_specs = specs
             .iter()
             .filter_map(|configured_tool| {
@@ -85,10 +77,7 @@ impl ToolRouter {
                     return None;
                 }
 
-                filter_deferred_dynamic_tool_spec(
-                    configured_tool.spec.clone(),
-                    &deferred_dynamic_tools,
-                )
+                filter_deferred_tool_spec(configured_tool.spec.clone())
             })
             .collect();
 
@@ -100,7 +89,7 @@ impl ToolRouter {
         }
     }
 
-    pub fn specs(&self) -> Vec<ToolSpec> {
+    pub fn specs_including_deferred(&self) -> Vec<ToolSpec> {
         self.specs
             .iter()
             .map(|config| config.spec.clone())
@@ -164,8 +153,7 @@ impl ToolRouter {
 
     pub fn tool_supports_parallel(&self, call: &ToolCall) -> bool {
         match &call.payload {
-            // MCP parallel support is configured per server, including for deferred
-            // tools that may not have a matching spec entry. Use the parsed payload
+            // MCP parallel support is configured per server. Use the parsed payload
             // server so similarly named servers/tools cannot collide.
             ToolPayload::Mcp { server, .. } => self.parallel_mcp_server_names.contains(server),
             _ => self.configured_tool_supports_parallel(&call.tool_name),
@@ -297,28 +285,18 @@ impl ToolRouter {
     }
 }
 
-fn filter_deferred_dynamic_tool_spec(
-    spec: ToolSpec,
-    deferred_dynamic_tools: &HashSet<ToolName>,
-) -> Option<ToolSpec> {
-    if deferred_dynamic_tools.is_empty() {
-        return Some(spec);
-    }
-
+fn filter_deferred_tool_spec(spec: ToolSpec) -> Option<ToolSpec> {
     match spec {
         ToolSpec::Function(tool) => {
-            if deferred_dynamic_tools.contains(&ToolName::plain(tool.name.as_str())) {
+            if tool.defer_loading == Some(true) {
                 None
             } else {
                 Some(ToolSpec::Function(tool))
             }
         }
         ToolSpec::Namespace(mut namespace) => {
-            let namespace_name = namespace.name.clone();
             namespace.tools.retain(|tool| match tool {
-                ResponsesApiNamespaceTool::Function(tool) => !deferred_dynamic_tools.contains(
-                    &ToolName::namespaced(namespace_name.as_str(), tool.name.as_str()),
-                ),
+                ResponsesApiNamespaceTool::Function(tool) => tool.defer_loading != Some(true),
             });
             if namespace.tools.is_empty() {
                 None

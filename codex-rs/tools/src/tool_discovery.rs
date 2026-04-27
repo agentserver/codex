@@ -6,7 +6,7 @@ use crate::ResponsesApiTool;
 use crate::ToolName;
 use crate::ToolSpec;
 use crate::default_namespace_description;
-use crate::mcp_tool_to_deferred_responses_api_tool;
+use crate::mcp_tool_to_responses_api_tool;
 use codex_app_server_protocol::AppInfo;
 use serde::Deserialize;
 use serde::Serialize;
@@ -233,7 +233,7 @@ fn tool_search_result_source_to_namespace_tool(
     source: ToolSearchResultSource<'_>,
 ) -> Result<ResponsesApiNamespaceTool, serde_json::Error> {
     let tool_name = ToolName::namespaced(source.tool_namespace, source.tool_name);
-    mcp_tool_to_deferred_responses_api_tool(&tool_name, source.tool)
+    mcp_tool_to_responses_api_tool(&tool_name, source.tool, /*defer_loading*/ true)
         .map(ResponsesApiNamespaceTool::Function)
 }
 

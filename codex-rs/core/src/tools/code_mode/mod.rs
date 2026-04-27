@@ -24,6 +24,7 @@ use crate::tools::ToolRouter;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::context::ToolPayload;
+use crate::tools::mcp_tool_input::McpToolInput;
 use crate::tools::parallel::ToolCallRuntime;
 use crate::tools::router::ToolCall;
 use crate::tools::router::ToolCallSource;
@@ -262,7 +263,7 @@ pub(super) async fn build_enabled_tools(
     exec: &ExecContext,
 ) -> Vec<codex_code_mode::ToolDefinition> {
     let router = build_nested_router(exec).await;
-    let specs = router.specs();
+    let specs = router.specs_including_deferred();
     collect_code_mode_tool_definitions(&specs)
 }
 
@@ -280,6 +281,18 @@ async fn build_nested_router(exec: &ExecContext) -> ToolRouter {
         .await
         .list_all_tools()
         .await;
+    let listed_mcp_tools = listed_mcp_tools
+        .into_iter()
+        .map(|(name, tool_info)| {
+            (
+                name,
+                McpToolInput {
+                    tool_info,
+                    defer_loading: false,
+                },
+            )
+        })
+        .collect();
     let parallel_mcp_server_names = exec
         .turn
         .config
@@ -296,7 +309,6 @@ async fn build_nested_router(exec: &ExecContext) -> ToolRouter {
     ToolRouter::from_config(
         &nested_tools_config,
         ToolRouterParams {
-            deferred_mcp_tools: None,
             mcp_tools: Some(listed_mcp_tools),
             unavailable_called_tools: Vec::new(),
             parallel_mcp_server_names,
@@ -324,8 +336,18 @@ async fn call_nested_tool(
         )));
     }
 
+    let actual_kind = match tool_kind_for_name(tool_runtime.find_spec(&tool_name), &tool_name) {
+        Ok(kind) => kind,
+        Err(error) => return Err(FunctionCallError::RespondToModel(error)),
+    };
+
     let (tool_call_name, payload) =
         if let Some(tool_info) = exec.session.resolve_mcp_tool_info(&tool_name).await {
+            if actual_kind != codex_code_mode::CodeModeToolKind::Function {
+                return Err(FunctionCallError::RespondToModel(format!(
+                    "MCP tool `{tool_name}` must be invoked with function arguments"
+                )));
+            }
             let raw_arguments = match serialize_function_tool_arguments(&tool_name, input) {
                 Ok(raw_arguments) => raw_arguments,
                 Err(error) => return Err(FunctionCallError::RespondToModel(error)),
@@ -339,7 +361,7 @@ async fn call_nested_tool(
                 },
             )
         } else {
-            match build_nested_tool_payload(tool_runtime.find_spec(&tool_name), &tool_name, input) {
+            match build_nested_tool_payload(actual_kind, &tool_name, input) {
                 Ok(payload) => (tool_name, payload),
                 Err(error) => return Err(FunctionCallError::RespondToModel(error)),
             }
@@ -381,11 +403,10 @@ fn tool_kind_for_name(
 }
 
 fn build_nested_tool_payload(
-    spec: Option<ToolSpec>,
+    actual_kind: codex_code_mode::CodeModeToolKind,
     tool_name: &ToolName,
     input: Option<JsonValue>,
 ) -> Result<ToolPayload, String> {
-    let actual_kind = tool_kind_for_name(spec, tool_name)?;
     match actual_kind {
         codex_code_mode::CodeModeToolKind::Function => {
             build_function_tool_payload(tool_name, input)

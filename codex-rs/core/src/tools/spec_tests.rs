@@ -3,11 +3,13 @@ use crate::shell::Shell;
 use crate::shell::ShellType;
 use crate::test_support::construct_model_info_offline;
 use crate::tools::ToolRouter;
+use crate::tools::mcp_tool_input::McpToolInput;
 use crate::tools::router::ToolRouterParams;
 use codex_app_server_protocol::AppInfo;
 use codex_features::Feature;
 use codex_features::Features;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
+use codex_mcp::ToolInfo;
 use codex_models_manager::bundled_models_response;
 use codex_models_manager::model_info::with_config_overrides;
 use codex_protocol::config_types::WebSearchMode;
@@ -32,7 +34,7 @@ use codex_tools::ToolsConfigParams;
 use codex_tools::UnifiedExecShellMode;
 use codex_tools::ZshForkConfig;
 use codex_tools::mcp_call_tool_result_output_schema;
-use codex_tools::mcp_tool_to_deferred_responses_api_tool;
+use codex_tools::mcp_tool_to_responses_api_tool;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::assert_regex_match;
 use pretty_assertions::assert_eq;
@@ -130,9 +132,10 @@ fn deferred_responses_api_tool_serializes_with_defer_loading() {
     );
 
     let serialized = serde_json::to_value(ToolSpec::Function(
-        mcp_tool_to_deferred_responses_api_tool(
+        mcp_tool_to_responses_api_tool(
             &ToolName::namespaced("mcp__codex_apps__", "lookup_order"),
             &tool,
+            /*defer_loading*/ true,
         )
         .expect("convert deferred tool"),
     ))
@@ -237,13 +240,7 @@ async fn multi_agent_v2_tools_config() -> ToolsConfig {
 }
 
 fn multi_agent_v2_spawn_agent_description(tools_config: &ToolsConfig) -> String {
-    let (tools, _) = build_specs(
-        tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    )
-    .build();
+    let (tools, _) = build_specs(tools_config, /*mcp_tools*/ None, &[]).build();
     let spawn_agent = find_tool(&tools, "spawn_agent");
     let ToolSpec::Function(ResponsesApiTool { description, .. }) = &spawn_agent.spec else {
         panic!("spawn_agent should be a function tool");
@@ -266,34 +263,43 @@ async fn model_info_from_models_json(slug: &str) -> ModelInfo {
 /// Builds the tool registry builder while collecting tool specs for later serialization.
 fn build_specs(
     config: &ToolsConfig,
-    mcp_tools: Option<HashMap<String, ToolInfo>>,
-    deferred_mcp_tools: Option<HashMap<String, ToolInfo>>,
+    mcp_tools: Option<HashMap<String, McpToolInput>>,
     dynamic_tools: &[DynamicToolSpec],
 ) -> ToolRegistryBuilder {
-    build_specs_with_unavailable_tools(
-        config,
-        mcp_tools,
-        deferred_mcp_tools,
-        Vec::new(),
-        dynamic_tools,
-    )
+    build_specs_with_unavailable_tools(config, mcp_tools, Vec::new(), dynamic_tools)
 }
 
 fn build_specs_with_unavailable_tools(
     config: &ToolsConfig,
-    mcp_tools: Option<HashMap<String, ToolInfo>>,
-    deferred_mcp_tools: Option<HashMap<String, ToolInfo>>,
+    mcp_tools: Option<HashMap<String, McpToolInput>>,
     unavailable_called_tools: Vec<ToolName>,
     dynamic_tools: &[DynamicToolSpec],
 ) -> ToolRegistryBuilder {
     build_specs_with_discoverable_tools(
         config,
         mcp_tools,
-        deferred_mcp_tools,
         unavailable_called_tools,
         /*discoverable_tools*/ None,
         dynamic_tools,
     )
+}
+
+fn mcp_tool_inputs(
+    mcp_tools: HashMap<String, ToolInfo>,
+    defer_loading: bool,
+) -> HashMap<String, McpToolInput> {
+    mcp_tools
+        .into_iter()
+        .map(|(name, tool_info)| {
+            (
+                name,
+                McpToolInput {
+                    tool_info,
+                    defer_loading,
+                },
+            )
+        })
+        .collect()
 }
 
 #[tokio::test]
@@ -338,13 +344,7 @@ async fn get_memory_requires_feature_flag() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    )
-    .build();
+    let (tools, _) = build_specs(&tools_config, /*mcp_tools*/ None, &[]).build();
     assert!(
         !tools.iter().any(|t| t.spec.name() == "get_memory"),
         "get_memory should be disabled when memory_tool feature is off"
@@ -374,7 +374,6 @@ async fn assert_model_tools(
         &tools_config,
         ToolRouterParams {
             mcp_tools: None,
-            deferred_mcp_tools: None,
             unavailable_called_tools: Vec::new(),
             parallel_mcp_server_names: std::collections::HashSet::new(),
             discoverable_tools: None,
@@ -653,13 +652,7 @@ async fn test_build_specs_default_shell_present() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs(
-        &tools_config,
-        Some(HashMap::new()),
-        /*deferred_mcp_tools*/ None,
-        &[],
-    )
-    .build();
+    let (tools, _) = build_specs(&tools_config, Some(HashMap::new()), &[]).build();
 
     // Only check the shell variant and a couple of core tools.
     let mut subset = vec!["exec_command", "write_stdin", "update_plan"];
@@ -815,7 +808,6 @@ async fn tool_suggest_requires_apps_and_plugins_features() {
         let (tools, _) = build_specs_with_discoverable_tools(
             &tools_config,
             /*mcp_tools*/ None,
-            /*deferred_mcp_tools*/ None,
             Vec::new(),
             discoverable_tools.clone(),
             &[],
@@ -832,7 +824,7 @@ async fn tool_suggest_requires_apps_and_plugins_features() {
 }
 
 #[tokio::test]
-async fn search_tool_description_handles_no_enabled_mcp_tools() {
+async fn search_tool_is_not_registered_without_deferred_tools() {
     let model_info = search_capable_model_info().await;
     let mut features = Features::with_defaults();
     features.enable(Feature::Apps);
@@ -849,20 +841,12 @@ async fn search_tool_description_handles_no_enabled_mcp_tools() {
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
 
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        Some(HashMap::new()),
-        &[],
-    )
-    .build();
-    let search_tool = find_tool(&tools, TOOL_SEARCH_TOOL_NAME);
-    let ToolSpec::ToolSearch { description, .. } = &search_tool.spec else {
-        panic!("expected tool_search tool");
-    };
-
-    assert!(description.contains("None currently enabled."));
-    assert!(!description.contains("{{source_descriptions}}"));
+    let (tools, _) = build_specs(&tools_config, Some(HashMap::new()), &[]).build();
+    assert!(
+        !tools
+            .iter()
+            .any(|tool| tool.name() == TOOL_SEARCH_TOOL_NAME)
+    );
 }
 
 #[tokio::test]
@@ -885,25 +869,27 @@ async fn search_tool_description_falls_back_to_connector_name_without_descriptio
 
     let (tools, _) = build_specs(
         &tools_config,
-        /*mcp_tools*/ None,
-        Some(HashMap::from([(
-            "mcp__codex_apps__calendar_create_event".to_string(),
-            ToolInfo {
-                server_name: CODEX_APPS_MCP_SERVER_NAME.to_string(),
-                callable_name: "_create_event".to_string(),
-                callable_namespace: "mcp__codex_apps__calendar".to_string(),
-                server_instructions: None,
-                tool: mcp_tool(
-                    "calendar_create_event",
-                    "Create calendar event",
-                    serde_json::json!({"type": "object"}),
-                ),
-                connector_id: Some("calendar".to_string()),
-                connector_name: Some("Calendar".to_string()),
-                plugin_display_names: Vec::new(),
-                connector_description: None,
-            },
-        )])),
+        Some(mcp_tool_inputs(
+            HashMap::from([(
+                "mcp__codex_apps__calendar_create_event".to_string(),
+                ToolInfo {
+                    server_name: CODEX_APPS_MCP_SERVER_NAME.to_string(),
+                    callable_name: "_create_event".to_string(),
+                    callable_namespace: "mcp__codex_apps__calendar".to_string(),
+                    server_instructions: None,
+                    tool: mcp_tool(
+                        "calendar_create_event",
+                        "Create calendar event",
+                        serde_json::json!({"type": "object"}),
+                    ),
+                    connector_id: Some("calendar".to_string()),
+                    connector_name: Some("Calendar".to_string()),
+                    plugin_display_names: Vec::new(),
+                    connector_description: None,
+                },
+            )]),
+            /*defer_loading*/ true,
+        )),
         &[],
     )
     .build();
@@ -936,59 +922,61 @@ async fn search_tool_registers_namespaced_mcp_tool_aliases() {
 
     let (_, registry) = build_specs(
         &tools_config,
-        /*mcp_tools*/ None,
-        Some(HashMap::from([
-            (
-                "mcp__codex_apps__calendar_create_event".to_string(),
-                ToolInfo {
-                    server_name: CODEX_APPS_MCP_SERVER_NAME.to_string(),
-                    callable_name: "_create_event".to_string(),
-                    callable_namespace: "mcp__codex_apps__calendar".to_string(),
-                    server_instructions: None,
-                    tool: mcp_tool(
-                        "calendar-create-event",
-                        "Create calendar event",
-                        serde_json::json!({"type": "object"}),
-                    ),
-                    connector_id: Some("calendar".to_string()),
-                    connector_name: Some("Calendar".to_string()),
-                    connector_description: None,
-                    plugin_display_names: Vec::new(),
-                },
-            ),
-            (
-                "mcp__codex_apps__calendar_list_events".to_string(),
-                ToolInfo {
-                    server_name: CODEX_APPS_MCP_SERVER_NAME.to_string(),
-                    callable_name: "_list_events".to_string(),
-                    callable_namespace: "mcp__codex_apps__calendar".to_string(),
-                    server_instructions: None,
-                    tool: mcp_tool(
-                        "calendar-list-events",
-                        "List calendar events",
-                        serde_json::json!({"type": "object"}),
-                    ),
-                    connector_id: Some("calendar".to_string()),
-                    connector_name: Some("Calendar".to_string()),
-                    connector_description: None,
-                    plugin_display_names: Vec::new(),
-                },
-            ),
-            (
-                "mcp__rmcp__echo".to_string(),
-                ToolInfo {
-                    server_name: "rmcp".to_string(),
-                    callable_name: "echo".to_string(),
-                    callable_namespace: "mcp__rmcp__".to_string(),
-                    server_instructions: None,
-                    tool: mcp_tool("echo", "Echo", serde_json::json!({"type": "object"})),
-                    connector_id: None,
-                    connector_name: None,
-                    connector_description: None,
-                    plugin_display_names: Vec::new(),
-                },
-            ),
-        ])),
+        Some(mcp_tool_inputs(
+            HashMap::from([
+                (
+                    "mcp__codex_apps__calendar_create_event".to_string(),
+                    ToolInfo {
+                        server_name: CODEX_APPS_MCP_SERVER_NAME.to_string(),
+                        callable_name: "_create_event".to_string(),
+                        callable_namespace: "mcp__codex_apps__calendar".to_string(),
+                        server_instructions: None,
+                        tool: mcp_tool(
+                            "calendar-create-event",
+                            "Create calendar event",
+                            serde_json::json!({"type": "object"}),
+                        ),
+                        connector_id: Some("calendar".to_string()),
+                        connector_name: Some("Calendar".to_string()),
+                        connector_description: None,
+                        plugin_display_names: Vec::new(),
+                    },
+                ),
+                (
+                    "mcp__codex_apps__calendar_list_events".to_string(),
+                    ToolInfo {
+                        server_name: CODEX_APPS_MCP_SERVER_NAME.to_string(),
+                        callable_name: "_list_events".to_string(),
+                        callable_namespace: "mcp__codex_apps__calendar".to_string(),
+                        server_instructions: None,
+                        tool: mcp_tool(
+                            "calendar-list-events",
+                            "List calendar events",
+                            serde_json::json!({"type": "object"}),
+                        ),
+                        connector_id: Some("calendar".to_string()),
+                        connector_name: Some("Calendar".to_string()),
+                        connector_description: None,
+                        plugin_display_names: Vec::new(),
+                    },
+                ),
+                (
+                    "mcp__rmcp__echo".to_string(),
+                    ToolInfo {
+                        server_name: "rmcp".to_string(),
+                        callable_name: "echo".to_string(),
+                        callable_namespace: "mcp__rmcp__".to_string(),
+                        server_instructions: None,
+                        tool: mcp_tool("echo", "Echo", serde_json::json!({"type": "object"})),
+                        connector_id: None,
+                        connector_name: None,
+                        connector_description: None,
+                        plugin_display_names: Vec::new(),
+                    },
+                ),
+            ]),
+            /*defer_loading*/ true,
+        )),
         &[],
     )
     .build();
@@ -1021,15 +1009,17 @@ async fn direct_mcp_tools_register_namespaced_handlers() {
 
     let (_, registry) = build_specs(
         &tools_config,
-        Some(HashMap::from([(
-            "mcp__test_server__echo".to_string(),
-            mcp_tool_info(mcp_tool(
-                "echo",
-                "Echo",
-                serde_json::json!({"type": "object"}),
-            )),
-        )])),
-        /*deferred_mcp_tools*/ None,
+        Some(mcp_tool_inputs(
+            HashMap::from([(
+                "mcp__test_server__echo".to_string(),
+                mcp_tool_info(mcp_tool(
+                    "echo",
+                    "Echo",
+                    serde_json::json!({"type": "object"}),
+                )),
+            )]),
+            /*defer_loading*/ false,
+        )),
         &[],
     )
     .build();
@@ -1060,7 +1050,6 @@ async fn unavailable_mcp_tools_are_exposed_as_dummy_function_tools() {
     let (tools, registry) = build_specs_with_unavailable_tools(
         &tools_config,
         /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
         vec![unavailable_tool],
         &[],
     )
@@ -1107,23 +1096,25 @@ async fn test_mcp_tool_property_missing_type_defaults_to_string() {
 
     let (tools, _) = build_specs(
         &tools_config,
-        Some(HashMap::from([(
-            "dash/search".to_string(),
-            mcp_tool_info_with_display_name(
-                "dash/search",
-                mcp_tool(
-                    "search",
-                    "Search docs",
-                    serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                            "query": {"description": "search query"}
-                        }
-                    }),
+        Some(mcp_tool_inputs(
+            HashMap::from([(
+                "dash/search".to_string(),
+                mcp_tool_info_with_display_name(
+                    "dash/search",
+                    mcp_tool(
+                        "search",
+                        "Search docs",
+                        serde_json::json!({
+                            "type": "object",
+                            "properties": {
+                                "query": {"description": "search query"}
+                            }
+                        }),
+                    ),
                 ),
-            ),
-        )])),
-        /*deferred_mcp_tools*/ None,
+            )]),
+            /*defer_loading*/ false,
+        )),
         &[],
     )
     .build();
@@ -1170,21 +1161,23 @@ async fn test_mcp_tool_preserves_integer_schema() {
 
     let (tools, _) = build_specs(
         &tools_config,
-        Some(HashMap::from([(
-            "dash/paginate".to_string(),
-            mcp_tool_info_with_display_name(
-                "dash/paginate",
-                mcp_tool(
-                    "paginate",
-                    "Pagination",
-                    serde_json::json!({
-                        "type": "object",
-                        "properties": {"page": {"type": "integer"}}
-                    }),
+        Some(mcp_tool_inputs(
+            HashMap::from([(
+                "dash/paginate".to_string(),
+                mcp_tool_info_with_display_name(
+                    "dash/paginate",
+                    mcp_tool(
+                        "paginate",
+                        "Pagination",
+                        serde_json::json!({
+                            "type": "object",
+                            "properties": {"page": {"type": "integer"}}
+                        }),
+                    ),
                 ),
-            ),
-        )])),
-        /*deferred_mcp_tools*/ None,
+            )]),
+            /*defer_loading*/ false,
+        )),
         &[],
     )
     .build();
@@ -1232,21 +1225,23 @@ async fn test_mcp_tool_array_without_items_gets_default_string_items() {
 
     let (tools, _) = build_specs(
         &tools_config,
-        Some(HashMap::from([(
-            "dash/tags".to_string(),
-            mcp_tool_info_with_display_name(
-                "dash/tags",
-                mcp_tool(
-                    "tags",
-                    "Tags",
-                    serde_json::json!({
-                        "type": "object",
-                        "properties": {"tags": {"type": "array"}}
-                    }),
+        Some(mcp_tool_inputs(
+            HashMap::from([(
+                "dash/tags".to_string(),
+                mcp_tool_info_with_display_name(
+                    "dash/tags",
+                    mcp_tool(
+                        "tags",
+                        "Tags",
+                        serde_json::json!({
+                            "type": "object",
+                            "properties": {"tags": {"type": "array"}}
+                        }),
+                    ),
                 ),
-            ),
-        )])),
-        /*deferred_mcp_tools*/ None,
+            )]),
+            /*defer_loading*/ false,
+        )),
         &[],
     )
     .build();
@@ -1296,23 +1291,25 @@ async fn test_mcp_tool_anyof_defaults_to_string() {
 
     let (tools, _) = build_specs(
         &tools_config,
-        Some(HashMap::from([(
-            "dash/value".to_string(),
-            mcp_tool_info_with_display_name(
-                "dash/value",
-                mcp_tool(
-                    "value",
-                    "AnyOf Value",
-                    serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                            "value": {"anyOf": [{"type": "string"}, {"type": "number"}]}
-                        }
-                    }),
+        Some(mcp_tool_inputs(
+            HashMap::from([(
+                "dash/value".to_string(),
+                mcp_tool_info_with_display_name(
+                    "dash/value",
+                    mcp_tool(
+                        "value",
+                        "AnyOf Value",
+                        serde_json::json!({
+                            "type": "object",
+                            "properties": {
+                                "value": {"anyOf": [{"type": "string"}, {"type": "number"}]}
+                            }
+                        }),
+                    ),
                 ),
-            ),
-        )])),
-        /*deferred_mcp_tools*/ None,
+            )]),
+            /*defer_loading*/ false,
+        )),
         &[],
     )
     .build();
@@ -1364,40 +1361,42 @@ async fn test_get_openai_tools_mcp_tools_with_additional_properties_schema() {
     });
     let (tools, _) = build_specs(
         &tools_config,
-        Some(HashMap::from([(
-            "test_server/do_something_cool".to_string(),
-            mcp_tool_info_with_display_name(
-                "test_server/do_something_cool",
-                mcp_tool(
-                    "do_something_cool",
-                    "Do something cool",
-                    serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                        "string_argument": {"type": "string"},
-                        "number_argument": {"type": "number"},
-                        "object_argument": {
+        Some(mcp_tool_inputs(
+            HashMap::from([(
+                "test_server/do_something_cool".to_string(),
+                mcp_tool_info_with_display_name(
+                    "test_server/do_something_cool",
+                    mcp_tool(
+                        "do_something_cool",
+                        "Do something cool",
+                        serde_json::json!({
                             "type": "object",
                             "properties": {
-                                "string_property": {"type": "string"},
-                                "number_property": {"type": "number"}
-                            },
-                            "required": ["string_property", "number_property"],
-                            "additionalProperties": {
-                                "type": "object",
-                                "properties": {
-                                    "addtl_prop": {"type": "string"}
-                                },
-                                "required": ["addtl_prop"],
-                                "additionalProperties": false
+                                "string_argument": {"type": "string"},
+                                "number_argument": {"type": "number"},
+                                "object_argument": {
+                                    "type": "object",
+                                    "properties": {
+                                        "string_property": {"type": "string"},
+                                        "number_property": {"type": "number"}
+                                    },
+                                    "required": ["string_property", "number_property"],
+                                    "additionalProperties": {
+                                        "type": "object",
+                                        "properties": {
+                                            "addtl_prop": {"type": "string"}
+                                        },
+                                        "required": ["addtl_prop"],
+                                        "additionalProperties": false
+                                    }
                                 }
                             }
-                        }
-                    }),
+                        }),
+                    ),
                 ),
-            ),
-        )])),
-        /*deferred_mcp_tools*/ None,
+            )]),
+            /*defer_loading*/ false,
+        )),
         &[],
     )
     .build();

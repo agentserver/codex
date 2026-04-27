@@ -20,7 +20,6 @@ use anyhow::Context;
 use anyhow::Error;
 use anyhow::Result;
 use codex_config::types::OAuthCredentialsStoreMode;
-use codex_exec_server::HttpClient;
 use oauth2::AccessToken;
 use oauth2::EmptyExtraTokenFields;
 use oauth2::RefreshToken;
@@ -290,21 +289,6 @@ impl OAuthPersistor {
         }
     }
 
-    pub(crate) fn with_http_client(
-        server_name: String,
-        http_client: Arc<dyn HttpClient>,
-        default_headers: reqwest::header::HeaderMap,
-        store_mode: OAuthCredentialsStoreMode,
-        initial_credentials: Option<StoredOAuthTokens>,
-    ) -> Self {
-        Self::new(
-            server_name,
-            OAuthHttpClient::from_default_headers(http_client, default_headers),
-            store_mode,
-            initial_credentials,
-        )
-    }
-
     /// Persists the latest stored credentials if they have changed.
     pub(crate) async fn persist_if_needed(&self) -> Result<()> {
         let mut credentials_state = self.inner.credentials_state.lock().await;
@@ -364,7 +348,9 @@ impl OAuthPersistor {
             })?
         {
             let mut state = self.inner.credentials_state.lock().await;
-            state.current = Some(refreshed);
+            if state.current.as_ref() == Some(&tokens) {
+                state.current = Some(refreshed);
+            }
         }
 
         self.persist_if_needed().await

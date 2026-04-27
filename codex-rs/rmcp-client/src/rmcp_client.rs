@@ -59,6 +59,7 @@ use crate::elicitation_client_service::ElicitationClientService;
 use crate::http_client_adapter::StreamableHttpClientAdapter;
 use crate::http_client_adapter::StreamableHttpClientAdapterError;
 use crate::load_oauth_tokens;
+use crate::mcp_oauth_http::OAuthHttpClient;
 use crate::oauth::OAuthPersistor;
 use crate::oauth::StoredOAuthTokens;
 use crate::stdio_server_launcher::StdioServerCommand;
@@ -939,10 +940,15 @@ async fn create_oauth_transport_and_runtime(
     StreamableHttpClientTransport<StreamableHttpClientAdapter>,
     OAuthPersistor,
 )> {
-    let oauth_persistor = OAuthPersistor::with_http_client(
+    let oauth_http =
+        OAuthHttpClient::from_default_headers(Arc::clone(&http_client), default_headers.clone());
+    if oauth_http.discover(url).await?.is_none() {
+        anyhow::bail!("No authorization support detected");
+    }
+
+    let oauth_persistor = OAuthPersistor::new(
         server_name.to_string(),
-        Arc::clone(&http_client),
-        default_headers.clone(),
+        oauth_http,
         credentials_store,
         Some(initial_tokens),
     );

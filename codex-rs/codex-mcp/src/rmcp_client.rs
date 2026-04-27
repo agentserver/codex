@@ -59,8 +59,6 @@ use rmcp::model::FormElicitationCapability;
 use rmcp::model::Implementation;
 use rmcp::model::InitializeRequestParams;
 use rmcp::model::ProtocolVersion;
-use rmcp::model::UrlElicitationCapability;
-use serde_json::Value as JsonValue;
 use tokio_util::sync::CancellationToken;
 
 /// MCP server capability indicating that Codex should include [`SandboxState`]
@@ -72,7 +70,6 @@ pub(crate) const MCP_TOOLS_FETCH_UNCACHED_DURATION_METRIC: &str =
     "codex.mcp.tools.fetch_uncached.duration_ms";
 pub(crate) const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const DEFAULT_TOOL_TIMEOUT: Duration = Duration::from_secs(120);
-pub(crate) const MCP_PROTOCOL_VERSION_WITH_URL_ELICITATION: &str = "2025-11-25";
 
 #[derive(Clone)]
 pub(crate) struct ManagedClient {
@@ -300,24 +297,14 @@ impl From<anyhow::Error> for StartupOutcomeError {
 pub(crate) fn elicitation_capability_for_server(
     _server_name: &str,
 ) -> Option<ElicitationCapability> {
-    // https://modelcontextprotocol.io/specification/draft/client/elicitation#capabilities
-    // requires clients to declare each elicitation mode they support.
+    // https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation#capabilities
+    // indicates this should be an empty object.
     Some(ElicitationCapability {
         form: Some(FormElicitationCapability {
             schema_validation: None,
         }),
-        url: Some(UrlElicitationCapability {}),
+        url: None,
     })
-}
-
-pub(crate) fn protocol_version_with_url_elicitation() -> ProtocolVersion {
-    // rmcp 0.15 predates a named constant for the 2025-11-25 revision.
-    match serde_json::from_value(JsonValue::String(
-        MCP_PROTOCOL_VERSION_WITH_URL_ELICITATION.to_string(),
-    )) {
-        Ok(protocol_version) => protocol_version,
-        Err(err) => unreachable!("string MCP protocol version should deserialize: {err}"),
-    }
 }
 
 pub(crate) async fn list_tools_for_client_uncached(
@@ -442,7 +429,7 @@ async fn start_server_task(
             icons: None,
             website_url: None,
         },
-        protocol_version: protocol_version_with_url_elicitation(),
+        protocol_version: ProtocolVersion::V_2025_06_18,
     };
 
     let send_elicitation = elicitation_requests.make_sender(server_name.clone(), tx_event);

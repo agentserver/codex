@@ -8,11 +8,9 @@ use crate::declared_openai_file_input_param_names;
 use crate::elicitation::ElicitationRequestManager;
 use crate::elicitation::elicitation_is_rejected_by_policy;
 use crate::rmcp_client::AsyncManagedClient;
-use crate::rmcp_client::MCP_PROTOCOL_VERSION_WITH_URL_ELICITATION;
 use crate::rmcp_client::ManagedClient;
 use crate::rmcp_client::StartupOutcomeError;
 use crate::rmcp_client::elicitation_capability_for_server;
-use crate::rmcp_client::protocol_version_with_url_elicitation;
 use crate::tools::ToolFilter;
 use crate::tools::ToolInfo;
 use crate::tools::filter_tools;
@@ -20,7 +18,11 @@ use crate::tools::qualify_tools;
 use crate::tools::tool_with_model_visible_input_schema;
 use codex_config::Constrained;
 use codex_protocol::ToolName;
+use codex_protocol::approvals::ElicitationRequest;
+use codex_protocol::approvals::ElicitationRequestEvent;
+use codex_protocol::mcp::RequestId as ProtocolRequestId;
 use codex_protocol::models::PermissionProfile;
+use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::GranularApprovalConfig;
 use codex_protocol::protocol::McpAuthStatus;
 use futures::FutureExt;
@@ -263,6 +265,103 @@ async fn disabled_permissions_do_not_auto_accept_elicitation_with_requested_fiel
         response,
         ElicitationResponse {
             action: ElicitationAction::Decline,
+            content: None,
+            meta: None,
+        }
+    );
+}
+
+#[tokio::test]
+async fn url_elicitations_are_declined_for_custom_servers() {
+    let manager =
+        ElicitationRequestManager::new(AskForApproval::OnRequest, PermissionProfile::default());
+    let (tx_event, _rx_event) = async_channel::bounded(1);
+    let sender = manager.make_sender("custom_mcp".to_string(), tx_event);
+
+    let response = sender(
+        NumberOrString::String("url-1".into()),
+        CreateElicitationRequestParams::UrlElicitationParams {
+            meta: None,
+            message: "Sign in to continue.".to_string(),
+            url: "https://example.com/login".to_string(),
+            elicitation_id: "custom-auth".to_string(),
+        },
+    )
+    .await
+    .expect("elicitation should auto decline");
+
+    assert_eq!(
+        response,
+        ElicitationResponse {
+            action: ElicitationAction::Decline,
+            content: None,
+            meta: None,
+        }
+    );
+}
+
+#[tokio::test]
+async fn url_elicitations_are_surfaced_for_codex_apps() {
+    let manager =
+        ElicitationRequestManager::new(AskForApproval::OnRequest, PermissionProfile::default());
+    let (tx_event, rx_event) = async_channel::bounded(1);
+    let sender = manager.make_sender(CODEX_APPS_MCP_SERVER_NAME.to_string(), tx_event);
+    let send_task = tokio::spawn(sender(
+        NumberOrString::String("url-1".into()),
+        CreateElicitationRequestParams::UrlElicitationParams {
+            meta: None,
+            message: "Reconnect Calendar.".to_string(),
+            url: "https://chatgpt.com/apps/calendar".to_string(),
+            elicitation_id: "codex_apps_auth_call_123".to_string(),
+        },
+    ));
+
+    let event = rx_event
+        .recv()
+        .await
+        .expect("url elicitation should be surfaced");
+    let EventMsg::ElicitationRequest(ElicitationRequestEvent {
+        turn_id,
+        server_name,
+        id,
+        request,
+    }) = event.msg
+    else {
+        panic!("expected elicitation request event");
+    };
+    assert_eq!(turn_id, None);
+    assert_eq!(server_name, CODEX_APPS_MCP_SERVER_NAME);
+    assert_eq!(id, ProtocolRequestId::String("url-1".to_string()));
+    assert_eq!(
+        request,
+        ElicitationRequest::Url {
+            meta: None,
+            message: "Reconnect Calendar.".to_string(),
+            url: "https://chatgpt.com/apps/calendar".to_string(),
+            elicitation_id: "codex_apps_auth_call_123".to_string(),
+        }
+    );
+
+    manager
+        .resolve(
+            CODEX_APPS_MCP_SERVER_NAME.to_string(),
+            NumberOrString::String("url-1".into()),
+            ElicitationResponse {
+                action: ElicitationAction::Accept,
+                content: None,
+                meta: None,
+            },
+        )
+        .await
+        .expect("request should resolve");
+    let response = send_task
+        .await
+        .expect("sender task should complete")
+        .expect("elicitation should resolve");
+    assert_eq!(
+        response,
+        ElicitationResponse {
+            action: ElicitationAction::Accept,
             content: None,
             meta: None,
         }
@@ -807,18 +906,10 @@ fn elicitation_capability_enabled_for_custom_servers() {
                 form: Some(FormElicitationCapability {
                     schema_validation: None
                 }),
-                url: Some(_),
+                url: None,
             })
         ));
     }
-}
-
-#[test]
-fn client_protocol_version_claims_url_elicitation_revision() {
-    assert_eq!(
-        protocol_version_with_url_elicitation().to_string(),
-        MCP_PROTOCOL_VERSION_WITH_URL_ELICITATION
-    );
 }
 
 #[test]

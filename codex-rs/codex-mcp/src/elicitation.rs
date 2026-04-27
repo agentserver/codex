@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
+use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
 use crate::mcp::mcp_permission_prompt_is_auto_approved;
 use anyhow::Context;
 use anyhow::Result;
@@ -124,15 +125,25 @@ impl ElicitationRequestManager {
                         message,
                         url,
                         elicitation_id,
-                    } => ElicitationRequest::Url {
-                        meta: meta
-                            .map(serde_json::to_value)
-                            .transpose()
-                            .context("failed to serialize MCP elicitation metadata")?,
-                        message,
-                        url,
-                        elicitation_id,
-                    },
+                    } => {
+                        if server_name != CODEX_APPS_MCP_SERVER_NAME {
+                            return Ok(ElicitationResponse {
+                                action: ElicitationAction::Decline,
+                                content: None,
+                                meta: None,
+                            });
+                        }
+
+                        ElicitationRequest::Url {
+                            meta: meta
+                                .map(serde_json::to_value)
+                                .transpose()
+                                .context("failed to serialize MCP elicitation metadata")?,
+                            message,
+                            url,
+                            elicitation_id,
+                        }
+                    }
                 };
                 let (tx, rx) = oneshot::channel();
                 {

@@ -40,7 +40,7 @@ pub async fn determine_streamable_http_auth_status(
         http_headers,
         env_http_headers,
         store_mode,
-        Arc::new(NoProxyReqwestHttpClient),
+        no_proxy_http_client(),
     )
     .await
 }
@@ -101,9 +101,13 @@ pub async fn discover_streamable_http_oauth(
         url,
         http_headers,
         env_http_headers,
-        Arc::new(NoProxyReqwestHttpClient),
+        no_proxy_http_client(),
     )
     .await
+}
+
+pub(crate) fn no_proxy_http_client() -> Arc<dyn HttpClient> {
+    Arc::new(NoProxyReqwestHttpClient)
 }
 
 #[derive(Debug, Clone, Default)]

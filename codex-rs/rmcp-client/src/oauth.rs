@@ -95,6 +95,43 @@ pub(crate) fn load_oauth_tokens(
     }
 }
 
+enum OAuthTokensStorageState {
+    Found(StoredOAuthTokens),
+    Missing,
+    Unavailable,
+}
+
+fn load_oauth_tokens_for_persist(
+    server_name: &str,
+    url: &str,
+    store_mode: OAuthCredentialsStoreMode,
+) -> Result<OAuthTokensStorageState> {
+    let keyring_store = DefaultKeyringStore;
+    match store_mode {
+        OAuthCredentialsStoreMode::Auto => {
+            load_oauth_tokens_for_persist_from_keyring_with_fallback_to_file(
+                &keyring_store,
+                server_name,
+                url,
+            )
+        }
+        OAuthCredentialsStoreMode::File => {
+            Ok(match load_oauth_tokens_from_file(server_name, url)? {
+                Some(tokens) => OAuthTokensStorageState::Found(tokens),
+                None => OAuthTokensStorageState::Missing,
+            })
+        }
+        OAuthCredentialsStoreMode::Keyring => Ok(
+            match load_oauth_tokens_from_keyring(&keyring_store, server_name, url)
+                .with_context(|| "failed to read OAuth tokens from keyring".to_string())?
+            {
+                Some(tokens) => OAuthTokensStorageState::Found(tokens),
+                None => OAuthTokensStorageState::Missing,
+            },
+        ),
+    }
+}
+
 pub(crate) fn has_oauth_tokens(
     server_name: &str,
     url: &str,
@@ -131,6 +168,48 @@ fn load_oauth_tokens_from_keyring_with_fallback_to_file<K: KeyringStore>(
             warn!("failed to read OAuth tokens from keyring: {error}");
             load_oauth_tokens_from_file(server_name, url)
                 .with_context(|| format!("failed to read OAuth tokens from keyring: {error}"))
+        }
+    }
+}
+
+fn stored_tokens_match_without_expires_in(
+    actual: &StoredOAuthTokens,
+    expected: &StoredOAuthTokens,
+) -> bool {
+    let actual_response = &actual.token_response.0;
+    let expected_response = &expected.token_response.0;
+
+    actual.server_name == expected.server_name
+        && actual.url == expected.url
+        && actual.client_id == expected.client_id
+        && actual.expires_at == expected.expires_at
+        && actual_response.access_token().secret() == expected_response.access_token().secret()
+        && actual_response.token_type() == expected_response.token_type()
+        && actual_response.refresh_token().map(RefreshToken::secret)
+            == expected_response.refresh_token().map(RefreshToken::secret)
+        && actual_response.scopes() == expected_response.scopes()
+        && actual_response.extra_fields() == expected_response.extra_fields()
+}
+
+fn load_oauth_tokens_for_persist_from_keyring_with_fallback_to_file<K: KeyringStore>(
+    keyring_store: &K,
+    server_name: &str,
+    url: &str,
+) -> Result<OAuthTokensStorageState> {
+    match load_oauth_tokens_from_keyring(keyring_store, server_name, url) {
+        Ok(Some(tokens)) => Ok(OAuthTokensStorageState::Found(tokens)),
+        Ok(None) => Ok(match load_oauth_tokens_from_file(server_name, url)? {
+            Some(tokens) => OAuthTokensStorageState::Found(tokens),
+            None => OAuthTokensStorageState::Missing,
+        }),
+        Err(error) => {
+            warn!("failed to read OAuth tokens from keyring: {error}");
+            match load_oauth_tokens_from_file(server_name, url)
+                .with_context(|| format!("failed to read OAuth tokens from keyring: {error}"))?
+            {
+                Some(tokens) => Ok(OAuthTokensStorageState::Found(tokens)),
+                None => Ok(OAuthTokensStorageState::Unavailable),
+            }
         }
     }
 }
@@ -295,23 +374,46 @@ impl OAuthPersistor {
         let Some(stored) = credentials_state.current.clone() else {
             return Ok(());
         };
-        match load_oauth_tokens(&self.inner.server_name, &stored.url, self.inner.store_mode)? {
-            None => {
+        match load_oauth_tokens_for_persist(
+            &self.inner.server_name,
+            &stored.url,
+            self.inner.store_mode,
+        )? {
+            OAuthTokensStorageState::Missing => {
                 credentials_state.current = None;
                 credentials_state.last_persisted = None;
             }
-            Some(current_store) if current_store == stored => {
-                credentials_state.last_persisted = Some(current_store);
+            OAuthTokensStorageState::Unavailable => {
+                let should_save = match credentials_state.last_persisted.as_ref() {
+                    Some(last_persisted) => {
+                        !stored_tokens_match_without_expires_in(&stored, last_persisted)
+                    }
+                    None => true,
+                };
+                if should_save {
+                    save_oauth_tokens(&self.inner.server_name, &stored, self.inner.store_mode)?;
+                    credentials_state.last_persisted = Some(stored);
+                }
             }
-            Some(current_store)
-                if Some(&current_store) != credentials_state.last_persisted.as_ref() =>
+            OAuthTokensStorageState::Found(current_store)
+                if stored_tokens_match_without_expires_in(&current_store, &stored) =>
             {
-                credentials_state.current = Some(current_store.clone());
                 credentials_state.last_persisted = Some(current_store);
             }
-            Some(_) => {
-                save_oauth_tokens(&self.inner.server_name, &stored, self.inner.store_mode)?;
-                credentials_state.last_persisted = Some(stored);
+            OAuthTokensStorageState::Found(current_store) => {
+                let store_matches_last_persisted = credentials_state
+                    .last_persisted
+                    .as_ref()
+                    .is_some_and(|last_persisted| {
+                        stored_tokens_match_without_expires_in(&current_store, last_persisted)
+                    });
+                if store_matches_last_persisted {
+                    save_oauth_tokens(&self.inner.server_name, &stored, self.inner.store_mode)?;
+                    credentials_state.last_persisted = Some(stored);
+                } else {
+                    credentials_state.current = Some(current_store.clone());
+                    credentials_state.last_persisted = Some(current_store);
+                }
             }
         }
         Ok(())
@@ -723,6 +825,24 @@ mod tests {
     }
 
     #[test]
+    fn load_oauth_tokens_for_persist_keeps_keyring_errors_distinct() -> Result<()> {
+        let _env = TempCodexHome::new();
+        let store = MockKeyringStore::default();
+        let tokens = sample_tokens();
+        let key = super::compute_store_key(&tokens.server_name, &tokens.url)?;
+        store.set_error(&key, KeyringError::Invalid("error".into(), "load".into()));
+
+        let state = super::load_oauth_tokens_for_persist_from_keyring_with_fallback_to_file(
+            &store,
+            &tokens.server_name,
+            &tokens.url,
+        )?;
+
+        assert!(matches!(state, super::OAuthTokensStorageState::Unavailable));
+        Ok(())
+    }
+
+    #[test]
     fn save_oauth_tokens_prefers_keyring_when_available() -> Result<()> {
         let _env = TempCodexHome::new();
         let store = MockKeyringStore::default();
@@ -938,6 +1058,51 @@ mod tests {
             OAuthCredentialsStoreMode::File,
         )?
         .expect("newer tokens should remain stored");
+        assert_tokens_match_without_expiry(&loaded, &newer_tokens);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn persistor_saves_newer_memory_credentials_despite_expires_in_drift() -> Result<()> {
+        let _env = TempCodexHome::new();
+        let mut stored_tokens = sample_tokens();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_else(|_| Duration::from_secs(0));
+        stored_tokens.expires_at = Some(now.as_millis() as u64 + 10_000);
+        let expires_in = Duration::from_secs(3600);
+        stored_tokens
+            .token_response
+            .0
+            .set_expires_in(Some(&expires_in));
+        super::save_oauth_tokens_to_file(&stored_tokens)?;
+
+        let persistor = OAuthPersistor::new(
+            stored_tokens.server_name.clone(),
+            OAuthHttpClient::new(
+                Arc::new(FailingHttpClient),
+                /*http_headers*/ None,
+                /*env_http_headers*/ None,
+            )?,
+            OAuthCredentialsStoreMode::File,
+            Some(stored_tokens.clone()),
+        );
+
+        let newer_tokens = sample_tokens_with_access_token("newer-access-token");
+        {
+            let mut state = persistor.inner.credentials_state.lock().await;
+            state.current = Some(newer_tokens.clone());
+            state.last_persisted = Some(stored_tokens);
+        }
+
+        persistor.persist_if_needed().await?;
+
+        let loaded = super::load_oauth_tokens(
+            &newer_tokens.server_name,
+            &newer_tokens.url,
+            OAuthCredentialsStoreMode::File,
+        )?
+        .expect("newer tokens should be stored");
         assert_tokens_match_without_expiry(&loaded, &newer_tokens);
         Ok(())
     }

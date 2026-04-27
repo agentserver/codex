@@ -8,7 +8,6 @@ use anyhow::Result;
 use anyhow::anyhow;
 use anyhow::bail;
 use codex_exec_server::HttpClient;
-use codex_exec_server::ReqwestHttpClient;
 use reqwest::Url;
 use tiny_http::Response;
 use tiny_http::Server;
@@ -18,6 +17,7 @@ use urlencoding::decode;
 
 use crate::StoredOAuthTokens;
 use crate::WrappedOAuthTokenResponse;
+use crate::auth_status::no_proxy_http_client;
 use crate::mcp_oauth_http::OAuthAuthorizationSession;
 use crate::mcp_oauth_http::OAuthHttpClient;
 use crate::oauth::compute_expires_at_millis;
@@ -91,7 +91,7 @@ pub async fn perform_oauth_login(
         oauth_resource,
         callback_port,
         callback_url,
-        Arc::new(ReqwestHttpClient),
+        no_proxy_http_client(),
     )
     .await
 }
@@ -147,7 +147,7 @@ pub async fn perform_oauth_login_silent(
         oauth_resource,
         callback_port,
         callback_url,
-        Arc::new(ReqwestHttpClient),
+        no_proxy_http_client(),
     )
     .await
 }
@@ -241,7 +241,7 @@ pub async fn perform_oauth_login_return_url(
         timeout_secs,
         callback_port,
         callback_url,
-        Arc::new(ReqwestHttpClient),
+        no_proxy_http_client(),
     )
     .await
 }

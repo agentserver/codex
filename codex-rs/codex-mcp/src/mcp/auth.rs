@@ -14,7 +14,10 @@ use codex_rmcp_client::determine_streamable_http_auth_status;
 use codex_rmcp_client::determine_streamable_http_auth_status_with_client;
 use codex_rmcp_client::discover_streamable_http_oauth;
 use codex_rmcp_client::discover_streamable_http_oauth_with_client;
+use codex_rmcp_client::perform_oauth_login;
+use codex_rmcp_client::perform_oauth_login_return_url;
 use codex_rmcp_client::perform_oauth_login_return_url_with_client;
+use codex_rmcp_client::perform_oauth_login_silent;
 use codex_rmcp_client::perform_oauth_login_silent_with_client;
 use codex_rmcp_client::perform_oauth_login_with_client;
 use futures::future::join_all;
@@ -64,6 +67,33 @@ pub struct McpAuthStatusEntry {
 pub enum McpOAuthLoginOutcome {
     Completed,
     Unsupported,
+}
+
+#[derive(Clone)]
+enum McpOAuthHttpClient {
+    LocalNoProxy,
+    Runtime(Arc<dyn HttpClient>),
+}
+
+impl McpOAuthHttpClient {
+    async fn login_support(&self, transport: &McpServerTransportConfig) -> McpOAuthLoginSupport {
+        match self {
+            Self::LocalNoProxy => oauth_login_support(transport).await,
+            Self::Runtime(http_client) => {
+                oauth_login_support_with_client(transport, http_client.clone()).await
+            }
+        }
+    }
+
+    async fn discover_supported_scopes(
+        &self,
+        transport: &McpServerTransportConfig,
+    ) -> Option<Vec<String>> {
+        match self.login_support(transport).await {
+            McpOAuthLoginSupport::Supported(config) => config.discovered_scopes,
+            McpOAuthLoginSupport::Unsupported | McpOAuthLoginSupport::Unknown(_) => None,
+        }
+    }
 }
 
 pub async fn oauth_login_support(transport: &McpServerTransportConfig) -> McpOAuthLoginSupport {
@@ -175,16 +205,6 @@ pub async fn discover_supported_scopes_for_server(
     }
 }
 
-async fn discover_supported_scopes_with_client(
-    transport: &McpServerTransportConfig,
-    http_client: Arc<dyn HttpClient>,
-) -> Option<Vec<String>> {
-    match oauth_login_support_with_client(transport, http_client).await {
-        McpOAuthLoginSupport::Supported(config) => config.discovered_scopes,
-        McpOAuthLoginSupport::Unsupported | McpOAuthLoginSupport::Unknown(_) => None,
-    }
-}
-
 pub fn resolve_oauth_scopes(
     explicit_scopes: Option<Vec<String>>,
     configured_scopes: Option<Vec<String>>,
@@ -245,29 +265,50 @@ pub async fn perform_oauth_login_return_url_for_server(
         anyhow::bail!("OAuth login is only supported for streamable HTTP servers.");
     };
 
-    let http_client = http_client_for_server(config, runtime_environment)?;
+    let oauth_http_client = oauth_http_client_for_server(config, runtime_environment)?;
     let discovered_scopes = if explicit_scopes.is_none() && config.scopes.is_none() {
-        discover_supported_scopes_with_client(&config.transport, http_client.clone()).await
+        oauth_http_client
+            .discover_supported_scopes(&config.transport)
+            .await
     } else {
         None
     };
     let resolved_scopes =
         resolve_oauth_scopes(explicit_scopes, config.scopes.clone(), discovered_scopes);
 
-    perform_oauth_login_return_url_with_client(
-        server_name,
-        url,
-        store_mode,
-        http_headers.clone(),
-        env_http_headers.clone(),
-        &resolved_scopes.scopes,
-        config.oauth_resource.as_deref(),
-        timeout_secs,
-        callback_port,
-        callback_url,
-        http_client,
-    )
-    .await
+    match oauth_http_client {
+        McpOAuthHttpClient::LocalNoProxy => {
+            perform_oauth_login_return_url(
+                server_name,
+                url,
+                store_mode,
+                http_headers.clone(),
+                env_http_headers.clone(),
+                &resolved_scopes.scopes,
+                config.oauth_resource.as_deref(),
+                timeout_secs,
+                callback_port,
+                callback_url,
+            )
+            .await
+        }
+        McpOAuthHttpClient::Runtime(http_client) => {
+            perform_oauth_login_return_url_with_client(
+                server_name,
+                url,
+                store_mode,
+                http_headers.clone(),
+                env_http_headers.clone(),
+                &resolved_scopes.scopes,
+                config.oauth_resource.as_deref(),
+                timeout_secs,
+                callback_port,
+                callback_url,
+                http_client,
+            )
+            .await
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -280,13 +321,12 @@ pub async fn perform_oauth_login_silent_for_server(
     callback_url: Option<&str>,
     runtime_environment: McpRuntimeEnvironment,
 ) -> Result<McpOAuthLoginOutcome> {
-    let http_client = http_client_for_server(config, runtime_environment)?;
-    let oauth_config =
-        match oauth_login_support_with_client(&config.transport, http_client.clone()).await {
-            McpOAuthLoginSupport::Supported(config) => config,
-            McpOAuthLoginSupport::Unsupported => return Ok(McpOAuthLoginOutcome::Unsupported),
-            McpOAuthLoginSupport::Unknown(err) => return Err(err),
-        };
+    let oauth_http_client = oauth_http_client_for_server(config, runtime_environment)?;
+    let oauth_config = match oauth_http_client.login_support(&config.transport).await {
+        McpOAuthLoginSupport::Supported(config) => config,
+        McpOAuthLoginSupport::Unsupported => return Ok(McpOAuthLoginOutcome::Unsupported),
+        McpOAuthLoginSupport::Unknown(err) => return Err(err),
+    };
 
     let resolved_scopes = resolve_oauth_scopes(
         explicit_scopes,
@@ -294,37 +334,71 @@ pub async fn perform_oauth_login_silent_for_server(
         oauth_config.discovered_scopes.clone(),
     );
 
-    let first_attempt = perform_oauth_login_silent_with_client(
-        server_name,
-        &oauth_config.url,
-        store_mode,
-        oauth_config.http_headers.clone(),
-        oauth_config.env_http_headers.clone(),
-        &resolved_scopes.scopes,
-        config.oauth_resource.as_deref(),
-        callback_port,
-        callback_url,
-        http_client.clone(),
-    )
-    .await;
-
-    let final_result = match first_attempt {
-        Err(err) if should_retry_without_scopes(&resolved_scopes, &err) => {
-            perform_oauth_login_silent_with_client(
+    let final_result = match oauth_http_client {
+        McpOAuthHttpClient::LocalNoProxy => {
+            let first_attempt = perform_oauth_login_silent(
                 server_name,
                 &oauth_config.url,
                 store_mode,
-                oauth_config.http_headers,
-                oauth_config.env_http_headers,
-                &[],
+                oauth_config.http_headers.clone(),
+                oauth_config.env_http_headers.clone(),
+                &resolved_scopes.scopes,
                 config.oauth_resource.as_deref(),
                 callback_port,
                 callback_url,
-                http_client,
             )
-            .await
+            .await;
+            match first_attempt {
+                Err(err) if should_retry_without_scopes(&resolved_scopes, &err) => {
+                    perform_oauth_login_silent(
+                        server_name,
+                        &oauth_config.url,
+                        store_mode,
+                        oauth_config.http_headers,
+                        oauth_config.env_http_headers,
+                        &[],
+                        config.oauth_resource.as_deref(),
+                        callback_port,
+                        callback_url,
+                    )
+                    .await
+                }
+                result => result,
+            }
         }
-        result => result,
+        McpOAuthHttpClient::Runtime(http_client) => {
+            let first_attempt = perform_oauth_login_silent_with_client(
+                server_name,
+                &oauth_config.url,
+                store_mode,
+                oauth_config.http_headers.clone(),
+                oauth_config.env_http_headers.clone(),
+                &resolved_scopes.scopes,
+                config.oauth_resource.as_deref(),
+                callback_port,
+                callback_url,
+                http_client.clone(),
+            )
+            .await;
+            match first_attempt {
+                Err(err) if should_retry_without_scopes(&resolved_scopes, &err) => {
+                    perform_oauth_login_silent_with_client(
+                        server_name,
+                        &oauth_config.url,
+                        store_mode,
+                        oauth_config.http_headers,
+                        oauth_config.env_http_headers,
+                        &[],
+                        config.oauth_resource.as_deref(),
+                        callback_port,
+                        callback_url,
+                        http_client,
+                    )
+                    .await
+                }
+                result => result,
+            }
+        }
     };
 
     final_result.map(|()| McpOAuthLoginOutcome::Completed)
@@ -340,13 +414,12 @@ pub async fn perform_oauth_login_for_server(
     callback_url: Option<&str>,
     runtime_environment: McpRuntimeEnvironment,
 ) -> Result<McpOAuthLoginOutcome> {
-    let http_client = http_client_for_server(config, runtime_environment)?;
-    let oauth_config =
-        match oauth_login_support_with_client(&config.transport, http_client.clone()).await {
-            McpOAuthLoginSupport::Supported(config) => config,
-            McpOAuthLoginSupport::Unsupported => return Ok(McpOAuthLoginOutcome::Unsupported),
-            McpOAuthLoginSupport::Unknown(err) => return Err(err),
-        };
+    let oauth_http_client = oauth_http_client_for_server(config, runtime_environment)?;
+    let oauth_config = match oauth_http_client.login_support(&config.transport).await {
+        McpOAuthLoginSupport::Supported(config) => config,
+        McpOAuthLoginSupport::Unsupported => return Ok(McpOAuthLoginOutcome::Unsupported),
+        McpOAuthLoginSupport::Unknown(err) => return Err(err),
+    };
 
     let resolved_scopes = resolve_oauth_scopes(
         explicit_scopes,
@@ -354,37 +427,71 @@ pub async fn perform_oauth_login_for_server(
         oauth_config.discovered_scopes.clone(),
     );
 
-    let first_attempt = perform_oauth_login_with_client(
-        server_name,
-        &oauth_config.url,
-        store_mode,
-        oauth_config.http_headers.clone(),
-        oauth_config.env_http_headers.clone(),
-        &resolved_scopes.scopes,
-        config.oauth_resource.as_deref(),
-        callback_port,
-        callback_url,
-        http_client.clone(),
-    )
-    .await;
-
-    let final_result = match first_attempt {
-        Err(err) if should_retry_without_scopes(&resolved_scopes, &err) => {
-            perform_oauth_login_with_client(
+    let final_result = match oauth_http_client {
+        McpOAuthHttpClient::LocalNoProxy => {
+            let first_attempt = perform_oauth_login(
                 server_name,
                 &oauth_config.url,
                 store_mode,
-                oauth_config.http_headers,
-                oauth_config.env_http_headers,
-                &[],
+                oauth_config.http_headers.clone(),
+                oauth_config.env_http_headers.clone(),
+                &resolved_scopes.scopes,
                 config.oauth_resource.as_deref(),
                 callback_port,
                 callback_url,
-                http_client,
             )
-            .await
+            .await;
+            match first_attempt {
+                Err(err) if should_retry_without_scopes(&resolved_scopes, &err) => {
+                    perform_oauth_login(
+                        server_name,
+                        &oauth_config.url,
+                        store_mode,
+                        oauth_config.http_headers,
+                        oauth_config.env_http_headers,
+                        &[],
+                        config.oauth_resource.as_deref(),
+                        callback_port,
+                        callback_url,
+                    )
+                    .await
+                }
+                result => result,
+            }
         }
-        result => result,
+        McpOAuthHttpClient::Runtime(http_client) => {
+            let first_attempt = perform_oauth_login_with_client(
+                server_name,
+                &oauth_config.url,
+                store_mode,
+                oauth_config.http_headers.clone(),
+                oauth_config.env_http_headers.clone(),
+                &resolved_scopes.scopes,
+                config.oauth_resource.as_deref(),
+                callback_port,
+                callback_url,
+                http_client.clone(),
+            )
+            .await;
+            match first_attempt {
+                Err(err) if should_retry_without_scopes(&resolved_scopes, &err) => {
+                    perform_oauth_login_with_client(
+                        server_name,
+                        &oauth_config.url,
+                        store_mode,
+                        oauth_config.http_headers,
+                        oauth_config.env_http_headers,
+                        &[],
+                        config.oauth_resource.as_deref(),
+                        callback_port,
+                        callback_url,
+                        http_client,
+                    )
+                    .await
+                }
+                result => result,
+            }
+        }
     };
 
     final_result.map(|()| McpOAuthLoginOutcome::Completed)
@@ -506,6 +613,20 @@ pub fn http_client_for_server(
             }
             Ok(environment.get_http_client())
         }
+        Some(environment) => anyhow::bail!("unsupported experimental_environment `{environment}`"),
+    }
+}
+
+fn oauth_http_client_for_server(
+    config: &McpServerConfig,
+    runtime_environment: McpRuntimeEnvironment,
+) -> Result<McpOAuthHttpClient> {
+    match config.experimental_environment.as_deref() {
+        None | Some("local") => Ok(McpOAuthHttpClient::LocalNoProxy),
+        Some("remote") => Ok(McpOAuthHttpClient::Runtime(http_client_for_server(
+            config,
+            runtime_environment,
+        )?)),
         Some(environment) => anyhow::bail!("unsupported experimental_environment `{environment}`"),
     }
 }

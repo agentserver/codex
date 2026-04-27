@@ -29,6 +29,7 @@ use crate::render::renderable::Renderable;
 
 const EVENT_COLUMN_WIDTH: usize = 22;
 const COUNT_COLUMN_WIDTH: usize = 12;
+const MAX_COMMAND_DETAIL_LINES: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HooksBrowserPage {
@@ -279,10 +280,11 @@ impl HooksBrowserView {
             &hook.source_path.display().to_string(),
             width,
         ));
-        lines.extend(detail_wrapped_lines(
+        lines.extend(detail_wrapped_lines_limited(
             "Command",
             hook.command.as_deref().unwrap_or("-"),
             width,
+            MAX_COMMAND_DETAIL_LINES,
         ));
         lines.push(detail_line("Timeout", &format!("{}s", hook.timeout_sec)));
         lines
@@ -522,7 +524,7 @@ fn summary_source(hook: &HookMetadata, idx: usize) -> String {
     match hook.source {
         HookSource::Plugin => format!(
             "{hook_label} - {}",
-            hook.plugin_id.as_deref().unwrap_or("unknown plugin")
+            hook.plugin_id.as_deref().unwrap_or("Plugin")
         ),
         _ => format!("{hook_label} - {}", config_source_label(hook.source)),
     }
@@ -554,6 +556,41 @@ fn detail_wrapped_lines(label: &str, value: &str, width: usize) -> Vec<Line<'sta
     let mut lines = vec![Line::from(vec![prefix.into(), first.dim()])];
     lines
         .extend(wrapped.map(|line| Line::from(vec!["          ".into(), line.into_owned().dim()])));
+    lines
+}
+
+fn detail_wrapped_lines_limited(
+    label: &str,
+    value: &str,
+    width: usize,
+    max_lines: usize,
+) -> Vec<Line<'static>> {
+    let mut lines = detail_wrapped_lines(label, value, width);
+    if lines.len() <= max_lines {
+        return lines;
+    }
+
+    lines.truncate(max_lines);
+    if let Some(last_line) = lines.last_mut() {
+        let prefix_width = last_line.spans[..last_line.spans.len().saturating_sub(1)]
+            .iter()
+            .map(ratatui::prelude::Span::width)
+            .sum::<usize>();
+        let max_width = width.saturating_sub(prefix_width);
+        let Some(last_span) = last_line.spans.last_mut() else {
+            return lines;
+        };
+        let truncated = truncate_line_with_ellipsis_if_overflow(
+            Line::from(format!("{}…", last_span.content)),
+            max_width,
+        );
+        let content = truncated
+            .spans
+            .into_iter()
+            .map(|span| span.content.into_owned())
+            .collect::<String>();
+        last_span.content = content.into();
+    }
     lines
 }
 
@@ -753,6 +790,29 @@ mod tests {
         assert_snapshot!(
             "hooks_browser_scrolled_handlers",
             render_lines(&view, /*width*/ 112)
+        );
+    }
+
+    #[test]
+    fn renders_command_details_with_three_line_cap() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let mut view = HooksBrowserView::new(
+            vec![hook(
+                "path:long-command",
+                HookEventName::PreToolUse,
+                HookSource::User,
+                None,
+                "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty",
+                /*enabled*/ true,
+                /*is_managed*/ false,
+                /*display_order*/ 0,
+            )],
+            AppEventSender::new(tx_raw),
+        );
+        view.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        assert_snapshot!(
+            "hooks_browser_capped_command_details",
+            render_lines(&view, /*width*/ 44)
         );
     }
 

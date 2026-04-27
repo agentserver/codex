@@ -14,7 +14,6 @@ use codex_app_server_protocol::ConfigReadParams;
 use codex_app_server_protocol::ConfigReadResponse;
 use codex_app_server_protocol::ConfigValueWriteParams;
 use codex_app_server_protocol::ConfigWriteResponse;
-use codex_app_server_protocol::HookConfigSource;
 use codex_app_server_protocol::HookEventName;
 use codex_app_server_protocol::HookSource;
 use codex_app_server_protocol::HooksConfigWriteResponse;
@@ -108,7 +107,7 @@ async fn hooks_config_write_persists_project_selector() -> Result<()> {
         .send_raw_request(
             "hooks/config/write",
             Some(json!({
-                "source": HookConfigSource::Project,
+                "source": "project",
                 "sourcePath": project_hook_path.clone(),
                 "key": "PreToolUse:0:0",
                 "enabled": false,

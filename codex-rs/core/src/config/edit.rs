@@ -2,6 +2,7 @@ use crate::path_utils::resolve_symlink_write_paths;
 use crate::path_utils::write_atomically;
 use anyhow::Context;
 use codex_config::CONFIG_TOML_FILE;
+use codex_config::HookConfigSelector;
 use codex_config::types::McpServerConfig;
 use codex_features::FEATURES;
 use codex_protocol::config_types::Personality;
@@ -63,7 +64,7 @@ pub enum ConfigEdit {
     SetSkillConfigByName { name: String, enabled: bool },
     /// Set or clear a hook config entry under `[[hooks.config]]`.
     SetHookConfig {
-        selector: HookConfigEditSelector,
+        selector: HookConfigSelector,
         enabled: bool,
     },
     /// Set trust_level under `[projects."<path>"]`,
@@ -82,13 +83,6 @@ pub enum ConfigEdit {
 enum SkillConfigSelector {
     Name(String),
     Path(PathBuf),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum HookConfigEditSelector {
-    Plugin { plugin_id: String, key: String },
-    User { source_path: PathBuf, key: String },
-    Project { source_path: PathBuf, key: String },
 }
 
 /// Produces a config edit that sets `[tui].theme = "<name>"`.
@@ -633,193 +627,87 @@ impl ConfigDocument {
         if matches!(&selector, SkillConfigSelector::Name(name) if name.is_empty()) {
             return false;
         }
-        let mut remove_skills_table = false;
-        let mut mutated = false;
-
-        {
-            let root = self.doc.as_table_mut();
-            let skills_item = match root.get_mut("skills") {
-                Some(item) => item,
-                None => {
-                    if enabled {
-                        return false;
-                    }
-                    root.insert(
-                        "skills",
-                        TomlItem::Table(document_helpers::new_implicit_table()),
-                    );
-                    let Some(item) = root.get_mut("skills") else {
-                        return false;
-                    };
-                    item
-                }
-            };
-
-            if document_helpers::ensure_table_for_write(skills_item).is_none() {
-                if enabled {
-                    return false;
-                }
-                *skills_item = TomlItem::Table(document_helpers::new_implicit_table());
-            }
-            let Some(skills_table) = skills_item.as_table_mut() else {
-                return false;
-            };
-
-            let config_item = match skills_table.get_mut("config") {
-                Some(item) => item,
-                None => {
-                    if enabled {
-                        return false;
-                    }
-                    skills_table.insert("config", TomlItem::ArrayOfTables(ArrayOfTables::new()));
-                    let Some(item) = skills_table.get_mut("config") else {
-                        return false;
-                    };
-                    item
-                }
-            };
-
-            if !matches!(config_item, TomlItem::ArrayOfTables(_)) {
-                if enabled {
-                    return false;
-                }
-                *config_item = TomlItem::ArrayOfTables(ArrayOfTables::new());
-            }
-
-            let TomlItem::ArrayOfTables(overrides) = config_item else {
-                return false;
-            };
-
-            let existing_index = overrides.iter().enumerate().find_map(|(idx, table)| {
-                skill_config_selector_from_table(table)
-                    .filter(|value| value == &selector)
-                    .map(|_| idx)
-            });
-
-            if enabled {
-                if let Some(index) = existing_index {
-                    overrides.remove(index);
-                    mutated = true;
-                    if overrides.is_empty() {
-                        skills_table.remove("config");
-                        if skills_table.is_empty() {
-                            remove_skills_table = true;
-                        }
-                    }
-                }
-            } else if let Some(index) = existing_index {
-                for (idx, table) in overrides.iter_mut().enumerate() {
-                    if idx == index {
-                        write_skill_config_selector(table, &selector);
-                        table["enabled"] = value(false);
-                        mutated = true;
-                        break;
-                    }
-                }
-            } else {
-                let mut entry = TomlTable::new();
-                entry.set_implicit(false);
-                write_skill_config_selector(&mut entry, &selector);
-                entry["enabled"] = value(false);
-                overrides.push(entry);
-                mutated = true;
-            }
-        }
-
-        if remove_skills_table {
-            let root = self.doc.as_table_mut();
-            root.remove("skills");
-        }
-
-        mutated
+        self.set_config_table_entry(
+            "skills",
+            &selector,
+            enabled,
+            skill_config_selector_from_table,
+            write_skill_config_selector,
+        )
     }
 
-    fn set_hook_config(&mut self, selector: HookConfigEditSelector, enabled: bool) -> bool {
-        let selector = match selector {
-            HookConfigEditSelector::Plugin { plugin_id, key } => HookConfigEditSelector::Plugin {
-                plugin_id: plugin_id.trim().to_string(),
-                key: key.trim().to_string(),
-            },
-            HookConfigEditSelector::User { source_path, key } => HookConfigEditSelector::User {
-                source_path,
-                key: key.trim().to_string(),
-            },
-            HookConfigEditSelector::Project { source_path, key } => {
-                HookConfigEditSelector::Project {
-                    source_path,
-                    key: key.trim().to_string(),
-                }
-            }
-        };
+    fn set_hook_config(&mut self, selector: HookConfigSelector, enabled: bool) -> bool {
+        let selector = normalize_hook_config_selector(selector);
         if match &selector {
-            HookConfigEditSelector::Plugin { plugin_id, key } => {
-                plugin_id.is_empty() || key.is_empty()
-            }
-            HookConfigEditSelector::User { source_path, key }
-            | HookConfigEditSelector::Project { source_path, key } => {
+            HookConfigSelector::Plugin { plugin_id, key } => plugin_id.is_empty() || key.is_empty(),
+            HookConfigSelector::User { source_path, key }
+            | HookConfigSelector::Project { source_path, key } => {
                 source_path.as_os_str().is_empty() || key.is_empty()
             }
         } {
             return false;
         }
 
-        let selector = match selector {
-            HookConfigEditSelector::Plugin { plugin_id, key } => HookConfigEditSelector::Plugin {
-                plugin_id: plugin_id.trim().to_string(),
-                key: key.trim().to_string(),
-            },
-            HookConfigEditSelector::User { source_path, key } => HookConfigEditSelector::User {
-                source_path: normalize_hook_config_source_path(&source_path),
-                key,
-            },
-            HookConfigEditSelector::Project { source_path, key } => {
-                HookConfigEditSelector::Project {
-                    source_path: normalize_hook_config_source_path(&source_path),
-                    key,
-                }
-            }
-        };
+        self.set_config_table_entry(
+            "hooks",
+            &selector,
+            enabled,
+            hook_config_selector_from_table,
+            write_hook_config_selector,
+        )
+    }
 
-        let mut remove_hooks_table = false;
+    fn set_config_table_entry<S>(
+        &mut self,
+        section: &'static str,
+        selector: &S,
+        enabled: bool,
+        selector_from_table: impl Fn(&TomlTable) -> Option<S>,
+        write_selector: impl Fn(&mut TomlTable, &S),
+    ) -> bool
+    where
+        S: Eq,
+    {
+        let mut remove_section_table = false;
         let mut mutated = false;
 
         {
             let root = self.doc.as_table_mut();
-            let hooks_item = match root.get_mut("hooks") {
+            let section_item = match root.get_mut(section) {
                 Some(item) => item,
                 None => {
                     if enabled {
                         return false;
                     }
                     root.insert(
-                        "hooks",
+                        section,
                         TomlItem::Table(document_helpers::new_implicit_table()),
                     );
-                    let Some(item) = root.get_mut("hooks") else {
+                    let Some(item) = root.get_mut(section) else {
                         return false;
                     };
                     item
                 }
             };
 
-            if document_helpers::ensure_table_for_write(hooks_item).is_none() {
+            if document_helpers::ensure_table_for_write(section_item).is_none() {
                 if enabled {
                     return false;
                 }
-                *hooks_item = TomlItem::Table(document_helpers::new_implicit_table());
+                *section_item = TomlItem::Table(document_helpers::new_implicit_table());
             }
-            let Some(hooks_table) = hooks_item.as_table_mut() else {
+            let Some(section_table) = section_item.as_table_mut() else {
                 return false;
             };
 
-            let config_item = match hooks_table.get_mut("config") {
+            let config_item = match section_table.get_mut("config") {
                 Some(item) => item,
                 None => {
                     if enabled {
                         return false;
                     }
-                    hooks_table.insert("config", TomlItem::ArrayOfTables(ArrayOfTables::new()));
-                    let Some(item) = hooks_table.get_mut("config") else {
+                    section_table.insert("config", TomlItem::ArrayOfTables(ArrayOfTables::new()));
+                    let Some(item) = section_table.get_mut("config") else {
                         return false;
                     };
                     item
@@ -838,8 +726,8 @@ impl ConfigDocument {
             };
 
             let existing_index = overrides.iter().enumerate().find_map(|(idx, table)| {
-                hook_config_selector_from_table(table)
-                    .filter(|value| value == &selector)
+                selector_from_table(table)
+                    .filter(|value| value == selector)
                     .map(|_| idx)
             });
 
@@ -848,16 +736,16 @@ impl ConfigDocument {
                     overrides.remove(index);
                     mutated = true;
                     if overrides.is_empty() {
-                        hooks_table.remove("config");
-                        if hooks_table.is_empty() {
-                            remove_hooks_table = true;
+                        section_table.remove("config");
+                        if section_table.is_empty() {
+                            remove_section_table = true;
                         }
                     }
                 }
             } else if let Some(index) = existing_index {
                 for (idx, table) in overrides.iter_mut().enumerate() {
                     if idx == index {
-                        write_hook_config_selector(table, &selector);
+                        write_selector(table, selector);
                         table["enabled"] = value(false);
                         mutated = true;
                         break;
@@ -866,16 +754,16 @@ impl ConfigDocument {
             } else {
                 let mut entry = TomlTable::new();
                 entry.set_implicit(false);
-                write_hook_config_selector(&mut entry, &selector);
+                write_selector(&mut entry, selector);
                 entry["enabled"] = value(false);
                 overrides.push(entry);
                 mutated = true;
             }
         }
 
-        if remove_hooks_table {
+        if remove_section_table {
             let root = self.doc.as_table_mut();
-            root.remove("hooks");
+            root.remove(section);
         }
 
         mutated
@@ -1027,7 +915,7 @@ fn write_skill_config_selector(table: &mut TomlTable, selector: &SkillConfigSele
     }
 }
 
-fn hook_config_selector_from_table(table: &TomlTable) -> Option<HookConfigEditSelector> {
+fn hook_config_selector_from_table(table: &TomlTable) -> Option<HookConfigSelector> {
     let source = table
         .get("source")
         .and_then(|item| item.as_str())
@@ -1051,18 +939,16 @@ fn hook_config_selector_from_table(table: &TomlTable) -> Option<HookConfigEditSe
         .map(|path| normalize_hook_config_source_path(&path));
 
     match (source, plugin_id, source_path, key) {
-        (Some("plugin"), Some(plugin_id), None, Some(key)) => {
-            Some(HookConfigEditSelector::Plugin {
-                plugin_id: plugin_id.to_string(),
-                key: key.to_string(),
-            })
-        }
-        (Some("user"), None, Some(source_path), Some(key)) => Some(HookConfigEditSelector::User {
+        (Some("plugin"), Some(plugin_id), None, Some(key)) => Some(HookConfigSelector::Plugin {
+            plugin_id: plugin_id.to_string(),
+            key: key.to_string(),
+        }),
+        (Some("user"), None, Some(source_path), Some(key)) => Some(HookConfigSelector::User {
             source_path,
             key: key.to_string(),
         }),
         (Some("project"), None, Some(source_path), Some(key)) => {
-            Some(HookConfigEditSelector::Project {
+            Some(HookConfigSelector::Project {
                 source_path,
                 key: key.to_string(),
             })
@@ -1071,26 +957,43 @@ fn hook_config_selector_from_table(table: &TomlTable) -> Option<HookConfigEditSe
     }
 }
 
-fn write_hook_config_selector(table: &mut TomlTable, selector: &HookConfigEditSelector) {
+fn write_hook_config_selector(table: &mut TomlTable, selector: &HookConfigSelector) {
     match selector {
-        HookConfigEditSelector::Plugin { plugin_id, key } => {
+        HookConfigSelector::Plugin { plugin_id, key } => {
             table["source"] = value("plugin");
             table["plugin_id"] = value(plugin_id.clone());
             table.remove("source_path");
             table["key"] = value(key.clone());
         }
-        HookConfigEditSelector::User { source_path, key } => {
+        HookConfigSelector::User { source_path, key } => {
             table["source"] = value("user");
             table.remove("plugin_id");
             table["source_path"] = value(source_path.to_string_lossy().to_string());
             table["key"] = value(key.clone());
         }
-        HookConfigEditSelector::Project { source_path, key } => {
+        HookConfigSelector::Project { source_path, key } => {
             table["source"] = value("project");
             table.remove("plugin_id");
             table["source_path"] = value(source_path.to_string_lossy().to_string());
             table["key"] = value(key.clone());
         }
+    }
+}
+
+fn normalize_hook_config_selector(selector: HookConfigSelector) -> HookConfigSelector {
+    match selector {
+        HookConfigSelector::Plugin { plugin_id, key } => HookConfigSelector::Plugin {
+            plugin_id: plugin_id.trim().to_string(),
+            key: key.trim().to_string(),
+        },
+        HookConfigSelector::User { source_path, key } => HookConfigSelector::User {
+            source_path: normalize_hook_config_source_path(&source_path),
+            key: key.trim().to_string(),
+        },
+        HookConfigSelector::Project { source_path, key } => HookConfigSelector::Project {
+            source_path: normalize_hook_config_source_path(&source_path),
+            key: key.trim().to_string(),
+        },
     }
 }
 

@@ -4663,27 +4663,32 @@ pub struct HookMetadata {
     pub enabled: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-#[ts(rename_all = "snake_case")]
-#[ts(export_to = "v2/")]
-pub enum HookConfigSource {
-    Plugin,
-    User,
-    Project,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(tag = "source", rename_all = "snake_case", deny_unknown_fields)]
+#[ts(tag = "source", rename_all = "snake_case")]
 #[ts(export_to = "v2/")]
-pub struct HooksConfigWriteParams {
-    pub source: HookConfigSource,
-    #[ts(optional = nullable)]
-    pub plugin_id: Option<String>,
-    #[ts(optional = nullable)]
-    pub source_path: Option<PathBuf>,
-    pub key: String,
-    pub enabled: bool,
+pub enum HooksConfigWriteParams {
+    Plugin {
+        #[serde(rename = "pluginId")]
+        #[ts(rename = "pluginId")]
+        plugin_id: String,
+        key: String,
+        enabled: bool,
+    },
+    User {
+        #[serde(rename = "sourcePath")]
+        #[ts(rename = "sourcePath")]
+        source_path: PathBuf,
+        key: String,
+        enabled: bool,
+    },
+    Project {
+        #[serde(rename = "sourcePath")]
+        #[ts(rename = "sourcePath")]
+        source_path: PathBuf,
+        key: String,
+        enabled: bool,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -9768,6 +9773,42 @@ mod tests {
             serde_json::to_value(&action).expect("serialize guardian review action"),
             value
         );
+    }
+
+    #[test]
+    fn hooks_config_write_params_round_trips_selector_variants() {
+        let source_path = PathBuf::from(absolute_path_string("repo/.codex/hooks.json"));
+        let value = json!({
+            "source": "project",
+            "sourcePath": source_path,
+            "key": "PreToolUse:0:0",
+            "enabled": false,
+        });
+        let params: HooksConfigWriteParams =
+            serde_json::from_value(value.clone()).expect("deserialize project hook selector");
+
+        assert_eq!(
+            params,
+            HooksConfigWriteParams::Project {
+                source_path: source_path.clone(),
+                key: "PreToolUse:0:0".to_string(),
+                enabled: false,
+            }
+        );
+        assert_eq!(
+            serde_json::to_value(&params).expect("serialize project hook selector"),
+            value
+        );
+
+        let err = serde_json::from_value::<HooksConfigWriteParams>(json!({
+            "source": "project",
+            "pluginId": "demo-plugin@test-marketplace",
+            "sourcePath": source_path,
+            "key": "PreToolUse:0:0",
+            "enabled": false,
+        }))
+        .expect_err("project hook selector should reject pluginId");
+        assert!(err.to_string().contains("pluginId"));
     }
 
     #[test]

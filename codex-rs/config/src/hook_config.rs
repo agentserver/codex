@@ -93,6 +93,13 @@ pub enum HookConfigSource {
     Project,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum HookConfigSelector {
+    Plugin { plugin_id: String, key: String },
+    User { source_path: PathBuf, key: String },
+    Project { source_path: PathBuf, key: String },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct HookConfig {
     pub source: HookConfigSource,

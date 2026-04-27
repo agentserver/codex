@@ -151,7 +151,6 @@ export type { GuardianRiskLevel } from "./GuardianRiskLevel";
 export type { GuardianUserAuthorization } from "./GuardianUserAuthorization";
 export type { GuardianWarningNotification } from "./GuardianWarningNotification";
 export type { HookCompletedNotification } from "./HookCompletedNotification";
-export type { HookConfigSource } from "./HookConfigSource";
 export type { HookErrorInfo } from "./HookErrorInfo";
 export type { HookEventName } from "./HookEventName";
 export type { HookExecutionMode } from "./HookExecutionMode";

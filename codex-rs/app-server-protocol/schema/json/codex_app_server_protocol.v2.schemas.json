@@ -6245,14 +6245,6 @@
       "title": "HookCompletedNotification",
       "type": "object"
     },
-    "HookConfigSource": {
-      "enum": [
-        "plugin",
-        "user",
-        "project"
-      ],
-      "type": "string"
-    },
     "HookErrorInfo": {
       "properties": {
         "message": {
@@ -6539,36 +6531,90 @@
     },
     "HooksConfigWriteParams": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "enabled": {
-          "type": "boolean"
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "key": {
+              "type": "string"
+            },
+            "pluginId": {
+              "type": "string"
+            },
+            "source": {
+              "enum": [
+                "plugin"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "enabled",
+            "key",
+            "pluginId",
+            "source"
+          ],
+          "type": "object"
         },
-        "key": {
-          "type": "string"
+        {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "key": {
+              "type": "string"
+            },
+            "source": {
+              "enum": [
+                "user"
+              ],
+              "type": "string"
+            },
+            "sourcePath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "enabled",
+            "key",
+            "source",
+            "sourcePath"
+          ],
+          "type": "object"
         },
-        "pluginId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "source": {
-          "$ref": "#/definitions/HookConfigSource"
-        },
-        "sourcePath": {
-          "type": [
-            "string",
-            "null"
-          ]
+        {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "key": {
+              "type": "string"
+            },
+            "source": {
+              "enum": [
+                "project"
+              ],
+              "type": "string"
+            },
+            "sourcePath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "enabled",
+            "key",
+            "source",
+            "sourcePath"
+          ],
+          "type": "object"
         }
-      },
-      "required": [
-        "enabled",
-        "key",
-        "source"
       ],
-      "title": "HooksConfigWriteParams",
-      "type": "object"
+      "title": "HooksConfigWriteParams"
     },
     "HooksConfigWriteResponse": {
       "$schema": "http://json-schema.org/draft-07/schema#",

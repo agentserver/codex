@@ -1,43 +1,87 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "definitions": {
-    "HookConfigSource": {
-      "enum": [
-        "plugin",
-        "user",
-        "project"
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "key": {
+          "type": "string"
+        },
+        "pluginId": {
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "plugin"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "enabled",
+        "key",
+        "pluginId",
+        "source"
       ],
-      "type": "string"
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "key": {
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "user"
+          ],
+          "type": "string"
+        },
+        "sourcePath": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "enabled",
+        "key",
+        "source",
+        "sourcePath"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "key": {
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "project"
+          ],
+          "type": "string"
+        },
+        "sourcePath": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "enabled",
+        "key",
+        "source",
+        "sourcePath"
+      ],
+      "type": "object"
     }
-  },
-  "properties": {
-    "enabled": {
-      "type": "boolean"
-    },
-    "key": {
-      "type": "string"
-    },
-    "pluginId": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "source": {
-      "$ref": "#/definitions/HookConfigSource"
-    },
-    "sourcePath": {
-      "type": [
-        "string",
-        "null"
-      ]
-    }
-  },
-  "required": [
-    "enabled",
-    "key",
-    "source"
   ],
-  "title": "HooksConfigWriteParams",
-  "type": "object"
+  "title": "HooksConfigWriteParams"
 }

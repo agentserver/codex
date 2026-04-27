@@ -141,7 +141,7 @@ fn set_hook_config_writes_disabled_plugin_entry() {
 
     ConfigEditsBuilder::new(codex_home)
         .with_edits([ConfigEdit::SetHookConfig {
-            selector: HookConfigEditSelector::Plugin {
+            selector: HookConfigSelector::Plugin {
                 plugin_id: "demo-plugin@test-marketplace".to_string(),
                 key: "hooks/hooks.json:PreToolUse:0:0".to_string(),
             },
@@ -177,7 +177,7 @@ enabled = false
 
     ConfigEditsBuilder::new(codex_home)
         .with_edits([ConfigEdit::SetHookConfig {
-            selector: HookConfigEditSelector::Plugin {
+            selector: HookConfigSelector::Plugin {
                 plugin_id: "demo-plugin@test-marketplace".to_string(),
                 key: "hooks/hooks.json:PreToolUse:0:0".to_string(),
             },
@@ -197,7 +197,7 @@ fn set_hook_config_writes_disabled_project_entry() {
 
     ConfigEditsBuilder::new(codex_home)
         .with_edits([ConfigEdit::SetHookConfig {
-            selector: HookConfigEditSelector::Project {
+            selector: HookConfigSelector::Project {
                 source_path: PathBuf::from("/repo/.codex/hooks.json"),
                 key: "PreToolUse:0:0".to_string(),
             },

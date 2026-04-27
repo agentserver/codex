@@ -75,7 +75,6 @@ use codex_app_server_protocol::GetConversationSummaryParams;
 use codex_app_server_protocol::GetConversationSummaryResponse;
 use codex_app_server_protocol::GitDiffToRemoteResponse;
 use codex_app_server_protocol::GitInfo as ApiGitInfo;
-use codex_app_server_protocol::HookConfigSource as ApiHookConfigSource;
 use codex_app_server_protocol::HookErrorInfo;
 use codex_app_server_protocol::HookMetadata;
 use codex_app_server_protocol::HooksConfigWriteParams;
@@ -238,6 +237,7 @@ use codex_backend_client::AddCreditsNudgeCreditType as BackendAddCreditsNudgeCre
 use codex_backend_client::Client as BackendClient;
 use codex_chatgpt::connectors;
 use codex_chatgpt::workspace_settings;
+use codex_config::HookConfigSelector;
 use codex_config::types::McpServerTransportConfig;
 use codex_core::CodexThread;
 use codex_core::CodexThreadTurnContextOverrides;
@@ -256,7 +256,6 @@ use codex_core::config::NetworkProxyAuditMetadata;
 use codex_core::config::ThreadStoreConfig;
 use codex_core::config::edit::ConfigEdit;
 use codex_core::config::edit::ConfigEditsBuilder;
-use codex_core::config::edit::HookConfigEditSelector;
 use codex_core::config_loader::CloudRequirementsLoadError;
 use codex_core::config_loader::CloudRequirementsLoadErrorCode;
 use codex_core::config_loader::project_trust_key;
@@ -7174,69 +7173,57 @@ impl CodexMessageProcessor {
         request_id: ConnectionRequestId,
         params: HooksConfigWriteParams,
     ) {
-        let HooksConfigWriteParams {
-            source,
-            plugin_id,
-            source_path,
-            key,
-            enabled,
-        } = params;
-        let edit = match source {
-            ApiHookConfigSource::Plugin => {
-                let Some(plugin_id) = plugin_id.filter(|plugin_id| !plugin_id.trim().is_empty())
-                else {
+        let (selector, enabled) = match params {
+            HooksConfigWriteParams::Plugin {
+                plugin_id,
+                key,
+                enabled,
+            } => {
+                if plugin_id.trim().is_empty() || key.trim().is_empty() {
                     self.send_invalid_request_error(
                         request_id,
-                        "hooks/config/write requires pluginId when source is plugin".to_string(),
-                    )
-                    .await;
-                    return;
-                };
-                if key.trim().is_empty() {
-                    self.send_invalid_request_error(
-                        request_id,
-                        "hooks/config/write requires a non-empty key".to_string(),
+                        "hooks/config/write requires non-empty pluginId and key for plugin selectors"
+                            .to_string(),
                     )
                     .await;
                     return;
                 }
-                ConfigEdit::SetHookConfig {
-                    selector: HookConfigEditSelector::Plugin { plugin_id, key },
-                    enabled,
-                }
+                (HookConfigSelector::Plugin { plugin_id, key }, enabled)
             }
-            ApiHookConfigSource::User | ApiHookConfigSource::Project => {
-                let Some(source_path) =
-                    source_path.filter(|source_path| !source_path.as_os_str().is_empty())
-                else {
+            HooksConfigWriteParams::User {
+                source_path,
+                key,
+                enabled,
+            } => {
+                if source_path.as_os_str().is_empty() || key.trim().is_empty() {
                     self.send_invalid_request_error(
                         request_id,
-                        format!(
-                            "hooks/config/write requires sourcePath when source is {}",
-                            hook_config_source_label(source)
-                        ),
-                    )
-                    .await;
-                    return;
-                };
-                if key.trim().is_empty() {
-                    self.send_invalid_request_error(
-                        request_id,
-                        "hooks/config/write requires a non-empty key".to_string(),
+                        "hooks/config/write requires non-empty sourcePath and key for user selectors"
+                            .to_string(),
                     )
                     .await;
                     return;
                 }
-                let selector = match source {
-                    ApiHookConfigSource::User => HookConfigEditSelector::User { source_path, key },
-                    ApiHookConfigSource::Project => {
-                        HookConfigEditSelector::Project { source_path, key }
-                    }
-                    ApiHookConfigSource::Plugin => unreachable!("plugin handled above"),
-                };
-                ConfigEdit::SetHookConfig { selector, enabled }
+                (HookConfigSelector::User { source_path, key }, enabled)
+            }
+            HooksConfigWriteParams::Project {
+                source_path,
+                key,
+                enabled,
+            } => {
+                if source_path.as_os_str().is_empty() || key.trim().is_empty() {
+                    self.send_invalid_request_error(
+                        request_id,
+                        "hooks/config/write requires non-empty sourcePath and key for project selectors"
+                            .to_string(),
+                    )
+                    .await;
+                    return;
+                }
+                (HookConfigSelector::Project { source_path, key }, enabled)
             }
         };
+        let edit = ConfigEdit::SetHookConfig { selector, enabled };
         let result = ConfigEditsBuilder::new(&self.config.codex_home)
             .with_edits([edit])
             .apply()
@@ -9591,14 +9578,6 @@ fn hook_to_info(hook: HookInventoryEntry) -> HookMetadata {
         source_path: hook.source_path,
         source_relative_path: hook.source_relative_path,
         enabled: hook.enabled,
-    }
-}
-
-fn hook_config_source_label(source: ApiHookConfigSource) -> &'static str {
-    match source {
-        ApiHookConfigSource::Plugin => "plugin",
-        ApiHookConfigSource::User => "user",
-        ApiHookConfigSource::Project => "project",
     }
 }
 

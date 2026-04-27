@@ -69,6 +69,7 @@ pub use diagnostics::format_config_error_with_source;
 pub use diagnostics::io_error_from_config_error;
 pub use fingerprint::version_for_toml;
 pub use hook_config::HookConfig;
+pub use hook_config::HookConfigSelector;
 pub use hook_config::HookConfigSource;
 pub use hook_config::HookEventsToml;
 pub use hook_config::HookHandlerConfig;

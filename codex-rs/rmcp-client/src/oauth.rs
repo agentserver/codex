@@ -260,8 +260,13 @@ struct OAuthPersistorInner {
     server_name: String,
     oauth_http: OAuthHttpClient,
     store_mode: OAuthCredentialsStoreMode,
-    last_credentials: Mutex<Option<StoredOAuthTokens>>,
+    credentials_state: Mutex<OAuthCredentialsState>,
     refresh_gate: Semaphore,
+}
+
+struct OAuthCredentialsState {
+    current: Option<StoredOAuthTokens>,
+    last_persisted: Option<StoredOAuthTokens>,
 }
 
 impl OAuthPersistor {
@@ -276,7 +281,10 @@ impl OAuthPersistor {
                 server_name,
                 oauth_http,
                 store_mode,
-                last_credentials: Mutex::new(initial_credentials),
+                credentials_state: Mutex::new(OAuthCredentialsState {
+                    current: initial_credentials.clone(),
+                    last_persisted: initial_credentials,
+                }),
                 refresh_gate: Semaphore::new(1),
             }),
         }
@@ -299,15 +307,28 @@ impl OAuthPersistor {
 
     /// Persists the latest stored credentials if they have changed.
     pub(crate) async fn persist_if_needed(&self) -> Result<()> {
-        let mut last_credentials = self.inner.last_credentials.lock().await;
-        if let Some(stored) = last_credentials.as_ref() {
-            if load_oauth_tokens(&self.inner.server_name, &stored.url, self.inner.store_mode)?
-                .is_none()
-            {
-                *last_credentials = None;
-                return Ok(());
+        let mut credentials_state = self.inner.credentials_state.lock().await;
+        let Some(stored) = credentials_state.current.clone() else {
+            return Ok(());
+        };
+        match load_oauth_tokens(&self.inner.server_name, &stored.url, self.inner.store_mode)? {
+            None => {
+                credentials_state.current = None;
+                credentials_state.last_persisted = None;
             }
-            save_oauth_tokens(&self.inner.server_name, stored, self.inner.store_mode)?;
+            Some(current_store) if current_store == stored => {
+                credentials_state.last_persisted = Some(current_store);
+            }
+            Some(current_store)
+                if Some(&current_store) != credentials_state.last_persisted.as_ref() =>
+            {
+                credentials_state.current = Some(current_store.clone());
+                credentials_state.last_persisted = Some(current_store);
+            }
+            Some(_) => {
+                save_oauth_tokens(&self.inner.server_name, &stored, self.inner.store_mode)?;
+                credentials_state.last_persisted = Some(stored);
+            }
         }
         Ok(())
     }
@@ -320,8 +341,8 @@ impl OAuthPersistor {
             .await
             .context("OAuth refresh gate was closed")?;
         let tokens = {
-            let guard = self.inner.last_credentials.lock().await;
-            let Some(tokens) = guard.as_ref() else {
+            let state = self.inner.credentials_state.lock().await;
+            let Some(tokens) = state.current.as_ref() else {
                 return Ok(());
             };
             if !token_needs_refresh(tokens.expires_at) {
@@ -342,8 +363,8 @@ impl OAuthPersistor {
                 )
             })?
         {
-            let mut guard = self.inner.last_credentials.lock().await;
-            *guard = Some(refreshed);
+            let mut state = self.inner.credentials_state.lock().await;
+            state.current = Some(refreshed);
         }
 
         self.persist_if_needed().await
@@ -351,8 +372,8 @@ impl OAuthPersistor {
 
     pub(crate) async fn access_token(&self) -> Result<Option<String>> {
         let cached = {
-            let guard = self.inner.last_credentials.lock().await;
-            guard.as_ref().map(|tokens| {
+            let state = self.inner.credentials_state.lock().await;
+            state.current.as_ref().map(|tokens| {
                 (
                     tokens.token_response.0.access_token().secret().to_string(),
                     tokens.expires_at,
@@ -371,10 +392,16 @@ impl OAuthPersistor {
             }
             return Err(err);
         }
-        let guard = self.inner.last_credentials.lock().await;
-        Ok(guard
-            .as_ref()
-            .map(|tokens| tokens.token_response.0.access_token().secret().to_string()))
+        let state = self.inner.credentials_state.lock().await;
+        let Some(tokens) = state.current.as_ref() else {
+            return Ok(None);
+        };
+        if expires_in_from_timestamp(tokens.expires_at.unwrap_or(u64::MAX)).is_none() {
+            return Ok(None);
+        }
+        Ok(Some(
+            tokens.token_response.0.access_token().secret().to_string(),
+        ))
     }
 }
 
@@ -899,6 +926,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn persistor_does_not_clobber_newer_file_credentials() -> Result<()> {
+        let _env = TempCodexHome::new();
+        let tokens = sample_tokens();
+        super::save_oauth_tokens_to_file(&tokens)?;
+        let persistor = OAuthPersistor::new(
+            tokens.server_name.clone(),
+            OAuthHttpClient::new(
+                Arc::new(FailingHttpClient),
+                /*http_headers*/ None,
+                /*env_http_headers*/ None,
+            )?,
+            OAuthCredentialsStoreMode::File,
+            Some(tokens.clone()),
+        );
+
+        let newer_tokens = sample_tokens_with_access_token("newer-access-token");
+        super::save_oauth_tokens_to_file(&newer_tokens)?;
+
+        persistor.persist_if_needed().await?;
+
+        assert_eq!(
+            super::load_oauth_tokens(
+                &tokens.server_name,
+                &tokens.url,
+                OAuthCredentialsStoreMode::File
+            )?,
+            Some(newer_tokens)
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn access_token_uses_cached_token_when_refresh_fails_before_expiry() -> Result<()> {
         let mut tokens = sample_tokens();
         let now = SystemTime::now()
@@ -921,6 +980,30 @@ mod tests {
             persistor.access_token().await?,
             Some("access-token".to_string())
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn access_token_rejects_expired_token_without_refresh_token() -> Result<()> {
+        let mut tokens = sample_tokens();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_else(|_| Duration::from_secs(0));
+        tokens.expires_at = Some((now.as_millis() as u64).saturating_sub(1000));
+        tokens.token_response.0.set_refresh_token(None);
+
+        let persistor = OAuthPersistor::new(
+            tokens.server_name.clone(),
+            OAuthHttpClient::new(
+                Arc::new(FailingHttpClient),
+                /*http_headers*/ None,
+                /*env_http_headers*/ None,
+            )?,
+            OAuthCredentialsStoreMode::File,
+            Some(tokens),
+        );
+
+        assert_eq!(persistor.access_token().await?, None);
         Ok(())
     }
 
@@ -995,8 +1078,12 @@ mod tests {
     }
 
     fn sample_tokens() -> StoredOAuthTokens {
+        sample_tokens_with_access_token("access-token")
+    }
+
+    fn sample_tokens_with_access_token(access_token: &str) -> StoredOAuthTokens {
         let mut response = OAuthTokenResponse::new(
-            AccessToken::new("access-token".to_string()),
+            AccessToken::new(access_token.to_string()),
             BasicTokenType::Bearer,
             EmptyExtraTokenFields {},
         );

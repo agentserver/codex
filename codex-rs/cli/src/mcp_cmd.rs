@@ -20,17 +20,14 @@ use codex_exec_server::Environment;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::EnvironmentManagerArgs;
 use codex_exec_server::ExecServerRuntimePaths;
+use codex_mcp::McpOAuthLoginOutcome;
 use codex_mcp::McpOAuthLoginSupport;
 use codex_mcp::McpRuntimeEnvironment;
-use codex_mcp::ResolvedMcpOAuthScopes;
 use codex_mcp::compute_auth_statuses;
-use codex_mcp::discover_supported_scopes;
-use codex_mcp::oauth_login_support;
-use codex_mcp::resolve_oauth_scopes;
-use codex_mcp::should_retry_without_scopes;
+use codex_mcp::oauth_login_support_for_server;
+use codex_mcp::perform_oauth_login_for_server;
 use codex_protocol::protocol::McpAuthStatus;
 use codex_rmcp_client::delete_oauth_tokens;
-use codex_rmcp_client::perform_oauth_login;
 use codex_utils_cli::CliConfigOverrides;
 use codex_utils_cli::format_env_display;
 
@@ -194,54 +191,6 @@ impl McpCli {
     }
 }
 
-/// Preserve compatibility with servers that still expect the legacy empty-scope
-/// OAuth request. If a discovered-scope request is rejected by the provider,
-/// retry the login flow once without scopes.
-#[allow(clippy::too_many_arguments)]
-async fn perform_oauth_login_retry_without_scopes(
-    name: &str,
-    url: &str,
-    store_mode: codex_config::types::OAuthCredentialsStoreMode,
-    http_headers: Option<HashMap<String, String>>,
-    env_http_headers: Option<HashMap<String, String>>,
-    resolved_scopes: &ResolvedMcpOAuthScopes,
-    oauth_resource: Option<&str>,
-    callback_port: Option<u16>,
-    callback_url: Option<&str>,
-) -> Result<()> {
-    match perform_oauth_login(
-        name,
-        url,
-        store_mode,
-        http_headers.clone(),
-        env_http_headers.clone(),
-        &resolved_scopes.scopes,
-        oauth_resource,
-        callback_port,
-        callback_url,
-    )
-    .await
-    {
-        Ok(()) => Ok(()),
-        Err(err) if should_retry_without_scopes(resolved_scopes, &err) => {
-            println!("OAuth provider rejected discovered scopes. Retrying without scopes…");
-            perform_oauth_login(
-                name,
-                url,
-                store_mode,
-                http_headers,
-                env_http_headers,
-                &[],
-                oauth_resource,
-                callback_port,
-                callback_url,
-            )
-            .await
-        }
-        Err(err) => Err(err),
-    }
-}
-
 async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Result<()> {
     // Validate any provided overrides even though they are not currently applied.
     let overrides = config_overrides
@@ -303,7 +252,7 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
     };
 
     let new_entry = McpServerConfig {
-        transport: transport.clone(),
+        transport,
         experimental_environment: None,
         enabled: true,
         required: false,
@@ -319,7 +268,7 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
         tools: HashMap::new(),
     };
 
-    servers.insert(name.clone(), new_entry);
+    servers.insert(name.clone(), new_entry.clone());
 
     ConfigEditsBuilder::new(&codex_home)
         .replace_mcp_servers(&servers)
@@ -329,27 +278,24 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
 
     println!("Added global MCP server '{name}'.");
 
-    match oauth_login_support(&transport).await {
-        McpOAuthLoginSupport::Supported(oauth_config) => {
+    let runtime_environment = runtime_environment_from_config(&config);
+    match oauth_login_support_for_server(&new_entry, runtime_environment.clone()).await {
+        McpOAuthLoginSupport::Supported(_) => {
             println!("Detected OAuth support. Starting OAuth flow…");
-            let resolved_scopes = resolve_oauth_scopes(
-                /*explicit_scopes*/ None,
-                /*configured_scopes*/ None,
-                oauth_config.discovered_scopes.clone(),
-            );
-            perform_oauth_login_retry_without_scopes(
+            match perform_oauth_login_for_server(
                 &name,
-                &oauth_config.url,
+                &new_entry,
                 config.mcp_oauth_credentials_store_mode,
-                oauth_config.http_headers,
-                oauth_config.env_http_headers,
-                &resolved_scopes,
-                /*oauth_resource*/ None,
+                /*explicit_scopes*/ None,
                 config.mcp_oauth_callback_port,
                 config.mcp_oauth_callback_url.as_deref(),
+                runtime_environment,
             )
-            .await?;
-            println!("Successfully logged in.");
+            .await?
+            {
+                McpOAuthLoginOutcome::Completed => println!("Successfully logged in."),
+                McpOAuthLoginOutcome::Unsupported => {}
+            }
         }
         McpOAuthLoginSupport::Unsupported => {}
         McpOAuthLoginSupport::Unknown(_) => println!(
@@ -411,38 +357,32 @@ async fn run_login(config_overrides: &CliConfigOverrides, login_args: LoginArgs)
         bail!("No MCP server named '{name}' found.");
     };
 
-    let (url, http_headers, env_http_headers) = match &server.transport {
-        McpServerTransportConfig::StreamableHttp {
-            url,
-            http_headers,
-            env_http_headers,
-            ..
-        } => (url.clone(), http_headers.clone(), env_http_headers.clone()),
-        _ => bail!("OAuth login is only supported for streamable HTTP servers."),
+    if !matches!(
+        &server.transport,
+        McpServerTransportConfig::StreamableHttp { .. }
+    ) {
+        bail!("OAuth login is only supported for streamable HTTP servers.");
     };
 
     let explicit_scopes = (!scopes.is_empty()).then_some(scopes);
-    let discovered_scopes = if explicit_scopes.is_none() && server.scopes.is_none() {
-        discover_supported_scopes(&server.transport).await
-    } else {
-        None
-    };
-    let resolved_scopes =
-        resolve_oauth_scopes(explicit_scopes, server.scopes.clone(), discovered_scopes);
-
-    perform_oauth_login_retry_without_scopes(
+    match perform_oauth_login_for_server(
         &name,
-        &url,
+        server,
         config.mcp_oauth_credentials_store_mode,
-        http_headers,
-        env_http_headers,
-        &resolved_scopes,
-        server.oauth_resource.as_deref(),
+        explicit_scopes,
         config.mcp_oauth_callback_port,
         config.mcp_oauth_callback_url.as_deref(),
+        runtime_environment_from_config(&config),
     )
-    .await?;
-    println!("Successfully logged in to MCP server '{name}'.");
+    .await?
+    {
+        McpOAuthLoginOutcome::Completed => {
+            println!("Successfully logged in to MCP server '{name}'.")
+        }
+        McpOAuthLoginOutcome::Unsupported => {
+            bail!("MCP server '{name}' does not advertise OAuth support.")
+        }
+    }
     Ok(())
 }
 
@@ -478,17 +418,7 @@ async fn run_logout(config_overrides: &CliConfigOverrides, logout_args: LogoutAr
     Ok(())
 }
 
-async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) -> Result<()> {
-    let overrides = config_overrides
-        .parse_overrides()
-        .map_err(anyhow::Error::msg)?;
-    let config = Config::load_with_cli_overrides(overrides)
-        .await
-        .context("failed to load configuration")?;
-    let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(
-        config.codex_home.to_path_buf(),
-    )));
-    let mcp_servers = mcp_manager.effective_servers(&config, /*auth*/ None).await;
+fn runtime_environment_from_config(config: &Config) -> McpRuntimeEnvironment {
     let local_runtime_paths = ExecServerRuntimePaths::from_optional_paths(
         config.codex_self_exe.clone(),
         config.codex_linux_sandbox_exe.clone(),
@@ -506,6 +436,21 @@ async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) ->
                 .unwrap_or_else(|_| Environment::default_for_tests()),
         ),
     };
+    McpRuntimeEnvironment::new(environment, config.cwd.to_path_buf())
+}
+
+async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) -> Result<()> {
+    let overrides = config_overrides
+        .parse_overrides()
+        .map_err(anyhow::Error::msg)?;
+    let config = Config::load_with_cli_overrides(overrides)
+        .await
+        .context("failed to load configuration")?;
+    let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(
+        config.codex_home.to_path_buf(),
+    )));
+    let mcp_servers = mcp_manager.effective_servers(&config, /*auth*/ None).await;
+    let runtime_environment = runtime_environment_from_config(&config);
 
     let mut entries: Vec<_> = mcp_servers.iter().collect();
     entries.sort_by(|(a, _), (b, _)| a.cmp(b));
@@ -513,7 +458,7 @@ async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) ->
         mcp_servers.iter(),
         config.mcp_oauth_credentials_store_mode,
         /*auth*/ None,
-        McpRuntimeEnvironment::new(environment, config.cwd.to_path_buf()),
+        runtime_environment,
     )
     .await;
 

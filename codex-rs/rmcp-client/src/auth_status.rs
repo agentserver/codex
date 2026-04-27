@@ -1,11 +1,21 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
+use codex_exec_server::ExecServerError;
 use codex_exec_server::HttpClient;
-use codex_exec_server::ReqwestHttpClient;
+use codex_exec_server::HttpHeader;
+use codex_exec_server::HttpRequestParams;
+use codex_exec_server::HttpRequestResponse;
+use codex_exec_server::HttpResponseBodyStream;
 use codex_protocol::protocol::McpAuthStatus;
+use futures::FutureExt;
+use futures::future::BoxFuture;
+use reqwest::Method;
 use reqwest::header::AUTHORIZATION;
+use reqwest::header::HeaderName;
+use reqwest::header::HeaderValue;
 use tracing::debug;
 
 use crate::mcp_oauth_http::OAuthHttpClient;
@@ -30,7 +40,7 @@ pub async fn determine_streamable_http_auth_status(
         http_headers,
         env_http_headers,
         store_mode,
-        Arc::new(ReqwestHttpClient),
+        Arc::new(NoProxyReqwestHttpClient),
     )
     .await
 }
@@ -91,9 +101,89 @@ pub async fn discover_streamable_http_oauth(
         url,
         http_headers,
         env_http_headers,
-        Arc::new(ReqwestHttpClient),
+        Arc::new(NoProxyReqwestHttpClient),
     )
     .await
+}
+
+#[derive(Debug, Clone, Default)]
+struct NoProxyReqwestHttpClient;
+
+impl HttpClient for NoProxyReqwestHttpClient {
+    fn http_request(
+        &self,
+        params: HttpRequestParams,
+    ) -> BoxFuture<'_, std::result::Result<HttpRequestResponse, ExecServerError>> {
+        async move { no_proxy_http_request(params).await }.boxed()
+    }
+
+    fn http_request_stream(
+        &self,
+        _params: HttpRequestParams,
+    ) -> BoxFuture<
+        '_,
+        std::result::Result<(HttpRequestResponse, HttpResponseBodyStream), ExecServerError>,
+    > {
+        async move {
+            Err(ExecServerError::Protocol(
+                "streaming is not supported for OAuth discovery".to_string(),
+            ))
+        }
+        .boxed()
+    }
+}
+
+async fn no_proxy_http_request(
+    params: HttpRequestParams,
+) -> std::result::Result<HttpRequestResponse, ExecServerError> {
+    let method = Method::from_bytes(params.method.as_bytes())
+        .map_err(|error| ExecServerError::HttpRequest(error.to_string()))?;
+    let mut builder = reqwest::Client::builder().no_proxy();
+    if let Some(timeout_ms) = params.timeout_ms {
+        builder = builder.timeout(Duration::from_millis(timeout_ms));
+    }
+    let client = builder
+        .build()
+        .map_err(|error| ExecServerError::HttpRequest(error.to_string()))?;
+
+    let mut request = client.request(method, &params.url);
+    for header in params.headers {
+        let name = HeaderName::from_bytes(header.name.as_bytes())
+            .map_err(|error| ExecServerError::HttpRequest(error.to_string()))?;
+        let value = HeaderValue::from_str(&header.value)
+            .map_err(|error| ExecServerError::HttpRequest(error.to_string()))?;
+        request = request.header(name, value);
+    }
+    if let Some(body) = params.body {
+        request = request.body(body.into_inner());
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|error| ExecServerError::HttpRequest(error.to_string()))?;
+    let status = response.status().as_u16();
+    let headers = response
+        .headers()
+        .iter()
+        .filter_map(|(name, value)| {
+            value.to_str().ok().map(|value| HttpHeader {
+                name: name.to_string(),
+                value: value.to_string(),
+            })
+        })
+        .collect();
+    let body = response
+        .bytes()
+        .await
+        .map_err(|error| ExecServerError::HttpRequest(error.to_string()))?
+        .to_vec();
+
+    Ok(HttpRequestResponse {
+        status,
+        headers,
+        body: body.into(),
+    })
 }
 
 pub async fn discover_streamable_http_oauth_with_client(

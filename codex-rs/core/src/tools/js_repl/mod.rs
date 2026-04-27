@@ -1057,6 +1057,7 @@ impl JsReplManager {
         let options = ExecOptions {
             expiration: ExecExpiration::DefaultTimeout,
             capture_policy: ExecCapturePolicy::ShellTool,
+            sandbox_violation_context: None,
         };
         let exec_env = sandbox
             .transform(SandboxTransformRequest {

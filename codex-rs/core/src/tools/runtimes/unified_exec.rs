@@ -238,6 +238,9 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
             let options = ExecOptions {
                 expiration: ExecExpiration::DefaultTimeout,
                 capture_policy: ExecCapturePolicy::ShellTool,
+                sandbox_violation_context: Some(
+                    crate::security_events::SandboxViolationAuditContext::from_tool_ctx(ctx),
+                ),
             };
             let mut exec_env = attempt
                 .env_for(command, options, req.network.as_ref())
@@ -296,6 +299,9 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
         let options = ExecOptions {
             expiration: ExecExpiration::DefaultTimeout,
             capture_policy: ExecCapturePolicy::ShellTool,
+            sandbox_violation_context: Some(
+                crate::security_events::SandboxViolationAuditContext::from_tool_ctx(ctx),
+            ),
         };
         let mut exec_env = attempt
             .env_for(command, options, req.network.as_ref())

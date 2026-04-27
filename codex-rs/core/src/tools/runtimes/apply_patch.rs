@@ -252,6 +252,9 @@ impl ToolRuntime<ApplyPatchRequest, ExecToolCallOutput> for ApplyPatchRuntime {
         let options = ExecOptions {
             expiration: req.timeout_ms.into(),
             capture_policy: ExecCapturePolicy::ShellTool,
+            sandbox_violation_context: Some(
+                crate::security_events::SandboxViolationAuditContext::from_tool_ctx(ctx),
+            ),
         };
         let env = attempt
             .env_for(command, options, /*network*/ None)

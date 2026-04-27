@@ -1132,7 +1132,9 @@ fn permission_profile_override_from_config(
     }
 
     if matches!(
-        config.permissions.sandbox_policy.get(),
+        config
+            .permissions
+            .legacy_sandbox_policy(config.cwd.as_path()),
         SandboxPolicy::ExternalSandbox { .. }
     ) {
         None

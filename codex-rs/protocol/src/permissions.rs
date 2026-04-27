@@ -698,7 +698,7 @@ impl FileSystemSandboxPolicy {
         };
 
         self.semantic_signature(cwd)
-            != FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(&legacy_policy, cwd)
+            != legacy_runtime_file_system_policy_for_cwd(&legacy_policy, cwd)
                 .semantic_signature(cwd)
     }
 
@@ -1348,6 +1348,87 @@ fn default_read_only_subpaths_for_writable_root(
     }
 
     dedup_absolute_paths(subpaths, /*normalize_effective_paths*/ false)
+}
+
+/// Rebuilds the filesystem policy that legacy sandbox runtimes enforce for a
+/// concrete cwd.
+///
+/// Unlike [`FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd`], this
+/// intentionally does not add symbolic project-root metadata carveouts. Legacy
+/// runtime expansion only protected `.git`/`.agents` when those paths already
+/// existed, so missing-path carveouts still require direct profile enforcement.
+fn legacy_runtime_file_system_policy_for_cwd(
+    sandbox_policy: &SandboxPolicy,
+    cwd: &Path,
+) -> FileSystemSandboxPolicy {
+    let SandboxPolicy::WorkspaceWrite {
+        writable_roots,
+        exclude_tmpdir_env_var,
+        exclude_slash_tmp,
+        ..
+    } = sandbox_policy
+    else {
+        return FileSystemSandboxPolicy::from(sandbox_policy);
+    };
+
+    let mut entries = vec![
+        FileSystemSandboxEntry {
+            path: FileSystemPath::Special {
+                value: FileSystemSpecialPath::Root,
+            },
+            access: FileSystemAccessMode::Read,
+        },
+        FileSystemSandboxEntry {
+            path: FileSystemPath::Special {
+                value: FileSystemSpecialPath::project_roots(/*subpath*/ None),
+            },
+            access: FileSystemAccessMode::Write,
+        },
+    ];
+
+    if !*exclude_slash_tmp {
+        entries.push(FileSystemSandboxEntry {
+            path: FileSystemPath::Special {
+                value: FileSystemSpecialPath::SlashTmp,
+            },
+            access: FileSystemAccessMode::Write,
+        });
+    }
+    if !*exclude_tmpdir_env_var {
+        entries.push(FileSystemSandboxEntry {
+            path: FileSystemPath::Special {
+                value: FileSystemSpecialPath::Tmpdir,
+            },
+            access: FileSystemAccessMode::Write,
+        });
+    }
+    entries.extend(
+        writable_roots
+            .iter()
+            .cloned()
+            .map(|path| FileSystemSandboxEntry {
+                path: FileSystemPath::Path { path },
+                access: FileSystemAccessMode::Write,
+            }),
+    );
+
+    if let Ok(cwd_root) = AbsolutePathBuf::from_absolute_path(cwd) {
+        for protected_path in default_read_only_subpaths_for_writable_root(
+            &cwd_root, /*protect_missing_dot_codex*/ true,
+        ) {
+            append_default_read_only_path_if_no_explicit_rule(&mut entries, protected_path);
+        }
+    }
+    for writable_root in writable_roots {
+        for protected_path in default_read_only_subpaths_for_writable_root(
+            writable_root,
+            /*protect_missing_dot_codex*/ false,
+        ) {
+            append_default_read_only_path_if_no_explicit_rule(&mut entries, protected_path);
+        }
+    }
+
+    FileSystemSandboxPolicy::restricted(entries)
 }
 
 fn append_default_read_only_project_root_subpath_if_no_explicit_rule(
@@ -2156,7 +2237,7 @@ mod tests {
             policy.needs_direct_runtime_enforcement(NetworkSandboxPolicy::Restricted, cwd.path(),)
         );
 
-        let legacy_workspace_write = FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
+        let legacy_workspace_write = legacy_runtime_file_system_policy_for_cwd(
             &SandboxPolicy::new_workspace_write_policy(),
             cwd.path(),
         );
@@ -2175,8 +2256,7 @@ mod tests {
             exclude_tmpdir_env_var: true,
             exclude_slash_tmp: true,
         };
-        let legacy_order =
-            FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(&legacy_policy, cwd.path());
+        let legacy_order = legacy_runtime_file_system_policy_for_cwd(&legacy_policy, cwd.path());
         let mut reordered_entries = legacy_order.entries.clone();
         reordered_entries.reverse();
         let reordered = FileSystemSandboxPolicy::restricted(reordered_entries);
@@ -2188,6 +2268,33 @@ mod tests {
         assert!(
             !reordered
                 .needs_direct_runtime_enforcement(NetworkSandboxPolicy::Restricted, cwd.path())
+        );
+    }
+
+    #[test]
+    fn missing_symbolic_metadata_carveouts_need_direct_runtime_enforcement() {
+        let cwd = TempDir::new().expect("tempdir");
+        let legacy_policy = SandboxPolicy::WorkspaceWrite {
+            writable_roots: Vec::new(),
+            network_access: false,
+            exclude_tmpdir_env_var: true,
+            exclude_slash_tmp: true,
+        };
+
+        let profile_projection =
+            FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(&legacy_policy, cwd.path());
+        assert!(
+            profile_projection
+                .needs_direct_runtime_enforcement(NetworkSandboxPolicy::Restricted, cwd.path()),
+            "symbolic .git/.agents carveouts protect missing paths that legacy sandboxes cannot represent"
+        );
+
+        let legacy_runtime_projection =
+            legacy_runtime_file_system_policy_for_cwd(&legacy_policy, cwd.path());
+        assert!(
+            !legacy_runtime_projection
+                .needs_direct_runtime_enforcement(NetworkSandboxPolicy::Restricted, cwd.path()),
+            "true legacy runtime expansion should still classify as legacy-compatible"
         );
     }
 

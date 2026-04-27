@@ -3423,6 +3423,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             Arc::clone(&auth_manager),
             config.chatgpt_base_url.trim_end_matches('/').to_string(),
             config.analytics_enabled,
+            AuthManagerRetention::Strong,
         ),
         hooks: Hooks::new(HooksConfig {
             legacy_notify_argv: config.notify.clone(),
@@ -4782,6 +4783,7 @@ where
             Arc::clone(&auth_manager),
             config.chatgpt_base_url.trim_end_matches('/').to_string(),
             config.analytics_enabled,
+            AuthManagerRetention::Strong,
         ),
         hooks: Hooks::new(HooksConfig {
             legacy_notify_argv: config.notify.clone(),

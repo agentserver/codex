@@ -54,16 +54,29 @@ pub struct AnalyticsEventsClient {
     queue: Option<AnalyticsEventsQueue>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum AuthManagerRetention {
+    Strong,
+    Weak,
+}
+
 impl AnalyticsEventsQueue {
-    pub(crate) fn new(auth_manager: Arc<AuthManager>, base_url: String) -> Self {
+    pub(crate) fn new(
+        auth_manager: Arc<AuthManager>,
+        base_url: String,
+        retention: AuthManagerRetention,
+    ) -> Self {
         let (sender, mut receiver) = mpsc::channel(ANALYTICS_EVENTS_QUEUE_SIZE);
-        let auth_manager = Arc::downgrade(&auth_manager);
+        let auth_manager = match retention {
+            AuthManagerRetention::Strong => AuthManagerHandle::Strong(auth_manager),
+            AuthManagerRetention::Weak => AuthManagerHandle::Weak(Arc::downgrade(&auth_manager)),
+        };
         tokio::spawn(async move {
             let mut reducer = AnalyticsReducer::default();
             while let Some(input) = receiver.recv().await {
                 let mut events = Vec::new();
                 reducer.ingest(input, &mut events).await;
-                let Some(auth_manager) = auth_manager.upgrade() else {
+                let Some(auth_manager) = auth_manager.get() else {
                     break;
                 };
                 send_track_events(&auth_manager, &base_url, events).await;
@@ -117,15 +130,35 @@ impl AnalyticsEventsQueue {
     }
 }
 
+enum AuthManagerHandle {
+    Strong(Arc<AuthManager>),
+    Weak(std::sync::Weak<AuthManager>),
+}
+
+impl AuthManagerHandle {
+    fn get(&self) -> Option<Arc<AuthManager>> {
+        match self {
+            Self::Strong(auth_manager) => Some(Arc::clone(auth_manager)),
+            Self::Weak(auth_manager) => auth_manager.upgrade(),
+        }
+    }
+}
+
 impl AnalyticsEventsClient {
     pub fn new(
         auth_manager: Arc<AuthManager>,
         base_url: String,
         analytics_enabled: Option<bool>,
+        auth_manager_retention: AuthManagerRetention,
     ) -> Self {
         Self {
-            queue: (analytics_enabled != Some(false))
-                .then(|| AnalyticsEventsQueue::new(Arc::clone(&auth_manager), base_url)),
+            queue: (analytics_enabled != Some(false)).then(|| {
+                AnalyticsEventsQueue::new(
+                    Arc::clone(&auth_manager),
+                    base_url,
+                    auth_manager_retention,
+                )
+            }),
         }
     }
 

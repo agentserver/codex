@@ -776,6 +776,7 @@ impl Session {
                     Arc::clone(&auth_manager),
                     config.chatgpt_base_url.trim_end_matches('/').to_string(),
                     config.analytics_enabled,
+                    AuthManagerRetention::Strong,
                 )
             });
             let services = SessionServices {

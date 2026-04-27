@@ -1,4 +1,6 @@
+use crate::client::AnalyticsEventsClient;
 use crate::client::AnalyticsEventsQueue;
+use crate::client::AuthManagerRetention;
 use crate::events::AppServerRpcTransport;
 use crate::events::CodexAppMentionedEventRequest;
 use crate::events::CodexAppServerClientMetadata;
@@ -85,6 +87,8 @@ use codex_app_server_protocol::TurnStatus as AppServerTurnStatus;
 use codex_app_server_protocol::TurnSteerParams;
 use codex_app_server_protocol::TurnSteerResponse;
 use codex_app_server_protocol::UserInput;
+use codex_login::AuthManager;
+use codex_login::CodexAuth;
 use codex_login::default_client::DEFAULT_ORIGINATOR;
 use codex_login::default_client::originator;
 use codex_plugin::AppConnectorId;
@@ -793,6 +797,37 @@ fn app_used_dedupe_is_keyed_by_turn_and_connector() {
     assert_eq!(queue.should_enqueue_app_used(&turn_1, &app), true);
     assert_eq!(queue.should_enqueue_app_used(&turn_1, &app), false);
     assert_eq!(queue.should_enqueue_app_used(&turn_2, &app), true);
+}
+
+#[tokio::test]
+async fn default_client_retains_auth_manager() {
+    let auth_manager = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("test"));
+    let weak_auth_manager = Arc::downgrade(&auth_manager);
+
+    let _client = AnalyticsEventsClient::new(
+        auth_manager,
+        "http://localhost".to_string(),
+        None,
+        AuthManagerRetention::Strong,
+    );
+
+    assert!(weak_auth_manager.upgrade().is_some());
+}
+
+#[tokio::test]
+async fn non_owning_client_does_not_retain_auth_manager() {
+    let auth_manager = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("test"));
+    let weak_auth_manager = Arc::downgrade(&auth_manager);
+
+    let _client = AnalyticsEventsClient::new(
+        Arc::clone(&auth_manager),
+        "http://localhost".to_string(),
+        None,
+        AuthManagerRetention::Weak,
+    );
+    drop(auth_manager);
+
+    assert!(weak_auth_manager.upgrade().is_none());
 }
 
 #[test]

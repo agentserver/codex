@@ -467,6 +467,7 @@ mod tests {
     use super::*;
     use crate::config_manager::apply_runtime_feature_enablement;
     use codex_analytics::AnalyticsEventsClient;
+    use codex_analytics::AuthManagerRetention;
     use codex_arg0::Arg0DispatchPaths;
     use codex_config::CloudRequirementsLoader;
     use codex_config::LoaderOverrides;
@@ -832,6 +833,7 @@ mod tests {
                     .trim_end_matches('/')
                     .to_string(),
                 analytics_config.analytics_enabled,
+                AuthManagerRetention::Strong,
             ),
         );
 

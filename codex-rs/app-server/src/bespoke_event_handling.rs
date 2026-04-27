@@ -3129,6 +3129,7 @@ mod tests {
     use anyhow::Result;
     use anyhow::anyhow;
     use anyhow::bail;
+    use codex_analytics::AuthManagerRetention;
     use codex_app_server_protocol::AutoReviewDecisionSource;
     use codex_app_server_protocol::GuardianApprovalReviewStatus;
     use codex_app_server_protocol::JSONRPCErrorError;
@@ -3626,6 +3627,7 @@ mod tests {
                 ),
                 "http://localhost".to_string(),
                 Some(false),
+                AuthManagerRetention::Strong,
             ),
             codex_home: codex_home.path().to_path_buf(),
         };

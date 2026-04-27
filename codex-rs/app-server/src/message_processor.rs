@@ -25,6 +25,7 @@ use async_trait::async_trait;
 use axum::http::HeaderValue;
 use codex_analytics::AnalyticsEventsClient;
 use codex_analytics::AppServerRpcTransport;
+use codex_analytics::AuthManagerRetention;
 use codex_app_server_protocol::AppListUpdatedNotification;
 use codex_app_server_protocol::AuthMode as LoginAuthMode;
 use codex_app_server_protocol::ChatgptAuthTokensRefreshParams;
@@ -278,6 +279,7 @@ impl MessageProcessor {
             Arc::clone(&auth_manager),
             config.chatgpt_base_url.trim_end_matches('/').to_string(),
             config.analytics_enabled,
+            AuthManagerRetention::Strong,
         );
         let thread_manager = Arc::new(ThreadManager::new(
             config.as_ref(),

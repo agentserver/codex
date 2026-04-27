@@ -7,6 +7,7 @@ use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 pub use client::AnalyticsEventsClient;
+pub use client::AuthManagerRetention;
 pub use events::AppServerRpcTransport;
 pub use events::GuardianApprovalRequestSource;
 pub use events::GuardianReviewAnalyticsResult;

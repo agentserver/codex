@@ -34,6 +34,7 @@ use codex_plugin::PluginTelemetryMetadata;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::Weak;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -54,10 +55,41 @@ pub struct AnalyticsEventsClient {
     analytics_enabled: Option<bool>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AuthManagerRetention {
+    Strong,
+    Weak,
+}
+
+enum RetainedAuthManager {
+    Strong(Arc<AuthManager>),
+    Weak(Weak<AuthManager>),
+}
+
+impl RetainedAuthManager {
+    fn upgrade(&self) -> Option<Arc<AuthManager>> {
+        match self {
+            Self::Strong(auth_manager) => Some(Arc::clone(auth_manager)),
+            Self::Weak(auth_manager) => auth_manager.upgrade(),
+        }
+    }
+}
+
 impl AnalyticsEventsQueue {
-    pub(crate) fn new(auth_manager: Arc<AuthManager>, base_url: String) -> Self {
+    pub(crate) fn new(
+        auth_manager: Arc<AuthManager>,
+        base_url: String,
+        retention: AuthManagerRetention,
+    ) -> Self {
+        let auth_manager = match retention {
+            AuthManagerRetention::Strong => RetainedAuthManager::Strong(auth_manager),
+            AuthManagerRetention::Weak => RetainedAuthManager::Weak(Arc::downgrade(&auth_manager)),
+        };
+        Self::spawn(auth_manager, base_url)
+    }
+
+    fn spawn(auth_manager: RetainedAuthManager, base_url: String) -> Self {
         let (sender, mut receiver) = mpsc::channel(ANALYTICS_EVENTS_QUEUE_SIZE);
-        let auth_manager = Arc::downgrade(&auth_manager);
         tokio::spawn(async move {
             let mut reducer = AnalyticsReducer::default();
             while let Some(input) = receiver.recv().await {
@@ -122,9 +154,10 @@ impl AnalyticsEventsClient {
         auth_manager: Arc<AuthManager>,
         base_url: String,
         analytics_enabled: Option<bool>,
+        retention: AuthManagerRetention,
     ) -> Self {
         Self {
-            queue: AnalyticsEventsQueue::new(Arc::clone(&auth_manager), base_url),
+            queue: AnalyticsEventsQueue::new(auth_manager, base_url, retention),
             analytics_enabled,
         }
     }

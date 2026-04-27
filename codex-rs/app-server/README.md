@@ -143,6 +143,7 @@ Example with notification opt-out:
 - `thread/loaded/list` — list the thread ids currently loaded in memory.
 - `thread/read` — read a stored thread by id without resuming it; optionally include turns via `includeTurns`. The returned `thread` includes `status` (`ThreadStatus`), defaulting to `notLoaded` when the thread is not currently loaded.
 - `thread/turns/list` — page through a stored thread’s turn history without resuming it; supports cursor-based pagination with `sortDirection`, `nextCursor`, and `backwardsCursor`.
+- `thread/items/list` — page through sqlite-backed stored thread items without resuming it; returns only the lightweight renderable/searchable item subset used for scrolling UIs, along with per-item turn metadata and cursor-based pagination.
 - `thread/metadata/update` — patch stored thread metadata in sqlite; currently supports updating persisted `gitInfo` fields and returns the refreshed `thread`.
 - `thread/memoryMode/set` — experimental; set a thread’s persisted memory eligibility to `"enabled"` or `"disabled"` for either a loaded thread or a stored rollout; returns `{}` on success.
 - `memory/reset` — experimental; clear the current `CODEX_HOME/memories` directory and reset persisted memory stage data in sqlite while preserving existing thread memory modes; returns `{}` on success.
@@ -415,6 +416,23 @@ Use `thread/turns/list` to page a stored thread’s turn history without resumin
     "data": [ ... ],
     "nextCursor": "older-turns-cursor-or-null",
     "backwardsCursor": "newer-turns-cursor-or-null"
+} }
+```
+
+### Example: List thread items
+
+Use `thread/items/list` to page a stored thread’s lightweight item history from sqlite. This excludes heavy tool execution payloads and is intended for scrolling/search-oriented UIs.
+
+```json
+{ "method": "thread/items/list", "id": 25, "params": {
+    "threadId": "thr_123",
+    "limit": 100,
+    "sortDirection": "desc"
+} }
+{ "id": 25, "result": {
+    "data": [ ... ],
+    "nextCursor": "older-items-cursor-or-null",
+    "backwardsCursor": "newer-items-cursor-or-null"
 } }
 ```
 

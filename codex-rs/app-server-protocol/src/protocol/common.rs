@@ -340,6 +340,10 @@ client_request_definitions! {
         params: v2::ThreadTurnsListParams,
         response: v2::ThreadTurnsListResponse,
     },
+    ThreadItemsList => "thread/items/list" {
+        params: v2::ThreadItemsListParams,
+        response: v2::ThreadItemsListResponse,
+    },
     /// Append raw Responses API items to the thread history without starting a user turn.
     ThreadInjectItems => "thread/inject_items" {
         params: v2::ThreadInjectItemsParams,

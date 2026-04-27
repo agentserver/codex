@@ -5,6 +5,7 @@ use crate::list;
 use crate::list::parse_timestamp_uuid_from_filename;
 use crate::recorder::RolloutRecorder;
 use crate::state_db::normalize_cwd_for_state_db;
+use crate::thread_items::build_persisted_thread_items;
 use chrono::DateTime;
 use chrono::NaiveDateTime;
 use chrono::Timelike;
@@ -289,6 +290,38 @@ pub(crate) async fn backfill_sessions(
                                 "failed to read session meta for dynamic tools {}",
                                 rollout.path.display()
                             );
+                        }
+                        match RolloutRecorder::load_rollout_items(&rollout.path).await {
+                            Ok((items, _, _)) => {
+                                match build_persisted_thread_items(items.as_slice()) {
+                                    Ok(persisted_items) => {
+                                        if let Err(err) = runtime
+                                            .replace_thread_items(
+                                                &metadata.id.to_string(),
+                                                persisted_items.as_slice(),
+                                            )
+                                            .await
+                                        {
+                                            warn!(
+                                                "failed to backfill thread items {}: {err}",
+                                                rollout.path.display()
+                                            );
+                                        }
+                                    }
+                                    Err(err) => {
+                                        warn!(
+                                            "failed to build thread items during backfill {}: {err}",
+                                            rollout.path.display()
+                                        );
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                warn!(
+                                    "failed to reload rollout items during backfill {}: {err}",
+                                    rollout.path.display()
+                                );
+                            }
                         }
                     }
                 }

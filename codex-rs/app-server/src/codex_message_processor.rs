@@ -148,11 +148,14 @@ use codex_app_server_protocol::ThreadDecrementElicitationParams;
 use codex_app_server_protocol::ThreadDecrementElicitationResponse;
 use codex_app_server_protocol::ThreadForkParams;
 use codex_app_server_protocol::ThreadForkResponse;
+use codex_app_server_protocol::ThreadHistoryItem;
 use codex_app_server_protocol::ThreadIncrementElicitationParams;
 use codex_app_server_protocol::ThreadIncrementElicitationResponse;
 use codex_app_server_protocol::ThreadInjectItemsParams;
 use codex_app_server_protocol::ThreadInjectItemsResponse;
 use codex_app_server_protocol::ThreadItem;
+use codex_app_server_protocol::ThreadItemsListParams;
+use codex_app_server_protocol::ThreadItemsListResponse;
 use codex_app_server_protocol::ThreadListCwdFilter;
 use codex_app_server_protocol::ThreadListParams;
 use codex_app_server_protocol::ThreadListResponse;
@@ -340,6 +343,7 @@ use codex_rmcp_client::perform_oauth_login_return_url;
 use codex_rollout::state_db::StateDbHandle;
 use codex_rollout::state_db::get_state_db;
 use codex_rollout::state_db::reconcile_rollout;
+use codex_rollout::state_db::sync_renderable_thread_items;
 use codex_state::StateRuntime;
 use codex_state::ThreadMetadata;
 use codex_state::ThreadMetadataBuilder;
@@ -954,6 +958,10 @@ impl CodexMessageProcessor {
             }
             ClientRequest::ThreadTurnsList { request_id, params } => {
                 self.thread_turns_list(to_connection_request_id(request_id), params)
+                    .await;
+            }
+            ClientRequest::ThreadItemsList { request_id, params } => {
+                self.thread_items_list(to_connection_request_id(request_id), params)
                     .await;
             }
             ClientRequest::ThreadShellCommand { request_id, params } => {
@@ -4352,6 +4360,178 @@ impl CodexMessageProcessor {
                 .await;
             }
         }
+    }
+
+    async fn thread_items_list(
+        &self,
+        request_id: ConnectionRequestId,
+        params: ThreadItemsListParams,
+    ) {
+        let ThreadItemsListParams {
+            thread_id,
+            cursor,
+            limit,
+            sort_direction,
+        } = params;
+
+        let thread_uuid = match ThreadId::from_string(&thread_id) {
+            Ok(id) => id,
+            Err(err) => {
+                self.send_invalid_request_error(request_id, format!("invalid thread id: {err}"))
+                    .await;
+                return;
+            }
+        };
+
+        let Some(state_db_ctx) = open_state_db_for_direct_thread_lookup(&self.config).await else {
+            self.send_internal_error(
+                request_id,
+                format!("sqlite state db unavailable for thread {thread_uuid}"),
+            )
+            .await;
+            return;
+        };
+
+        let page_size = limit
+            .map(|value| value as usize)
+            .unwrap_or(THREAD_TURNS_DEFAULT_LIMIT)
+            .clamp(1, THREAD_TURNS_MAX_LIMIT);
+        let sort_direction = sort_direction.unwrap_or(SortDirection::Desc);
+        let anchor = match cursor.as_deref() {
+            Some(cursor) => match parse_thread_items_anchor(cursor) {
+                Ok(anchor) => Some(anchor),
+                Err(error) => {
+                    self.outgoing.send_error(request_id, error).await;
+                    return;
+                }
+            },
+            None => None,
+        };
+
+        let mut page = match state_db_ctx
+            .list_thread_items(
+                &thread_uuid.to_string(),
+                page_size,
+                anchor.as_ref(),
+                match sort_direction {
+                    SortDirection::Asc => codex_state::SortDirection::Asc,
+                    SortDirection::Desc => codex_state::SortDirection::Desc,
+                },
+            )
+            .await
+        {
+            Ok(page) => page,
+            Err(err) => {
+                self.send_internal_error(
+                    request_id,
+                    format!("failed to query sqlite thread items for {thread_uuid}: {err}"),
+                )
+                .await;
+                return;
+            }
+        };
+
+        let mut rollout_path = None;
+        if page.items.is_empty() {
+            rollout_path = self
+                .resolve_rollout_path(thread_uuid, Some(&state_db_ctx))
+                .await;
+            if rollout_path.is_none() {
+                rollout_path = match find_thread_path_by_id_str(
+                    &self.config.codex_home,
+                    &thread_uuid.to_string(),
+                )
+                .await
+                {
+                    Ok(Some(path)) => Some(path),
+                    Ok(None) => match find_archived_thread_path_by_id_str(
+                        &self.config.codex_home,
+                        &thread_uuid.to_string(),
+                    )
+                    .await
+                    {
+                        Ok(path) => path,
+                        Err(err) => {
+                            self.send_invalid_request_error(
+                                request_id,
+                                format!("failed to locate archived thread id {thread_uuid}: {err}"),
+                            )
+                            .await;
+                            return;
+                        }
+                    },
+                    Err(err) => {
+                        self.send_invalid_request_error(
+                            request_id,
+                            format!("failed to locate thread id {thread_uuid}: {err}"),
+                        )
+                        .await;
+                        return;
+                    }
+                };
+            }
+        }
+
+        if page.items.is_empty()
+            && let Some(rollout_path) = rollout_path
+        {
+            sync_renderable_thread_items(
+                Some(state_db_ctx.as_ref()),
+                thread_uuid,
+                rollout_path.as_path(),
+                "thread_items_list",
+            )
+            .await;
+            page = match state_db_ctx
+                .list_thread_items(
+                    &thread_uuid.to_string(),
+                    page_size,
+                    anchor.as_ref(),
+                    match sort_direction {
+                        SortDirection::Asc => codex_state::SortDirection::Asc,
+                        SortDirection::Desc => codex_state::SortDirection::Desc,
+                    },
+                )
+                .await
+            {
+                Ok(page) => page,
+                Err(err) => {
+                    self.send_internal_error(
+                        request_id,
+                        format!(
+                            "failed to query repaired sqlite thread items for {thread_uuid}: {err}"
+                        ),
+                    )
+                    .await;
+                    return;
+                }
+            };
+        }
+
+        let backwards_cursor = page
+            .items
+            .first()
+            .and_then(|item| thread_items_backwards_cursor(item.item_at, sort_direction));
+        let data = match page
+            .items
+            .into_iter()
+            .map(thread_item_record_to_history_item)
+            .collect::<Result<Vec<_>, JSONRPCErrorError>>()
+        {
+            Ok(data) => data,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+        let response = ThreadItemsListResponse {
+            data,
+            next_cursor: page
+                .next_anchor
+                .map(|anchor| anchor.ts.to_rfc3339_opts(SecondsFormat::Millis, true)),
+            backwards_cursor,
+        };
+        self.outgoing.send_response(request_id, response).await;
     }
 
     pub(crate) fn thread_created_receiver(&self) -> broadcast::Receiver<ThreadId> {
@@ -10025,6 +10205,75 @@ fn thread_backwards_cursor_for_sort_key(
         SortDirection::Desc => timestamp.checked_sub_signed(ChronoDuration::milliseconds(1))?,
     };
     Some(timestamp.to_rfc3339_opts(SecondsFormat::Millis, true))
+}
+
+fn parse_thread_items_anchor(cursor: &str) -> Result<codex_state::Anchor, JSONRPCErrorError> {
+    let Some(ts) = parse_datetime(Some(cursor)) else {
+        return Err(JSONRPCErrorError {
+            code: INVALID_REQUEST_ERROR_CODE,
+            message: format!("invalid cursor: {cursor}"),
+            data: None,
+        });
+    };
+    Ok(codex_state::Anchor { ts })
+}
+
+fn thread_items_backwards_cursor(
+    item_at: DateTime<Utc>,
+    sort_direction: SortDirection,
+) -> Option<String> {
+    let timestamp = match sort_direction {
+        SortDirection::Asc => item_at.checked_add_signed(ChronoDuration::milliseconds(1))?,
+        SortDirection::Desc => item_at.checked_sub_signed(ChronoDuration::milliseconds(1))?,
+    };
+    Some(timestamp.to_rfc3339_opts(SecondsFormat::Millis, true))
+}
+
+fn thread_item_record_to_history_item(
+    record: codex_state::ThreadItemRecord,
+) -> Result<ThreadHistoryItem, JSONRPCErrorError> {
+    let item = serde_json::from_str::<ThreadItem>(&record.payload_json).map_err(|err| {
+        JSONRPCErrorError {
+            code: INTERNAL_ERROR_CODE,
+            message: format!(
+                "failed to deserialize persisted thread item {}: {err}",
+                record.item_id
+            ),
+            data: None,
+        }
+    })?;
+    let turn_status =
+        serde_json::from_value::<TurnStatus>(serde_json::Value::String(record.turn_status.clone()))
+            .map_err(|err| JSONRPCErrorError {
+                code: INTERNAL_ERROR_CODE,
+                message: format!(
+                    "failed to deserialize persisted turn status {}: {err}",
+                    record.turn_status
+                ),
+                data: None,
+            })?;
+    let turn_error = record
+        .turn_error_json
+        .as_deref()
+        .map(serde_json::from_str::<TurnError>)
+        .transpose()
+        .map_err(|err| JSONRPCErrorError {
+            code: INTERNAL_ERROR_CODE,
+            message: format!(
+                "failed to deserialize persisted turn error for {}: {err}",
+                record.item_id
+            ),
+            data: None,
+        })?;
+    Ok(ThreadHistoryItem {
+        turn_id: record.turn_id,
+        item,
+        turn_status,
+        turn_error,
+        turn_started_at: record.turn_started_at,
+        turn_completed_at: record.turn_completed_at,
+        turn_duration_ms: record.turn_duration_ms,
+    })
 }
 
 struct ThreadTurnsPage {

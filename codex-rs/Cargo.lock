@@ -3184,6 +3184,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "codex-app-server-protocol",
  "codex-file-search",
  "codex-git-utils",
  "codex-login",

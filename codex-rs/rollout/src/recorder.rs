@@ -1696,6 +1696,15 @@ async fn sync_thread_state_after_write(
     if state_db::touch_thread_updated_at(state_db_ctx, thread_id, updated_at, "rollout_writer")
         .await
     {
+        if let Some(thread_id) = thread_id {
+            state_db::sync_renderable_thread_items(
+                state_db_ctx,
+                thread_id,
+                rollout_path,
+                "rollout_writer",
+            )
+            .await;
+        }
         return;
     }
     state_db::apply_rollout_items(

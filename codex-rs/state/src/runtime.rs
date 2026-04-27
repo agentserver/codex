@@ -60,6 +60,7 @@ mod memories;
 mod remote_control;
 #[cfg(test)]
 mod test_support;
+mod thread_items;
 mod threads;
 
 pub use remote_control::RemoteControlEnrollmentRecord;
@@ -81,6 +82,7 @@ pub struct StateRuntime {
     pool: Arc<sqlx::SqlitePool>,
     logs_pool: Arc<sqlx::SqlitePool>,
     thread_updated_at_millis: Arc<AtomicI64>,
+    thread_item_at_millis: Arc<AtomicI64>,
 }
 
 impl StateRuntime {
@@ -130,12 +132,18 @@ impl StateRuntime {
                 .fetch_one(pool.as_ref())
                 .await?;
         let thread_updated_at_millis = thread_updated_at_millis.unwrap_or(0);
+        let thread_item_at_millis: Option<i64> =
+            sqlx::query_scalar("SELECT MAX(thread_items.item_at_ms) FROM thread_items")
+                .fetch_one(pool.as_ref())
+                .await?;
+        let thread_item_at_millis = thread_item_at_millis.unwrap_or(0);
         let runtime = Arc::new(Self {
             pool,
             logs_pool,
             codex_home,
             default_provider,
             thread_updated_at_millis: Arc::new(AtomicI64::new(thread_updated_at_millis)),
+            thread_item_at_millis: Arc::new(AtomicI64::new(thread_item_at_millis)),
         });
         if let Err(err) = runtime.run_logs_startup_maintenance().await {
             warn!(

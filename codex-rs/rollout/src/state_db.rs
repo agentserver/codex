@@ -4,6 +4,7 @@ use crate::list::Cursor;
 use crate::list::SortDirection;
 use crate::list::ThreadSortKey;
 use crate::metadata;
+use crate::thread_items::build_persisted_thread_items;
 use chrono::DateTime;
 use chrono::Utc;
 use codex_protocol::ThreadId;
@@ -414,6 +415,7 @@ pub async fn reconcile_rollout(
             rollout_path.display()
         );
     }
+    sync_renderable_thread_items(Some(ctx), metadata.id, rollout_path, "reconcile_rollout").await;
 }
 
 /// Repair a thread's rollout path after filesystem fallback succeeds.
@@ -521,7 +523,9 @@ pub async fn apply_rollout_items(
             "state db apply_rollout_items failed during {stage} for {}: {err}",
             rollout_path.display()
         );
+        return;
     }
+    sync_renderable_thread_items(Some(ctx), builder.id, rollout_path, stage).await;
 }
 
 pub async fn touch_thread_updated_at(
@@ -542,6 +546,47 @@ pub async fn touch_thread_updated_at(
             warn!("state db touch_thread_updated_at failed during {stage} for {thread_id}: {err}");
             false
         })
+}
+
+pub async fn sync_renderable_thread_items(
+    context: Option<&codex_state::StateRuntime>,
+    thread_id: ThreadId,
+    rollout_path: &Path,
+    stage: &str,
+) {
+    let Some(ctx) = context else {
+        return;
+    };
+    let rollout_items =
+        match crate::recorder::RolloutRecorder::load_rollout_items(rollout_path).await {
+            Ok((items, _, _)) => items,
+            Err(err) => {
+                warn!(
+                    "state db renderable-item sync failed during {stage} for {}: {err}",
+                    rollout_path.display()
+                );
+                return;
+            }
+        };
+    let persisted_items = match build_persisted_thread_items(rollout_items.as_slice()) {
+        Ok(items) => items,
+        Err(err) => {
+            warn!(
+                "state db renderable-item build failed during {stage} for {}: {err}",
+                rollout_path.display()
+            );
+            return;
+        }
+    };
+    if let Err(err) = ctx
+        .replace_thread_items(&thread_id.to_string(), persisted_items.as_slice())
+        .await
+    {
+        warn!(
+            "state db renderable-item replace failed during {stage} for {}: {err}",
+            rollout_path.display()
+        );
+    }
 }
 
 #[cfg(test)]

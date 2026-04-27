@@ -195,7 +195,7 @@ Example with notification opt-out:
 - `experimentalFeature/enablement/set` — patch the in-memory process-wide runtime feature enablement for the currently supported feature keys (`apps`, `plugins`). For each feature, precedence is: cloud requirements > --enable <feature_name> > config.toml > experimentalFeature/enablement/set (new) > code default.
 - `collaborationMode/list` — list available collaboration mode presets (experimental, no pagination). This response omits built-in developer instructions; clients should either pass `settings.developer_instructions: null` when setting a mode to use Codex's built-in instructions, or provide their own instructions explicitly.
 - `skills/list` — list skills for one or more `cwd` values (optional `forceReload`).
-- `hooks/list` — list discovered hooks for one or more `cwd` values, including hooks disabled by user config.
+- `hooks/list` — list discovered hooks for one or more `cwd` values.
 - `marketplace/add` — add a remote plugin marketplace from an HTTP(S) Git URL, SSH Git URL, or GitHub `owner/repo` shorthand, then persist it into the user marketplace config. Returns the installed root path plus whether the marketplace was already present.
 - `marketplace/remove` — remove a configured marketplace by name from the user marketplace config, and delete its installed marketplace root when one exists.
 - `marketplace/upgrade` — upgrade all configured Git plugin marketplaces, or one named marketplace when `marketplaceName` is provided. Returns selected marketplace names, upgraded roots, and per-marketplace errors.
@@ -207,7 +207,6 @@ Example with notification opt-out:
 - `device/key/public` — return a device key's SPKI DER public key as base64 plus its `algorithm` and `protectionClass`.
 - `device/key/sign` — sign one of the accepted structured payload variants with a controller-local device key. The only accepted payload today is `remoteControlClientConnection`, which binds a server-issued `/client` websocket challenge to the enrolled controller device without signing the bearer token itself; this is intentionally not an arbitrary-byte signing API.
 - `skills/config/write` — write user-level skill config by name or absolute path.
-- `hooks/config/write` — write user-level hook config by stable hook key.
 - `plugin/install` — install a plugin from a discovered marketplace entry, rejecting marketplace entries marked unavailable for install, install MCPs if any, and return the effective plugin auth policy plus any apps that still need auth (**under development; do not call from production clients yet**).
 - `plugin/uninstall` — uninstall a plugin by id by removing its cached files and clearing its user-level config entry (**under development; do not call from production clients yet**).
 - `mcpServer/oauth/login` — start an OAuth login for a configured MCP server; returns an `authorization_url` and later emits `mcpServer/oauthLogin/completed` once the browser flow finishes.
@@ -1452,7 +1451,7 @@ To enable or disable a skill by name:
 }
 ```
 
-Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled hooks are still returned with `"enabled": false` so clients can render and re-enable them.
+Use `hooks/list` to fetch the discovered hooks for one or more `cwds`.
 
 ```json
 {
@@ -1471,7 +1470,6 @@ Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled 
     "data": [{
       "cwd": "/Users/me/project",
       "hooks": [{
-        "key": "path:/Users/me/.codex/config.toml:pre_tool_use:0:0",
         "eventName": "pre_tool_use",
         "handlerType": "command",
         "matcher": "Bash",
@@ -1482,25 +1480,11 @@ Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled 
         "source": "user",
         "pluginId": null,
         "sourceRelativePath": null,
-        "displayOrder": 0,
-        "enabled": true
+        "displayOrder": 0
       }],
       "warnings": [],
       "errors": []
     }]
-  }
-}
-```
-
-To enable or disable a hook, write the hook key returned by `hooks/list`:
-
-```json
-{
-  "method": "hooks/config/write",
-  "id": 29,
-  "params": {
-    "key": "path:/Users/me/.codex/config.toml:pre_tool_use:0:0",
-    "enabled": false
   }
 }
 ```

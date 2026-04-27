@@ -32,6 +32,12 @@ pub struct HooksConfig {
     pub shell_args: Vec<String>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HookListOutcome {
+    pub hooks: Vec<HookListEntry>,
+    pub warnings: Vec<String>,
+}
+
 #[derive(Clone)]
 pub struct Hooks {
     after_agent: Vec<Hook>,
@@ -71,10 +77,6 @@ impl Hooks {
 
     pub fn startup_warnings(&self) -> &[String] {
         self.engine.warnings()
-    }
-
-    pub fn configured_hooks(&self) -> &[HookListEntry] {
-        self.engine.configured_hooks()
     }
 
     fn hooks_for_event(&self, hook_event: &HookEvent) -> &[Hook] {
@@ -173,6 +175,21 @@ impl Hooks {
 
     pub async fn run_stop(&self, request: StopRequest) -> StopOutcome {
         self.engine.run_stop(request).await
+    }
+}
+
+pub fn list_hooks(config: HooksConfig) -> HookListOutcome {
+    if !config.feature_enabled {
+        return HookListOutcome::default();
+    }
+
+    let discovered = crate::engine::discovery::discover_handlers(
+        config.config_layer_stack.as_ref(),
+        config.plugin_hook_sources,
+    );
+    HookListOutcome {
+        hooks: discovered.hook_entries,
+        warnings: discovered.warnings,
     }
 }
 

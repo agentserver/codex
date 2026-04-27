@@ -4487,7 +4487,6 @@ pub struct HooksListEntry {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct HookMetadata {
-    pub key: String,
     pub event_name: HookEventName,
     pub handler_type: HookHandlerType,
     pub matcher: Option<String>,
@@ -4499,7 +4498,6 @@ pub struct HookMetadata {
     pub plugin_id: Option<String>,
     pub source_relative_path: Option<String>,
     pub display_order: i64,
-    pub enabled: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -4662,21 +4660,6 @@ pub struct SkillsConfigWriteParams {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct SkillsConfigWriteResponse {
-    pub effective_enabled: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "v2/")]
-pub struct HooksConfigWriteParams {
-    pub key: String,
-    pub enabled: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "v2/")]
-pub struct HooksConfigWriteResponse {
     pub effective_enabled: bool,
 }
 

@@ -355,7 +355,6 @@ mod tests {
 
     fn handler() -> ConfiguredHandler {
         ConfiguredHandler {
-            key: "test:session_start".to_string(),
             event_name: HookEventName::SessionStart,
             is_managed: false,
             matcher: None,
@@ -366,9 +365,6 @@ mod tests {
             source: codex_protocol::protocol::HookSource::User,
             display_order: 0,
             env: std::collections::HashMap::new(),
-            enabled: true,
-            plugin_id: None,
-            source_relative_path: None,
         }
     }
 

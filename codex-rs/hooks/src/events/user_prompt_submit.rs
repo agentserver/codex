@@ -413,7 +413,6 @@ mod tests {
 
     fn handler() -> ConfiguredHandler {
         ConfiguredHandler {
-            key: "test:user_prompt_submit".to_string(),
             event_name: HookEventName::UserPromptSubmit,
             is_managed: false,
             matcher: None,
@@ -424,9 +423,6 @@ mod tests {
             source: codex_protocol::protocol::HookSource::User,
             display_order: 0,
             env: std::collections::HashMap::new(),
-            enabled: true,
-            plugin_id: None,
-            source_relative_path: None,
         }
     }
 

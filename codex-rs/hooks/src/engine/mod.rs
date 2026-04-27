@@ -35,7 +35,6 @@ pub(crate) struct CommandShell {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConfiguredHandler {
-    pub key: String,
     pub event_name: codex_protocol::protocol::HookEventName,
     pub is_managed: bool,
     pub matcher: Option<String>,
@@ -46,9 +45,6 @@ pub(crate) struct ConfiguredHandler {
     pub source: HookSource,
     pub display_order: i64,
     pub env: HashMap<String, String>,
-    pub enabled: bool,
-    pub plugin_id: Option<String>,
-    pub source_relative_path: Option<String>,
 }
 
 impl ConfiguredHandler {
@@ -75,7 +71,6 @@ impl ConfiguredHandler {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookListEntry {
-    pub key: String,
     pub event_name: HookEventName,
     pub handler_type: HookHandlerType,
     pub matcher: Option<String>,
@@ -87,33 +82,11 @@ pub struct HookListEntry {
     pub plugin_id: Option<String>,
     pub source_relative_path: Option<String>,
     pub display_order: i64,
-    pub enabled: bool,
-}
-
-impl From<&ConfiguredHandler> for HookListEntry {
-    fn from(handler: &ConfiguredHandler) -> Self {
-        Self {
-            key: handler.key.clone(),
-            event_name: handler.event_name,
-            handler_type: HookHandlerType::Command,
-            matcher: handler.matcher.clone(),
-            command: Some(handler.command.clone()),
-            timeout_sec: handler.timeout_sec,
-            status_message: handler.status_message.clone(),
-            source_path: handler.source_path.clone(),
-            source: handler.source,
-            plugin_id: handler.plugin_id.clone(),
-            source_relative_path: handler.source_relative_path.clone(),
-            display_order: handler.display_order,
-            enabled: handler.enabled,
-        }
-    }
 }
 
 #[derive(Clone)]
 pub(crate) struct ClaudeHooksEngine {
     handlers: Vec<ConfiguredHandler>,
-    configured_hooks: Vec<HookListEntry>,
     warnings: Vec<String>,
     shell: CommandShell,
 }
@@ -128,7 +101,6 @@ impl ClaudeHooksEngine {
         if !enabled {
             return Self {
                 handlers: Vec::new(),
-                configured_hooks: Vec::new(),
                 warnings: Vec::new(),
                 shell,
             };
@@ -136,19 +108,8 @@ impl ClaudeHooksEngine {
 
         let _ = schema_loader::generated_hook_schemas();
         let discovered = discovery::discover_handlers(config_layer_stack, plugin_hook_sources);
-        let configured_hooks = discovered
-            .handlers
-            .iter()
-            .map(HookListEntry::from)
-            .collect::<Vec<_>>();
-        let handlers = discovered
-            .handlers
-            .into_iter()
-            .filter(|handler| handler.enabled)
-            .collect();
         Self {
-            handlers,
-            configured_hooks,
+            handlers: discovered.handlers,
             warnings: discovered.warnings,
             shell,
         }
@@ -156,10 +117,6 @@ impl ClaudeHooksEngine {
 
     pub(crate) fn warnings(&self) -> &[String] {
         &self.warnings
-    }
-
-    pub(crate) fn configured_hooks(&self) -> &[HookListEntry] {
-        &self.configured_hooks
     }
 
     pub(crate) fn preview_session_start(

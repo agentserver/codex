@@ -51,17 +51,11 @@
           "format": "int64",
           "type": "integer"
         },
-        "enabled": {
-          "type": "boolean"
-        },
         "eventName": {
           "$ref": "#/definitions/HookEventName"
         },
         "handlerType": {
           "$ref": "#/definitions/HookHandlerType"
-        },
-        "key": {
-          "type": "string"
         },
         "matcher": {
           "type": [
@@ -101,10 +95,8 @@
       },
       "required": [
         "displayOrder",
-        "enabled",
         "eventName",
         "handlerType",
-        "key",
         "source",
         "sourcePath",
         "timeoutSec"

@@ -5,8 +5,6 @@ use app_test_support::McpProcess;
 use app_test_support::to_response;
 use codex_app_server_protocol::HookEventName;
 use codex_app_server_protocol::HookSource;
-use codex_app_server_protocol::HooksConfigWriteParams;
-use codex_app_server_protocol::HooksConfigWriteResponse;
 use codex_app_server_protocol::HooksListParams;
 use codex_app_server_protocol::HooksListResponse;
 use codex_app_server_protocol::JSONRPCResponse;
@@ -36,7 +34,7 @@ statusMessage = "running listed hook"
 }
 
 #[tokio::test]
-async fn hooks_list_shows_discovered_hook_and_config_write_disables_it() -> Result<()> {
+async fn hooks_list_shows_discovered_hook() -> Result<()> {
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
     write_user_hook_config(codex_home.path())?;
@@ -65,35 +63,5 @@ async fn hooks_list_shows_discovered_hook_and_config_write_disables_it() -> Resu
     assert_eq!(hook.timeout_sec, 5);
     assert_eq!(hook.status_message.as_deref(), Some("running listed hook"));
     assert_eq!(hook.source, HookSource::User);
-    assert_eq!(hook.enabled, true);
-
-    let write_id = mcp
-        .send_hooks_config_write_request(HooksConfigWriteParams {
-            key: hook.key.clone(),
-            enabled: false,
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(write_id)),
-    )
-    .await??;
-    let HooksConfigWriteResponse { effective_enabled } = to_response(response)?;
-    assert_eq!(effective_enabled, false);
-
-    let request_id = mcp
-        .send_hooks_list_request(HooksListParams {
-            cwds: vec![cwd.path().to_path_buf()],
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let HooksListResponse { data } = to_response(response)?;
-    assert_eq!(data[0].hooks.len(), 1);
-    assert_eq!(data[0].hooks[0].key, hook.key);
-    assert_eq!(data[0].hooks[0].enabled, false);
     Ok(())
 }

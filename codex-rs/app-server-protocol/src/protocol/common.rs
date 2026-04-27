@@ -364,6 +364,10 @@ client_request_definitions! {
         params: v2::SkillsListParams,
         response: v2::SkillsListResponse,
     },
+    HooksList => "hooks/list" {
+        params: v2::HooksListParams,
+        response: v2::HooksListResponse,
+    },
     MarketplaceAdd => "marketplace/add" {
         params: v2::MarketplaceAddParams,
         response: v2::MarketplaceAddResponse,
@@ -439,6 +443,10 @@ client_request_definitions! {
     SkillsConfigWrite => "skills/config/write" {
         params: v2::SkillsConfigWriteParams,
         response: v2::SkillsConfigWriteResponse,
+    },
+    HooksConfigWrite => "hooks/config/write" {
+        params: v2::HooksConfigWriteParams,
+        response: v2::HooksConfigWriteResponse,
     },
     PluginInstall => "plugin/install" {
         params: v2::PluginInstallParams,

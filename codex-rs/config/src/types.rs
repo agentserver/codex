@@ -642,6 +642,7 @@ pub struct Notice {
     pub external_config_migration_prompts: ExternalConfigMigrationPrompts,
 }
 
+pub use crate::hook_config::HookConfig;
 pub use crate::skills_config::BundledSkillsConfig;
 pub use crate::skills_config::SkillConfig;
 pub use crate::skills_config::SkillsConfig;

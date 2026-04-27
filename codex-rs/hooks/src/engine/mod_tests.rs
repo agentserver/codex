@@ -332,6 +332,92 @@ fn discovers_hooks_from_json_and_toml_in_the_same_layer() {
     assert_eq!(preview[1].source_path, config_path);
 }
 
+#[test]
+fn hooks_config_disables_matching_discovered_hook() {
+    let temp = tempdir().expect("create temp dir");
+    let config_path =
+        AbsolutePathBuf::try_from(temp.path().join("config.toml")).expect("absolute config path");
+    let hook_key = format!("path:{}:pre_tool_use:0:0", config_path.display());
+    let mut config_toml = TomlValue::Table(Default::default());
+    let TomlValue::Table(config_table) = &mut config_toml else {
+        unreachable!("config TOML root should be a table");
+    };
+    let mut hooks_table = TomlValue::Table(Default::default());
+    let TomlValue::Table(hooks_entries) = &mut hooks_table else {
+        unreachable!("hooks entry should be a table");
+    };
+    let mut pre_tool_use_group = TomlValue::Table(Default::default());
+    let TomlValue::Table(pre_tool_use_group_entries) = &mut pre_tool_use_group else {
+        unreachable!("PreToolUse group should be a table");
+    };
+    pre_tool_use_group_entries.insert("matcher".to_string(), TomlValue::String("Bash".to_string()));
+    pre_tool_use_group_entries.insert(
+        "hooks".to_string(),
+        TomlValue::Array(vec![TomlValue::Table(Default::default())]),
+    );
+    let Some(TomlValue::Array(hooks_array)) = pre_tool_use_group_entries.get_mut("hooks") else {
+        unreachable!("PreToolUse hooks should be an array");
+    };
+    let Some(TomlValue::Table(handler_entries)) = hooks_array.first_mut() else {
+        unreachable!("PreToolUse handler should be a table");
+    };
+    handler_entries.insert("type".to_string(), TomlValue::String("command".to_string()));
+    handler_entries.insert(
+        "command".to_string(),
+        TomlValue::String("python3 /tmp/disabled-hook.py".to_string()),
+    );
+    hooks_entries.insert(
+        "PreToolUse".to_string(),
+        TomlValue::Array(vec![pre_tool_use_group]),
+    );
+    let mut config_entry = TomlValue::Table(Default::default());
+    let TomlValue::Table(config_entry_table) = &mut config_entry else {
+        unreachable!("hooks.config entry should be a table");
+    };
+    config_entry_table.insert("key".to_string(), TomlValue::String(hook_key.clone()));
+    config_entry_table.insert("enabled".to_string(), TomlValue::Boolean(false));
+    hooks_entries.insert("config".to_string(), TomlValue::Array(vec![config_entry]));
+    config_table.insert("hooks".to_string(), hooks_table);
+    let config_layer_stack = ConfigLayerStack::new(
+        vec![ConfigLayerEntry::new(
+            ConfigLayerSource::User { file: config_path },
+            config_toml,
+        )],
+        ConfigRequirements::default(),
+        ConfigRequirementsToml::default(),
+    )
+    .expect("config layer stack");
+
+    let engine = ClaudeHooksEngine::new(
+        /*enabled*/ true,
+        Some(&config_layer_stack),
+        Vec::new(),
+        CommandShell {
+            program: String::new(),
+            args: Vec::new(),
+        },
+    );
+
+    let configured_hooks = engine.configured_hooks();
+    assert_eq!(configured_hooks.len(), 1);
+    assert_eq!(configured_hooks[0].key, hook_key);
+    assert_eq!(configured_hooks[0].enabled, false);
+
+    let preview = engine.preview_pre_tool_use(&PreToolUseRequest {
+        session_id: ThreadId::new(),
+        turn_id: "turn-1".to_string(),
+        cwd: cwd(),
+        transcript_path: None,
+        model: "gpt-test".to_string(),
+        permission_mode: "default".to_string(),
+        tool_name: "Bash".to_string(),
+        matcher_aliases: Vec::new(),
+        tool_use_id: "tool-1".to_string(),
+        tool_input: serde_json::json!({ "command": "echo hello" }),
+    });
+    assert_eq!(preview, Vec::new());
+}
+
 #[tokio::test]
 async fn plugin_hook_sources_run_with_plugin_env_and_plugin_source() {
     let temp = tempdir().expect("create temp dir");

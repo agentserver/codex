@@ -40,6 +40,7 @@ mod git_info_tests;
 mod goals;
 mod guardian;
 mod hook_runtime;
+pub mod hooks;
 mod installation_id;
 pub(crate) mod landlock;
 pub use landlock::spawn_command_under_linux_sandbox;

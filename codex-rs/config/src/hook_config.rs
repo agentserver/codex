@@ -26,6 +26,15 @@ pub struct HookEventsToml {
     pub user_prompt_submit: Vec<MatcherGroup>,
     #[serde(rename = "Stop", default)]
     pub stop: Vec<MatcherGroup>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub config: Vec<HookConfig>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct HookConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    pub enabled: bool,
 }
 
 impl HookEventsToml {
@@ -37,6 +46,7 @@ impl HookEventsToml {
             session_start,
             user_prompt_submit,
             stop,
+            config: _,
         } = self;
         pre_tool_use.is_empty()
             && permission_request.is_empty()
@@ -54,6 +64,7 @@ impl HookEventsToml {
             session_start,
             user_prompt_submit,
             stop,
+            config: _,
         } = self;
         [
             pre_tool_use,

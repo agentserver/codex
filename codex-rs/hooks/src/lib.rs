@@ -1,3 +1,4 @@
+mod config_rules;
 mod engine;
 pub(crate) mod events;
 mod legacy_notify;
@@ -5,6 +6,7 @@ mod registry;
 mod schema;
 mod types;
 
+pub use engine::HookListEntry;
 pub use events::permission_request::PermissionRequestDecision;
 pub use events::permission_request::PermissionRequestOutcome;
 pub use events::permission_request::PermissionRequestRequest;

@@ -649,6 +649,30 @@
             },
             "method": {
               "enum": [
+                "hooks/list"
+              ],
+              "title": "Hooks/listRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/HooksListParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Hooks/listRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/v2/RequestId"
+            },
+            "method": {
+              "enum": [
                 "marketplace/add"
               ],
               "title": "Marketplace/addRequestMethod",
@@ -1096,6 +1120,30 @@
             "params"
           ],
           "title": "Skills/config/writeRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/v2/RequestId"
+            },
+            "method": {
+              "enum": [
+                "hooks/config/write"
+              ],
+              "title": "Hooks/config/writeRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/HooksConfigWriteParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Hooks/config/writeRequest",
           "type": "object"
         },
         {
@@ -9567,6 +9615,21 @@
         "title": "HookCompletedNotification",
         "type": "object"
       },
+      "HookErrorInfo": {
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "path"
+        ],
+        "type": "object"
+      },
       "HookEventName": {
         "enum": [
           "preToolUse",
@@ -9592,6 +9655,78 @@
           "agent"
         ],
         "type": "string"
+      },
+      "HookMetadata": {
+        "properties": {
+          "command": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "displayOrder": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "eventName": {
+            "$ref": "#/definitions/v2/HookEventName"
+          },
+          "handlerType": {
+            "$ref": "#/definitions/v2/HookHandlerType"
+          },
+          "key": {
+            "type": "string"
+          },
+          "matcher": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pluginId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/definitions/v2/HookSource"
+          },
+          "sourcePath": {
+            "$ref": "#/definitions/v2/AbsolutePathBuf"
+          },
+          "sourceRelativePath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "statusMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timeoutSec": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "displayOrder",
+          "enabled",
+          "eventName",
+          "handlerType",
+          "key",
+          "source",
+          "sourcePath",
+          "timeoutSec"
+        ],
+        "type": "object"
       },
       "HookOutputEntry": {
         "properties": {
@@ -9765,6 +9900,98 @@
           "threadId"
         ],
         "title": "HookStartedNotification",
+        "type": "object"
+      },
+      "HooksConfigWriteParams": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "key"
+        ],
+        "title": "HooksConfigWriteParams",
+        "type": "object"
+      },
+      "HooksConfigWriteResponse": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "effectiveEnabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "effectiveEnabled"
+        ],
+        "title": "HooksConfigWriteResponse",
+        "type": "object"
+      },
+      "HooksListEntry": {
+        "properties": {
+          "cwd": {
+            "type": "string"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/definitions/v2/HookErrorInfo"
+            },
+            "type": "array"
+          },
+          "hooks": {
+            "items": {
+              "$ref": "#/definitions/v2/HookMetadata"
+            },
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "cwd",
+          "errors",
+          "hooks",
+          "warnings"
+        ],
+        "type": "object"
+      },
+      "HooksListParams": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "cwds": {
+            "description": "When empty, defaults to the current session working directory.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "title": "HooksListParams",
+        "type": "object"
+      },
+      "HooksListResponse": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/definitions/v2/HooksListEntry"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "HooksListResponse",
         "type": "object"
       },
       "ImageDetail": {

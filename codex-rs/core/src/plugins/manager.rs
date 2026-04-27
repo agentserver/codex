@@ -447,6 +447,20 @@ impl PluginsManager {
             .effective_skill_roots()
     }
 
+    pub async fn effective_plugin_hook_sources_for_layer_stack(
+        &self,
+        config_layer_stack: &ConfigLayerStack,
+        plugins_feature_enabled: bool,
+        plugin_hooks_feature_enabled: bool,
+    ) -> Vec<codex_plugin::PluginHookSource> {
+        if !plugins_feature_enabled || !plugin_hooks_feature_enabled {
+            return Vec::new();
+        }
+        load_plugins_from_layer_stack(config_layer_stack, &self.store, self.restriction_product)
+            .await
+            .effective_plugin_hook_sources()
+    }
+
     fn cached_enabled_outcome(&self) -> Option<PluginLoadOutcome> {
         match self.cached_enabled_outcome.read() {
             Ok(cache) => cache.clone(),

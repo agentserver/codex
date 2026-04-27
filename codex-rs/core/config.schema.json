@@ -859,6 +859,20 @@
         }
       ]
     },
+    "HookConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "key": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "type": "object"
+    },
     "HookEventsToml": {
       "properties": {
         "PermissionRequest": {
@@ -900,6 +914,12 @@
           "default": [],
           "items": {
             "$ref": "#/definitions/MatcherGroup"
+          },
+          "type": "array"
+        },
+        "config": {
+          "items": {
+            "$ref": "#/definitions/HookConfig"
           },
           "type": "array"
         }

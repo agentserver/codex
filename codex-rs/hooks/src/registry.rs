@@ -4,6 +4,7 @@ use tokio::process::Command;
 
 use crate::engine::ClaudeHooksEngine;
 use crate::engine::CommandShell;
+use crate::engine::HookListEntry;
 use crate::events::permission_request::PermissionRequestOutcome;
 use crate::events::permission_request::PermissionRequestRequest;
 use crate::events::post_tool_use::PostToolUseOutcome;
@@ -70,6 +71,10 @@ impl Hooks {
 
     pub fn startup_warnings(&self) -> &[String] {
         self.engine.warnings()
+    }
+
+    pub fn configured_hooks(&self) -> &[HookListEntry] {
+        self.engine.configured_hooks()
     }
 
     fn hooks_for_event(&self, hook_event: &HookEvent) -> &[Hook] {

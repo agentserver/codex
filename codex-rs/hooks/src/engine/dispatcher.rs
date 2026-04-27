@@ -155,6 +155,7 @@ mod tests {
         display_order: i64,
     ) -> ConfiguredHandler {
         ConfiguredHandler {
+            key: format!("test:{display_order}"),
             event_name,
             is_managed: false,
             matcher: matcher.map(str::to_owned),
@@ -165,6 +166,9 @@ mod tests {
             source: HookSource::User,
             display_order,
             env: std::collections::HashMap::new(),
+            enabled: true,
+            plugin_id: None,
+            source_relative_path: None,
         }
     }
 

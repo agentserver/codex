@@ -6,13 +6,12 @@ use rand::Rng;
 const ANNOUNCEMENT_TIP_URL: &str =
     "https://raw.githubusercontent.com/openai/codex/main/announcement_tip.toml";
 
-const IS_MACOS: bool = cfg!(target_os = "macos");
-const IS_WINDOWS: bool = cfg!(target_os = "windows");
+const SUPPORTS_DESKTOP_APP: bool = cfg!(any(target_os = "macos", target_os = "windows"));
 
-const APP_TOOLTIP: &str = "Try the **Codex App**. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true";
+const APP_TOOLTIP: &str = "Try the **Codex App** on Windows and macOS. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true";
 const FAST_TOOLTIP: &str =
     "*New* Use **/fast** to enable our fastest inference with increased plan usage.";
-const OTHER_TOOLTIP: &str = "*New* Build faster with the **Codex App**. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true";
+const OTHER_TOOLTIP: &str = "*New* Build faster with the **Codex App** on Windows and macOS. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true";
 const OTHER_TOOLTIP_NON_MAC: &str = "*New* Build faster with Codex.";
 const FREE_GO_TOOLTIP: &str =
     "*New* For a limited time, Codex is included in your plan for free – let’s build together.";
@@ -27,7 +26,7 @@ lazy_static! {
             if line.is_empty() || line.starts_with('#') {
                 return false;
             }
-            if !IS_MACOS && !IS_WINDOWS && line.contains("codex app") {
+            if !SUPPORTS_DESKTOP_APP && line.contains("codex app") {
                 return false;
             }
             true
@@ -71,10 +70,10 @@ pub(crate) fn get_tooltip(plan: Option<PlanType>, fast_mode_enabled: bool) -> Op
                 }
             }
             Some(PlanType::Go) | Some(PlanType::Free) => {
-                return Some(FREE_GO_TOOLTIP.to_string());
+                return Some(pick_free_go_tooltip(&mut rng, SUPPORTS_DESKTOP_APP).to_string());
             }
             _ => {
-                let tooltip = if IS_MACOS {
+                let tooltip = if SUPPORTS_DESKTOP_APP {
                     OTHER_TOOLTIP
                 } else {
                     OTHER_TOOLTIP_NON_MAC
@@ -88,7 +87,7 @@ pub(crate) fn get_tooltip(plan: Option<PlanType>, fast_mode_enabled: bool) -> Op
 }
 
 fn paid_app_tooltip() -> Option<&'static str> {
-    if IS_MACOS || IS_WINDOWS {
+    if SUPPORTS_DESKTOP_APP {
         Some(APP_TOOLTIP)
     } else {
         None
@@ -107,6 +106,14 @@ fn pick_paid_tooltip<R: Rng + ?Sized>(
         paid_app_tooltip()
     } else {
         Some(FAST_TOOLTIP)
+    }
+}
+
+fn pick_free_go_tooltip<R: Rng + ?Sized>(rng: &mut R, supports_desktop_app: bool) -> &'static str {
+    if supports_desktop_app && rng.random_bool(0.5) {
+        APP_TOOLTIP
+    } else {
+        FREE_GO_TOOLTIP
     }
 }
 
@@ -371,6 +378,34 @@ mod tests {
         let expected = std::collections::BTreeSet::from([paid_app_tooltip()]);
         assert_eq!(seen, expected);
         assert!(!seen.contains(&Some(FAST_TOOLTIP)));
+    }
+
+    #[test]
+    fn free_go_tooltip_rotates_between_plan_and_desktop_promos() {
+        let mut seen = std::collections::BTreeSet::new();
+        for seed in 0..16 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            seen.insert(pick_free_go_tooltip(
+                &mut rng, /*supports_desktop_app*/ true,
+            ));
+        }
+
+        let expected = std::collections::BTreeSet::from([APP_TOOLTIP, FREE_GO_TOOLTIP]);
+        assert_eq!(seen, expected);
+    }
+
+    #[test]
+    fn free_go_tooltip_skips_desktop_promo_on_other_platforms() {
+        let mut seen = std::collections::BTreeSet::new();
+        for seed in 0..16 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            seen.insert(pick_free_go_tooltip(
+                &mut rng, /*supports_desktop_app*/ false,
+            ));
+        }
+
+        let expected = std::collections::BTreeSet::from([FREE_GO_TOOLTIP]);
+        assert_eq!(seen, expected);
     }
 
     #[test]

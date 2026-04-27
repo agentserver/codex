@@ -1864,7 +1864,6 @@ dependencies = [
  "codex-models-manager",
  "codex-otel",
  "codex-protocol",
- "codex-rmcp-client",
  "codex-rollout",
  "codex-sandboxing",
  "codex-shell-command",

@@ -6243,9 +6243,6 @@ impl CodexMessageProcessor {
                     continue;
                 }
             };
-            // Plugin hook sources are discovered from the same effective plugin
-            // view used by runtime loading, but only when both plugin feature
-            // gates are enabled for this workspace.
             let (plugin_hook_sources, plugin_hook_load_warnings) = plugins_manager
                 .effective_plugin_hooks_for_layer_stack(
                     &config_layer_stack,

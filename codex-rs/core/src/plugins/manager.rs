@@ -454,6 +454,10 @@ impl PluginsManager {
         .effective_skill_roots()
     }
 
+    /// Resolve effective plugin hook sources and load warnings for a config layer stack
+    /// without touching the plugins cache.
+    ///
+    /// Returns empty vectors unless both plugin feature gates are enabled.
     pub async fn effective_plugin_hooks_for_layer_stack(
         &self,
         config_layer_stack: &ConfigLayerStack,

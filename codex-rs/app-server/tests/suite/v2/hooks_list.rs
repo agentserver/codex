@@ -33,6 +33,29 @@ statusMessage = "running listed hook"
     Ok(())
 }
 
+fn write_invalid_plugin_hook_config(codex_home: &std::path::Path) -> Result<()> {
+    let plugin_root = codex_home.join("plugins/cache/test/demo/local");
+    std::fs::create_dir_all(plugin_root.join(".codex-plugin"))?;
+    std::fs::create_dir_all(plugin_root.join("hooks"))?;
+    std::fs::write(
+        plugin_root.join(".codex-plugin/plugin.json"),
+        r#"{"name":"demo"}"#,
+    )?;
+    std::fs::write(plugin_root.join("hooks/hooks.json"), "{ not-json")?;
+    std::fs::write(
+        codex_home.join("config.toml"),
+        r#"[features]
+plugins = true
+plugin_hooks = true
+codex_hooks = true
+
+[plugins."demo@test"]
+enabled = true
+"#,
+    )?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn hooks_list_shows_discovered_hook() -> Result<()> {
     let codex_home = TempDir::new()?;
@@ -63,5 +86,37 @@ async fn hooks_list_shows_discovered_hook() -> Result<()> {
     assert_eq!(hook.timeout_sec, 5);
     assert_eq!(hook.status_message.as_deref(), Some("running listed hook"));
     assert_eq!(hook.source, HookSource::User);
+    Ok(())
+}
+
+#[tokio::test]
+async fn hooks_list_shows_plugin_hook_load_warnings() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let cwd = TempDir::new()?;
+    write_invalid_plugin_hook_config(codex_home.path())?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+
+    let request_id = mcp
+        .send_hooks_list_request(HooksListParams {
+            cwds: vec![cwd.path().to_path_buf()],
+        })
+        .await?;
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    let HooksListResponse { data } = to_response(response)?;
+
+    assert_eq!(data.len(), 1);
+    assert_eq!(data[0].hooks, Vec::new());
+    assert_eq!(data[0].warnings.len(), 1);
+    assert!(
+        data[0].warnings[0].contains("failed to parse plugin hooks config"),
+        "unexpected warnings: {:?}",
+        data[0].warnings
+    );
     Ok(())
 }

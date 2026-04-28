@@ -84,17 +84,16 @@ pub fn prompt_safe_plugin_description(description: Option<&str>) -> Option<Strin
 pub struct PluginLoadOutcome<M> {
     plugins: Vec<LoadedPlugin<M>>,
     capability_summaries: Vec<PluginCapabilitySummary>,
-    plugin_hooks_enabled: bool,
 }
 
 impl<M: Clone> Default for PluginLoadOutcome<M> {
     fn default() -> Self {
-        Self::from_plugins(Vec::new(), /*plugin_hooks_enabled*/ false)
+        Self::from_plugins(Vec::new())
     }
 }
 
 impl<M: Clone> PluginLoadOutcome<M> {
-    pub fn from_plugins(plugins: Vec<LoadedPlugin<M>>, plugin_hooks_enabled: bool) -> Self {
+    pub fn from_plugins(plugins: Vec<LoadedPlugin<M>>) -> Self {
         let capability_summaries = plugins
             .iter()
             .filter_map(plugin_capability_summary_from_loaded)
@@ -102,7 +101,6 @@ impl<M: Clone> PluginLoadOutcome<M> {
         Self {
             plugins,
             capability_summaries,
-            plugin_hooks_enabled,
         }
     }
 
@@ -167,10 +165,6 @@ impl<M: Clone> PluginLoadOutcome<M> {
 
     pub fn plugins(&self) -> &[LoadedPlugin<M>] {
         &self.plugins
-    }
-
-    pub fn plugin_hooks_enabled(&self) -> bool {
-        self.plugin_hooks_enabled
     }
 }
 

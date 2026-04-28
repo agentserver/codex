@@ -6253,7 +6253,7 @@ impl CodexMessageProcessor {
                     config.features.enabled(Feature::PluginHooks),
                 )
                 .await;
-            let hooks = codex_core::hooks::list_hooks(codex_core::hooks::HooksConfig {
+            let hooks = codex_hooks::list_hooks(codex_hooks::HooksConfig {
                 feature_enabled: config.features.enabled(Feature::CodexHooks),
                 config_layer_stack: Some(config_layer_stack),
                 plugin_hook_sources,
@@ -8598,7 +8598,7 @@ fn skills_to_info(
         .collect()
 }
 
-fn hooks_to_info(hooks: &[codex_core::hooks::HookListEntry]) -> Vec<HookMetadata> {
+fn hooks_to_info(hooks: &[codex_hooks::HookListEntry]) -> Vec<HookMetadata> {
     hooks
         .iter()
         .map(|hook| HookMetadata {

@@ -332,7 +332,7 @@ pub struct PluginsManager {
     featured_plugin_ids_cache: RwLock<Option<CachedFeaturedPluginIds>>,
     configured_marketplace_upgrade_state: RwLock<ConfiguredMarketplaceUpgradeState>,
     non_curated_cache_refresh_state: RwLock<NonCuratedCacheRefreshState>,
-    cached_enabled_outcome: RwLock<Option<PluginLoadOutcome>>,
+    cached_enabled_outcome: RwLock<Option<(bool, PluginLoadOutcome)>>,
     remote_sync_lock: Semaphore,
     restriction_product: Option<Product>,
     analytics_events_client: RwLock<Option<AnalyticsEventsClient>>,
@@ -418,7 +418,7 @@ impl PluginsManager {
             Ok(cache) => cache,
             Err(err) => err.into_inner(),
         };
-        *cache = Some(outcome.clone());
+        *cache = Some((plugin_hooks_enabled, outcome.clone()));
         outcome
     }
 
@@ -467,7 +467,7 @@ impl PluginsManager {
             config_layer_stack,
             &self.store,
             self.restriction_product,
-            plugin_hooks_feature_enabled,
+            /*plugin_hooks_enabled*/ true,
         )
         .await;
         (
@@ -480,13 +480,17 @@ impl PluginsManager {
         match self.cached_enabled_outcome.read() {
             Ok(cache) => cache
                 .as_ref()
-                .filter(|outcome| outcome.plugin_hooks_enabled() == plugin_hooks_enabled)
-                .cloned(),
+                .filter(|(cached_plugin_hooks_enabled, _)| {
+                    *cached_plugin_hooks_enabled == plugin_hooks_enabled
+                })
+                .map(|(_, outcome)| outcome.clone()),
             Err(err) => err
                 .into_inner()
                 .as_ref()
-                .filter(|outcome| outcome.plugin_hooks_enabled() == plugin_hooks_enabled)
-                .cloned(),
+                .filter(|(cached_plugin_hooks_enabled, _)| {
+                    *cached_plugin_hooks_enabled == plugin_hooks_enabled
+                })
+                .map(|(_, outcome)| outcome.clone()),
         }
     }
 

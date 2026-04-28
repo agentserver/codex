@@ -6169,15 +6169,16 @@ impl CodexMessageProcessor {
             let extra_roots = extra_roots_by_cwd
                 .get(&cwd)
                 .map_or(&[][..], std::vec::Vec::as_slice);
-            let effective_skill_roots = plugins_manager
-                .effective_skill_roots_for_layer_stack(
+            let plugin_outcome = plugins_manager
+                .plugins_for_layer_stack(
                     &config_layer_stack,
                     config.features.enabled(Feature::Plugins) && workspace_codex_plugins_enabled,
+                    /*plugin_hooks_feature_enabled*/ false,
                 )
                 .await;
             let skills_input = codex_core::skills::SkillsLoadInput::new(
                 cwd_abs.clone(),
-                effective_skill_roots,
+                plugin_outcome.effective_skill_roots(),
                 config_layer_stack,
                 config.bundled_skills_enabled(),
             );
@@ -6243,18 +6244,22 @@ impl CodexMessageProcessor {
                     continue;
                 }
             };
-            let (plugin_hook_sources, plugin_hook_load_warnings) = plugins_manager
-                .effective_plugin_hooks_for_layer_stack(
-                    &config_layer_stack,
-                    plugins_enabled,
-                    config.features.enabled(Feature::PluginHooks),
-                )
-                .await;
+            let plugin_outcome = if config.features.enabled(Feature::PluginHooks) {
+                plugins_manager
+                    .plugins_for_layer_stack(
+                        &config_layer_stack,
+                        plugins_enabled,
+                        /*plugin_hooks_feature_enabled*/ true,
+                    )
+                    .await
+            } else {
+                codex_core::plugins::PluginLoadOutcome::default()
+            };
             let hooks = codex_hooks::list_hooks(codex_hooks::HooksConfig {
                 feature_enabled: config.features.enabled(Feature::CodexHooks),
                 config_layer_stack: Some(config_layer_stack),
-                plugin_hook_sources,
-                plugin_hook_load_warnings,
+                plugin_hook_sources: plugin_outcome.effective_plugin_hook_sources(),
+                plugin_hook_load_warnings: plugin_outcome.effective_plugin_hook_warnings(),
                 ..Default::default()
             });
             data.push(codex_app_server_protocol::HooksListEntry {

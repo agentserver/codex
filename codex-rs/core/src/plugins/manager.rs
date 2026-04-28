@@ -435,49 +435,23 @@ impl PluginsManager {
         *cached_enabled_outcome = None;
     }
 
-    /// Resolve plugin skill roots for a config layer stack without touching the plugins cache.
-    pub async fn effective_skill_roots_for_layer_stack(
+    /// Load plugins for a config layer stack without touching the plugins cache.
+    pub async fn plugins_for_layer_stack(
         &self,
         config_layer_stack: &ConfigLayerStack,
         plugins_feature_enabled: bool,
-    ) -> Vec<AbsolutePathBuf> {
+        plugin_hooks_feature_enabled: bool,
+    ) -> PluginLoadOutcome {
         if !plugins_feature_enabled {
-            return Vec::new();
+            return PluginLoadOutcome::default();
         }
         load_plugins_from_layer_stack(
             config_layer_stack,
             &self.store,
             self.restriction_product,
-            /*plugin_hooks_enabled*/ false,
+            plugin_hooks_feature_enabled,
         )
         .await
-        .effective_skill_roots()
-    }
-
-    /// Resolve effective plugin hook sources and load warnings for a config layer stack
-    /// without touching the plugins cache.
-    ///
-    /// Returns empty vectors unless both plugin feature gates are enabled.
-    pub async fn effective_plugin_hooks_for_layer_stack(
-        &self,
-        config_layer_stack: &ConfigLayerStack,
-        plugins_feature_enabled: bool,
-        plugin_hooks_feature_enabled: bool,
-    ) -> (Vec<codex_plugin::PluginHookSource>, Vec<String>) {
-        if !plugins_feature_enabled || !plugin_hooks_feature_enabled {
-            return (Vec::new(), Vec::new());
-        }
-        let outcome = load_plugins_from_layer_stack(
-            config_layer_stack,
-            &self.store,
-            self.restriction_product,
-            /*plugin_hooks_enabled*/ true,
-        )
-        .await;
-        (
-            outcome.effective_plugin_hook_sources(),
-            outcome.effective_plugin_hook_warnings(),
-        )
     }
 
     fn cached_enabled_outcome(&self, plugin_hooks_enabled: bool) -> Option<PluginLoadOutcome> {

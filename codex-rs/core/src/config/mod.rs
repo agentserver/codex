@@ -47,6 +47,7 @@ use codex_config::types::OtelConfigToml;
 use codex_config::types::OtelExporterKind;
 use codex_config::types::ToolSuggestConfig;
 use codex_config::types::ToolSuggestDiscoverable;
+use codex_config::types::TuiKeymap;
 use codex_config::types::TuiNotificationSettings;
 use codex_config::types::UriBasedFileOpener;
 use codex_config::types::WindowsSandboxModeToml;
@@ -62,7 +63,7 @@ use codex_features::MultiAgentV2ConfigToml;
 use codex_git_utils::resolve_root_git_project_for_trust;
 use codex_login::AuthManagerConfig;
 use codex_mcp::McpConfig;
-use codex_memories_write::memory_root;
+use codex_memories_read::memory_root;
 use codex_model_provider_info::LEGACY_OLLAMA_CHAT_PROVIDER_ID;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::OLLAMA_CHAT_PROVIDER_REMOVED_ERROR;
@@ -482,7 +483,6 @@ pub struct Config {
     /// - `always`: Always use alternate screen (original behavior).
     /// - `never`: Never use alternate screen (inline mode, preserves scrollback).
     pub tui_alternate_screen: AltScreenMode,
-
     /// Ordered list of status line item identifiers for the TUI.
     ///
     /// When unset, the TUI defaults to: `model-with-reasoning` and `current-dir`.
@@ -500,6 +500,15 @@ pub struct Config {
 
     /// Terminal resize-reflow tuning knobs.
     pub terminal_resize_reflow: TerminalResizeReflowConfig,
+
+    /// Keybinding overrides for the TUI.
+    ///
+    /// Precedence is:
+    ///
+    /// 1. context table (`tui.keymap.chat`, `tui.keymap.composer`, etc.)
+    /// 2. `tui.keymap.global`
+    /// 3. built-in defaults
+    pub tui_keymap: TuiKeymap,
 
     /// The absolute directory that should be treated as the current working
     /// directory for the session. All relative paths inside the business-logic
@@ -746,6 +755,8 @@ pub struct MultiAgentV2Config {
     pub max_concurrent_threads_per_session: usize,
     pub usage_hint_enabled: bool,
     pub usage_hint_text: Option<String>,
+    pub root_agent_usage_hint_text: Option<String>,
+    pub subagent_usage_hint_text: Option<String>,
     pub hide_spawn_agent_metadata: bool,
 }
 
@@ -756,6 +767,8 @@ impl Default for MultiAgentV2Config {
                 DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION,
             usage_hint_enabled: true,
             usage_hint_text: None,
+            root_agent_usage_hint_text: None,
+            subagent_usage_hint_text: None,
             hide_spawn_agent_metadata: false,
         }
     }
@@ -1634,6 +1647,16 @@ fn resolve_multi_agent_v2_config(
         .or_else(|| base.and_then(|config| config.usage_hint_text.as_ref()))
         .cloned()
         .or(default.usage_hint_text);
+    let root_agent_usage_hint_text = profile
+        .and_then(|config| config.root_agent_usage_hint_text.as_ref())
+        .or_else(|| base.and_then(|config| config.root_agent_usage_hint_text.as_ref()))
+        .cloned()
+        .or(default.root_agent_usage_hint_text);
+    let subagent_usage_hint_text = profile
+        .and_then(|config| config.subagent_usage_hint_text.as_ref())
+        .or_else(|| base.and_then(|config| config.subagent_usage_hint_text.as_ref()))
+        .cloned()
+        .or(default.subagent_usage_hint_text);
     let hide_spawn_agent_metadata = profile
         .and_then(|config| config.hide_spawn_agent_metadata)
         .or_else(|| base.and_then(|config| config.hide_spawn_agent_metadata))
@@ -1643,6 +1666,8 @@ fn resolve_multi_agent_v2_config(
         max_concurrent_threads_per_session,
         usage_hint_enabled,
         usage_hint_text,
+        root_agent_usage_hint_text,
+        subagent_usage_hint_text,
         hide_spawn_agent_metadata,
     }
 }
@@ -2684,6 +2709,11 @@ impl Config {
             tui_terminal_title: cfg.tui.as_ref().and_then(|t| t.terminal_title.clone()),
             tui_theme: cfg.tui.as_ref().and_then(|t| t.theme.clone()),
             terminal_resize_reflow,
+            tui_keymap: cfg
+                .tui
+                .as_ref()
+                .map(|t| t.keymap.clone())
+                .unwrap_or_default(),
             otel: {
                 let t: OtelConfigToml = cfg.otel.unwrap_or_default();
                 let log_user_prompt = t.log_user_prompt.unwrap_or(false);

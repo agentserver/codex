@@ -48,6 +48,7 @@ use codex_config::types::SandboxWorkspaceWrite;
 use codex_config::types::SkillsConfig;
 use codex_config::types::ToolSuggestDiscoverableType;
 use codex_config::types::Tui;
+use codex_config::types::TuiKeymap;
 use codex_config::types::TuiNotificationSettings;
 use codex_config::types::WindowsSandboxModeToml;
 use codex_config::types::WindowsToml;
@@ -268,6 +269,7 @@ max_unused_days = 21
 max_rollout_age_days = 42
 max_rollouts_per_startup = 9
 min_rollout_idle_hours = 24
+min_rate_limit_remaining_percent = 12
 extract_model = "gpt-5-mini"
 consolidation_model = "gpt-5.2"
 "#;
@@ -283,6 +285,7 @@ consolidation_model = "gpt-5.2"
             max_rollout_age_days: Some(42),
             max_rollouts_per_startup: Some(9),
             min_rollout_idle_hours: Some(24),
+            min_rate_limit_remaining_percent: Some(12),
             extract_model: Some("gpt-5-mini".to_string()),
             consolidation_model: Some("gpt-5.2".to_string()),
         }),
@@ -307,6 +310,7 @@ consolidation_model = "gpt-5.2"
             max_rollout_age_days: 42,
             max_rollouts_per_startup: 9,
             min_rollout_idle_hours: 24,
+            min_rate_limit_remaining_percent: 12,
             extract_model: Some("gpt-5-mini".to_string()),
             consolidation_model: Some("gpt-5.2".to_string()),
         }
@@ -546,6 +550,7 @@ fn config_toml_deserializes_model_availability_nux() {
             status_line: None,
             terminal_title: None,
             theme: None,
+            keymap: TuiKeymap::default(),
             model_availability_nux: ModelAvailabilityNuxConfig {
                 shown_count: HashMap::from([
                     ("gpt-bar".to_string(), 4),
@@ -1935,6 +1940,7 @@ fn tui_config_missing_notifications_field_defaults_to_enabled() {
             status_line: None,
             terminal_title: None,
             theme: None,
+            keymap: TuiKeymap::default(),
             model_availability_nux: ModelAvailabilityNuxConfig::default(),
             terminal_resize_reflow_max_rows: None,
         }
@@ -5985,6 +5991,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             tui_status_line: None,
             tui_terminal_title: None,
             tui_theme: None,
+            tui_keymap: TuiKeymap::default(),
             otel: OtelConfig::default(),
         },
         o3_profile_config
@@ -6178,6 +6185,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         tui_status_line: None,
         tui_terminal_title: None,
         tui_theme: None,
+        tui_keymap: TuiKeymap::default(),
         otel: OtelConfig::default(),
     };
 
@@ -6325,6 +6333,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         tui_status_line: None,
         tui_terminal_title: None,
         tui_theme: None,
+        tui_keymap: TuiKeymap::default(),
         otel: OtelConfig::default(),
     };
 
@@ -6457,6 +6466,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         tui_status_line: None,
         tui_terminal_title: None,
         tui_theme: None,
+        tui_keymap: TuiKeymap::default(),
         otel: OtelConfig::default(),
     };
 
@@ -7796,6 +7806,8 @@ enabled = true
 max_concurrent_threads_per_session = 5
 usage_hint_enabled = false
 usage_hint_text = "Custom delegation guidance."
+root_agent_usage_hint_text = "Root guidance."
+subagent_usage_hint_text = "Subagent guidance."
 hide_spawn_agent_metadata = true
 "#,
     )?;
@@ -7814,6 +7826,14 @@ hide_spawn_agent_metadata = true
         config.multi_agent_v2.usage_hint_text.as_deref(),
         Some("Custom delegation guidance.")
     );
+    assert_eq!(
+        config.multi_agent_v2.root_agent_usage_hint_text.as_deref(),
+        Some("Root guidance.")
+    );
+    assert_eq!(
+        config.multi_agent_v2.subagent_usage_hint_text.as_deref(),
+        Some("Subagent guidance.")
+    );
     assert!(config.multi_agent_v2.hide_spawn_agent_metadata);
 
     Ok(())
@@ -7830,12 +7850,16 @@ async fn profile_multi_agent_v2_config_overrides_base() -> std::io::Result<()> {
 max_concurrent_threads_per_session = 4
 usage_hint_enabled = true
 usage_hint_text = "base hint"
+root_agent_usage_hint_text = "base root hint"
+subagent_usage_hint_text = "base subagent hint"
 hide_spawn_agent_metadata = true
 
 [profiles.no_hint.features.multi_agent_v2]
 max_concurrent_threads_per_session = 6
 usage_hint_enabled = false
 usage_hint_text = "profile hint"
+root_agent_usage_hint_text = "profile root hint"
+subagent_usage_hint_text = "profile subagent hint"
 hide_spawn_agent_metadata = false
 "#,
     )?;
@@ -7851,6 +7875,14 @@ hide_spawn_agent_metadata = false
     assert_eq!(
         config.multi_agent_v2.usage_hint_text.as_deref(),
         Some("profile hint")
+    );
+    assert_eq!(
+        config.multi_agent_v2.root_agent_usage_hint_text.as_deref(),
+        Some("profile root hint")
+    );
+    assert_eq!(
+        config.multi_agent_v2.subagent_usage_hint_text.as_deref(),
+        Some("profile subagent hint")
     );
     assert!(!config.multi_agent_v2.hide_spawn_agent_metadata);
 

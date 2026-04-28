@@ -241,11 +241,10 @@ use codex_core::ForkSnapshot;
 use codex_core::NewThread;
 use codex_core::RolloutRecorder;
 use codex_core::SessionMeta;
-use codex_core::StartThreadWithToolsOptions;
+use codex_core::StartThreadOptions;
 use codex_core::SteerInputError;
 use codex_core::ThreadConfigSnapshot;
 use codex_core::ThreadManager;
-use codex_core::clear_memory_roots_contents;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::NetworkProxyAuditMetadata;
@@ -290,6 +289,7 @@ use codex_core_plugins::remote::RemotePluginServiceConfig;
 use codex_core_plugins::remote::RemotePluginSummary as RemoteCatalogPluginSummary;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::LOCAL_FS;
+use codex_external_agent_sessions::ImportedExternalAgentSession;
 use codex_features::FEATURES;
 use codex_features::Feature;
 use codex_features::Stage;
@@ -315,6 +315,7 @@ use codex_mcp::discover_supported_scopes;
 use codex_mcp::effective_mcp_servers;
 use codex_mcp::read_mcp_resource as read_mcp_resource_without_thread;
 use codex_mcp::resolve_oauth_scopes;
+use codex_memories_write::clear_memory_roots_contents;
 use codex_model_provider::ProviderAccountError;
 use codex_model_provider::create_model_provider;
 use codex_models_manager::collaboration_mode_presets::CollaborationModesConfig;
@@ -2448,6 +2449,64 @@ impl CodexMessageProcessor {
             .spawn(thread_start_task.instrument(request_context.span()));
     }
 
+    pub(crate) async fn import_external_agent_session(
+        &self,
+        session: ImportedExternalAgentSession,
+    ) -> Result<ThreadId, JSONRPCErrorError> {
+        let ImportedExternalAgentSession {
+            cwd,
+            title,
+            rollout_items,
+        } = session;
+        let typesafe_overrides = self.build_thread_config_overrides(
+            /*model*/ None,
+            /*model_provider*/ None,
+            /*service_tier*/ None,
+            Some(cwd.to_string_lossy().into_owned()),
+            /*approval_policy*/ None,
+            /*approvals_reviewer*/ None,
+            /*sandbox*/ None,
+            /*permission_profile*/ None,
+            /*base_instructions*/ None,
+            /*developer_instructions*/ None,
+            /*personality*/ None,
+        );
+        let config = self
+            .config_manager
+            .load_with_overrides(/*request_overrides*/ None, typesafe_overrides)
+            .await
+            .map_err(|err| {
+                internal_error(format!("failed to load imported session config: {err}"))
+            })?;
+        let environments = self
+            .thread_manager
+            .default_environment_selections(&config.cwd);
+        let imported_thread = self
+            .thread_manager
+            .start_thread_with_options(StartThreadOptions {
+                config,
+                initial_history: InitialHistory::Forked(rollout_items),
+                session_source: None,
+                dynamic_tools: Vec::new(),
+                persist_extended_history: true,
+                metrics_service_name: None,
+                parent_trace: None,
+                environments,
+            })
+            .await
+            .map_err(|err| internal_error(format!("failed to import session: {err}")))?;
+        if let Some(title) = title
+            && let Some(name) = codex_core::util::normalize_thread_name(&title)
+        {
+            imported_thread
+                .thread
+                .submit(Op::SetThreadName { name })
+                .await
+                .map_err(|err| internal_error(format!("failed to name imported session: {err}")))?;
+        }
+        Ok(imported_thread.thread_id)
+    }
+
     pub(crate) async fn drain_background_tasks(&self) {
         self.background_tasks.close();
         if tokio::time::timeout(Duration::from_secs(10), self.background_tasks.wait())
@@ -2621,7 +2680,7 @@ impl CodexMessageProcessor {
                 ..
             } = listener_task_context
                 .thread_manager
-                .start_thread_with_tools_and_service_name(StartThreadWithToolsOptions {
+                .start_thread_with_options(StartThreadOptions {
                     config,
                     initial_history: match session_start_source
                         .unwrap_or(codex_app_server_protocol::ThreadStartSource::Startup)
@@ -2633,6 +2692,7 @@ impl CodexMessageProcessor {
                             InitialHistory::Cleared
                         }
                     },
+                    session_source: None,
                     dynamic_tools: core_dynamic_tools,
                     persist_extended_history,
                     metrics_service_name: service_name,
@@ -3659,13 +3719,13 @@ impl CodexMessageProcessor {
         params: ThreadLoadedListParams,
     ) -> Result<ThreadLoadedListResponse, JSONRPCErrorError> {
         let ThreadLoadedListParams { cursor, limit } = params;
-        let mut data = self
+        let mut data: Vec<String> = self
             .thread_manager
             .list_thread_ids()
             .await
             .into_iter()
             .map(|thread_id| thread_id.to_string())
-            .collect::<Vec<_>>();
+            .collect();
 
         if data.is_empty() {
             return Ok(ThreadLoadedListResponse {
@@ -4878,7 +4938,6 @@ impl CodexMessageProcessor {
                 return;
             }
         };
-
         self.analytics_events_client.track_response(
             request_id.connection_id.0,
             ClientResponse::ThreadFork {
@@ -6334,12 +6393,12 @@ impl CodexMessageProcessor {
                 );
                 return Err(error);
             }
-            let (_, thread) = self
-                .load_thread(&params.thread_id)
-                .await
-                .inspect_err(|error| {
-                    self.track_error_response(&request_id, error, /*error_type*/ None);
-                })?;
+            let (thread_id, thread) =
+                self.load_thread(&params.thread_id)
+                    .await
+                    .inspect_err(|error| {
+                        self.track_error_response(&request_id, error, /*error_type*/ None);
+                    })?;
             Self::set_app_server_client_info(
                 thread.as_ref(),
                 app_server_client_name,
@@ -6379,6 +6438,7 @@ impl CodexMessageProcessor {
                 .into_iter()
                 .map(V2UserInput::into_core)
                 .collect();
+            let turn_has_input = !mapped_items.is_empty();
 
             let has_any_overrides = params.cwd.is_some()
                 || params.approval_policy.is_some()
@@ -6472,6 +6532,18 @@ impl CodexMessageProcessor {
                     self.track_error_response(&request_id, &error, /*error_type*/ None);
                     error
                 })?;
+
+            if turn_has_input {
+                let config_snapshot = thread.config_snapshot().await;
+                codex_memories_write::start_memories_startup_task(
+                    Arc::clone(&self.thread_manager),
+                    Arc::clone(&self.auth_manager),
+                    thread_id,
+                    Arc::clone(&thread),
+                    thread.config().await,
+                    &config_snapshot.session_source,
+                );
+            }
 
             self.outgoing
                 .record_request_turn_id(&request_id, &turn_id)

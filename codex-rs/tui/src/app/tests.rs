@@ -3705,6 +3705,7 @@ async fn make_test_app() -> App {
         transcript_reflow: TranscriptReflowState::default(),
         initial_history_replay_buffer: None,
         enhanced_keys_supported: false,
+        keymap: crate::keymap::RuntimeKeymap::defaults(),
         commit_anim_running: Arc::new(AtomicBool::new(false)),
         status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         terminal_title_invalid_items_warned: Arc::new(AtomicBool::new(false)),
@@ -3764,6 +3765,7 @@ async fn make_test_app_with_channels() -> (
             transcript_reflow: TranscriptReflowState::default(),
             initial_history_replay_buffer: None,
             enhanced_keys_supported: false,
+            keymap: crate::keymap::RuntimeKeymap::defaults(),
             commit_anim_running: Arc::new(AtomicBool::new(false)),
             status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
             terminal_title_invalid_items_warned: Arc::new(AtomicBool::new(false)),
@@ -4763,7 +4765,10 @@ async fn queued_rollback_syncs_overlay_and_clears_deferred_history() {
             /*is_first_line*/ false,
         )) as Arc<dyn HistoryCell>,
     ];
-    app.overlay = Some(Overlay::new_transcript(app.transcript_cells.clone()));
+    app.overlay = Some(Overlay::new_transcript(
+        app.transcript_cells.clone(),
+        app.keymap.pager.clone(),
+    ));
     app.deferred_history_lines = vec![Line::from("stale buffered line")];
     app.backtrack.overlay_preview_active = true;
     app.backtrack.nth_user_message = 1;
@@ -4987,7 +4992,10 @@ async fn clear_only_ui_reset_preserves_chat_session_state() {
         local_image_paths: Vec::new(),
         remote_image_urls: Vec::new(),
     }) as Arc<dyn HistoryCell>];
-    app.overlay = Some(Overlay::new_transcript(app.transcript_cells.clone()));
+    app.overlay = Some(Overlay::new_transcript(
+        app.transcript_cells.clone(),
+        crate::keymap::RuntimeKeymap::defaults().pager,
+    ));
     app.deferred_history_lines = vec![Line::from("stale buffered line")];
     app.has_emitted_history_lines = true;
     app.backtrack.primed = true;

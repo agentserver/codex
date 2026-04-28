@@ -4,8 +4,6 @@
 //! between user and agent.
 
 use std::collections::HashMap;
-use std::collections::HashSet;
-use std::ffi::OsStr;
 use std::fmt;
 use std::ops::Mul;
 use std::path::Path;
@@ -84,6 +82,7 @@ pub use crate::permissions::FileSystemSandboxKind;
 pub use crate::permissions::FileSystemSandboxPolicy;
 pub use crate::permissions::FileSystemSpecialPath;
 pub use crate::permissions::NetworkSandboxPolicy;
+use crate::permissions::default_read_only_subpaths_for_writable_root;
 pub use crate::request_permissions::RequestPermissionsArgs;
 pub use crate::request_user_input::RequestUserInputEvent;
 
@@ -758,12 +757,6 @@ pub enum Op {
     /// to generate a summary which will be returned as an AgentMessage event.
     Compact,
 
-    /// Drop all persisted memory artifacts and memory-tracking DB rows.
-    DropMemories,
-
-    /// Trigger a single pass of the startup memory pipeline.
-    UpdateMemories,
-
     /// Set a user-facing thread name in the persisted rollout metadata.
     /// This is a local-only operation handled by codex-core; it does not
     /// involve the model.
@@ -861,6 +854,7 @@ impl InterAgentCommunication {
             content: vec![ContentItem::OutputText {
                 text: serde_json::to_string(self).unwrap_or_default(),
             }],
+            phase: Some(MessagePhase::Commentary),
         }
     }
 
@@ -906,8 +900,6 @@ impl Op {
             Self::ReloadUserConfig => "reload_user_config",
             Self::ListSkills { .. } => "list_skills",
             Self::Compact => "compact",
-            Self::DropMemories => "drop_memories",
-            Self::UpdateMemories => "update_memories",
             Self::SetThreadName { .. } => "set_thread_name",
             Self::SetThreadMemoryMode { .. } => "set_thread_memory_mode",
             Self::Undo => "undo",
@@ -1094,6 +1086,11 @@ pub struct WritableRoot {
 
     /// By construction, these subpaths are all under `root`.
     pub read_only_subpaths: Vec<AbsolutePathBuf>,
+
+    /// Workspace metadata path names that must not be created or replaced under
+    /// `root` unless the policy grants an explicit write rule for that metadata
+    /// path.
+    pub protected_metadata_names: Vec<String>,
 }
 
 impl WritableRoot {
@@ -1110,7 +1107,25 @@ impl WritableRoot {
             }
         }
 
+        if self.path_contains_protected_metadata_name(path) {
+            return false;
+        }
+
         true
+    }
+
+    fn path_contains_protected_metadata_name(&self, path: &Path) -> bool {
+        let Ok(relative_path) = path.strip_prefix(&self.root) else {
+            return false;
+        };
+
+        let Some(first_component) = relative_path.components().next() else {
+            return false;
+        };
+
+        self.protected_metadata_names
+            .iter()
+            .any(|name| first_component.as_os_str() == std::ffi::OsStr::new(name))
     }
 }
 
@@ -1264,6 +1279,7 @@ impl SandboxPolicy {
                                 &writable_root,
                                 protect_missing_dot_codex,
                             ),
+                            protected_metadata_names: Vec::new(),
                             root: writable_root,
                         }
                     })
@@ -1271,107 +1287,6 @@ impl SandboxPolicy {
             }
         }
     }
-}
-
-fn default_read_only_subpaths_for_writable_root(
-    writable_root: &AbsolutePathBuf,
-    protect_missing_dot_codex: bool,
-) -> Vec<AbsolutePathBuf> {
-    let mut subpaths: Vec<AbsolutePathBuf> = Vec::new();
-    let top_level_git = writable_root.join(".git");
-    // This applies to typical repos (directory .git), worktrees/submodules
-    // (file .git with gitdir pointer), and bare repos when the gitdir is the
-    // writable root itself.
-    let top_level_git_is_file = top_level_git.as_path().is_file();
-    let top_level_git_is_dir = top_level_git.as_path().is_dir();
-    if top_level_git_is_dir || top_level_git_is_file {
-        if top_level_git_is_file
-            && is_git_pointer_file(&top_level_git)
-            && let Some(gitdir) = resolve_gitdir_from_file(&top_level_git)
-        {
-            subpaths.push(gitdir);
-        }
-        subpaths.push(top_level_git);
-    }
-
-    let top_level_agents = writable_root.join(".agents");
-    if top_level_agents.as_path().is_dir() {
-        subpaths.push(top_level_agents);
-    }
-
-    // Keep top-level project metadata under .codex read-only to the agent by
-    // default. For the workspace root itself, protect it even before the
-    // directory exists so first-time creation still goes through the
-    // protected-path approval flow.
-    let top_level_codex = writable_root.join(".codex");
-    if protect_missing_dot_codex || top_level_codex.as_path().is_dir() {
-        subpaths.push(top_level_codex);
-    }
-
-    let mut deduped = Vec::with_capacity(subpaths.len());
-    let mut seen = HashSet::new();
-    for path in subpaths {
-        if seen.insert(path.to_path_buf()) {
-            deduped.push(path);
-        }
-    }
-    deduped
-}
-
-fn is_git_pointer_file(path: &AbsolutePathBuf) -> bool {
-    path.as_path().is_file() && path.as_path().file_name() == Some(OsStr::new(".git"))
-}
-
-fn resolve_gitdir_from_file(dot_git: &AbsolutePathBuf) -> Option<AbsolutePathBuf> {
-    let contents = match std::fs::read_to_string(dot_git.as_path()) {
-        Ok(contents) => contents,
-        Err(err) => {
-            error!(
-                "Failed to read {path} for gitdir pointer: {err}",
-                path = dot_git.as_path().display()
-            );
-            return None;
-        }
-    };
-
-    let trimmed = contents.trim();
-    let (_, gitdir_raw) = match trimmed.split_once(':') {
-        Some(parts) => parts,
-        None => {
-            error!(
-                "Expected {path} to contain a gitdir pointer, but it did not match `gitdir: <path>`.",
-                path = dot_git.as_path().display()
-            );
-            return None;
-        }
-    };
-    let gitdir_raw = gitdir_raw.trim();
-    if gitdir_raw.is_empty() {
-        error!(
-            "Expected {path} to contain a gitdir pointer, but it was empty.",
-            path = dot_git.as_path().display()
-        );
-        return None;
-    }
-    let base = match dot_git.as_path().parent() {
-        Some(base) => base,
-        None => {
-            error!(
-                "Unable to resolve parent directory for {path}.",
-                path = dot_git.as_path().display()
-            );
-            return None;
-        }
-    };
-    let gitdir_path = AbsolutePathBuf::resolve_path_against_base(gitdir_raw, base);
-    if !gitdir_path.as_path().exists() {
-        error!(
-            "Resolved gitdir path {path} does not exist.",
-            path = gitdir_path.as_path().display()
-        );
-        return None;
-    }
-    Some(gitdir_path)
 }
 
 /// Event Queue Entry - events from agent
@@ -2640,9 +2555,17 @@ pub enum SessionSource {
     Exec,
     Mcp,
     Custom(String),
+    Internal(InternalSessionSource),
     SubAgent(SubAgentSource),
     #[serde(other)]
     Unknown,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum InternalSessionSource {
+    MemoryConsolidation,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema, TS)]
@@ -2673,6 +2596,7 @@ impl fmt::Display for SessionSource {
             SessionSource::Exec => f.write_str("exec"),
             SessionSource::Mcp => f.write_str("mcp"),
             SessionSource::Custom(source) => f.write_str(source),
+            SessionSource::Internal(source) => write!(f, "internal_{source}"),
             SessionSource::SubAgent(sub_source) => write!(f, "subagent_{sub_source}"),
             SessionSource::Unknown => f.write_str("unknown"),
         }
@@ -2701,18 +2625,27 @@ impl SessionSource {
     pub fn thread_source_name(&self) -> Option<&'static str> {
         match self {
             SessionSource::Cli | SessionSource::VSCode | SessionSource::Exec => Some("user"),
+            SessionSource::Internal(_) => Some("internal"),
             SessionSource::SubAgent(_) => Some("subagent"),
             SessionSource::Mcp | SessionSource::Custom(_) | SessionSource::Unknown => None,
         }
+    }
+
+    pub fn is_internal(&self) -> bool {
+        matches!(self, SessionSource::Internal(_))
+    }
+
+    pub fn is_non_root_agent(&self) -> bool {
+        matches!(
+            self,
+            SessionSource::Internal(_) | SessionSource::SubAgent(_)
+        )
     }
 
     pub fn get_nickname(&self) -> Option<String> {
         match self {
             SessionSource::SubAgent(SubAgentSource::ThreadSpawn { agent_nickname, .. }) => {
                 agent_nickname.clone()
-            }
-            SessionSource::SubAgent(SubAgentSource::MemoryConsolidation) => {
-                Some("Morpheus".to_string())
             }
             _ => None,
         }
@@ -2723,9 +2656,6 @@ impl SessionSource {
             SessionSource::SubAgent(SubAgentSource::ThreadSpawn { agent_role, .. }) => {
                 agent_role.clone()
             }
-            SessionSource::SubAgent(SubAgentSource::MemoryConsolidation) => {
-                Some("memory builder".to_string())
-            }
             _ => None,
         }
     }
@@ -2734,9 +2664,6 @@ impl SessionSource {
         match self {
             SessionSource::SubAgent(SubAgentSource::ThreadSpawn { agent_path, .. }) => {
                 agent_path.clone()
-            }
-            SessionSource::SubAgent(SubAgentSource::MemoryConsolidation) => {
-                Some(AgentPath::morpheus())
             }
             _ => None,
         }
@@ -2750,7 +2677,7 @@ impl SessionSource {
             | SessionSource::Exec
             | SessionSource::Mcp
             | SessionSource::Unknown => Some(Product::Codex),
-            SessionSource::SubAgent(_) => None,
+            SessionSource::Internal(_) | SessionSource::SubAgent(_) => None,
         }
     }
 
@@ -2776,6 +2703,14 @@ impl fmt::Display for SubAgentSource {
                 write!(f, "thread_spawn_{parent_thread_id}_d{depth}")
             }
             SubAgentSource::Other(other) => f.write_str(other),
+        }
+    }
+}
+
+impl fmt::Display for InternalSessionSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InternalSessionSource::MemoryConsolidation => f.write_str("memory_consolidation"),
         }
     }
 }
@@ -4102,6 +4037,10 @@ mod tests {
             (SessionSource::VSCode, Some("user")),
             (SessionSource::Exec, Some("user")),
             (
+                SessionSource::Internal(InternalSessionSource::MemoryConsolidation),
+                Some("internal"),
+            ),
+            (
                 SessionSource::SubAgent(SubAgentSource::Review),
                 Some("subagent"),
             ),
@@ -4141,6 +4080,11 @@ mod tests {
     fn session_source_restriction_product_does_not_guess_subagent_products() {
         assert_eq!(
             SessionSource::SubAgent(SubAgentSource::Review).restriction_product(),
+            None
+        );
+        assert_eq!(
+            SessionSource::Internal(InternalSessionSource::MemoryConsolidation)
+                .restriction_product(),
             None
         );
     }

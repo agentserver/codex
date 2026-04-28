@@ -189,8 +189,8 @@ fn user_disablement_filters_non_managed_hooks_but_not_managed_hooks() {
     );
     let config_path =
         AbsolutePathBuf::try_from(temp.path().join("config.toml")).expect("absolute path");
-    let managed_disabled_key = format!("path:{}:pre_tool_use:0:0", managed_dir.display());
-    let user_disabled_key = format!("path:{}:pre_tool_use:0:0", config_path.display());
+    let managed_disabled_key = format!("managed:{}:pre_tool_use:0:0", managed_dir.display());
+    let user_disabled_key = format!("file:{}:pre_tool_use:0:0", config_path.display());
     let mut user_config = TomlValue::Table(Default::default());
     let TomlValue::Table(user_config_entries) = &mut user_config else {
         unreachable!("config TOML root should be a table");
@@ -203,13 +203,19 @@ fn user_disablement_filters_non_managed_hooks_but_not_managed_hooks() {
     let TomlValue::Table(managed_config_entries) = &mut managed_config else {
         unreachable!("hook config should be a table");
     };
-    managed_config_entries.insert("key".to_string(), TomlValue::String(managed_disabled_key));
+    managed_config_entries.insert(
+        "key".to_string(),
+        TomlValue::String(managed_disabled_key.clone()),
+    );
     managed_config_entries.insert("enabled".to_string(), TomlValue::Boolean(false));
     let mut user_hook_config = TomlValue::Table(Default::default());
     let TomlValue::Table(user_hook_config_entries) = &mut user_hook_config else {
         unreachable!("hook config should be a table");
     };
-    user_hook_config_entries.insert("key".to_string(), TomlValue::String(user_disabled_key));
+    user_hook_config_entries.insert(
+        "key".to_string(),
+        TomlValue::String(user_disabled_key.clone()),
+    );
     user_hook_config_entries.insert("enabled".to_string(), TomlValue::Boolean(false));
     hooks_entries.insert(
         "config".to_string(),
@@ -274,10 +280,10 @@ fn user_disablement_filters_non_managed_hooks_but_not_managed_hooks() {
     let discovered =
         super::discovery::discover_handlers(Some(&config_layer_stack), Vec::new(), Vec::new());
     assert_eq!(discovered.hook_entries.len(), 2);
+    assert_eq!(discovered.hook_entries[0].key, managed_disabled_key);
     assert_eq!(discovered.hook_entries[0].enabled, true);
-    assert!(discovered.hook_entries[0].is_managed);
+    assert_eq!(discovered.hook_entries[1].key, user_disabled_key);
     assert_eq!(discovered.hook_entries[1].enabled, false);
-    assert!(!discovered.hook_entries[1].is_managed);
 }
 
 #[test]

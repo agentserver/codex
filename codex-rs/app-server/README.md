@@ -195,7 +195,7 @@ Example with notification opt-out:
 - `experimentalFeature/enablement/set` — patch the in-memory process-wide runtime feature enablement for the currently supported feature keys (`apps`, `plugins`). For each feature, precedence is: cloud requirements > --enable <feature_name> > config.toml > experimentalFeature/enablement/set (new) > code default.
 - `collaborationMode/list` — list available collaboration mode presets (experimental, no pagination). This response omits built-in developer instructions; clients should either pass `settings.developer_instructions: null` when setting a mode to use Codex's built-in instructions, or provide their own instructions explicitly.
 - `skills/list` — list skills for one or more `cwd` values (optional `forceReload`).
-- `hooks/list` — list discovered hooks for one or more `cwd` values, including hooks disabled by user config.
+- `hooks/list` — list discovered hooks for one or more `cwd` values.
 - `marketplace/add` — add a remote plugin marketplace from an HTTP(S) Git URL, SSH Git URL, or GitHub `owner/repo` shorthand, then persist it into the user marketplace config. Returns the installed root path plus whether the marketplace was already present.
 - `marketplace/remove` — remove a configured marketplace by name from the user marketplace config, and delete its installed marketplace root when one exists.
 - `marketplace/upgrade` — upgrade all configured Git plugin marketplaces, or one named marketplace when `marketplaceName` is provided. Returns selected marketplace names, upgraded roots, and per-marketplace errors.
@@ -1452,7 +1452,7 @@ To enable or disable a skill by name:
 }
 ```
 
-Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled hooks are still returned with `"enabled": false` so clients can render and re-enable them. Managed hooks are returned with `"isManaged": true` and cannot be changed through `hooks/config/write`.
+Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled hooks are still returned with `"enabled": false` so clients can render and re-enable them. Managed hook keys use the `managed:` prefix and cannot be changed through `hooks/config/write`. Hook keys are source-namespaced with `file:`, `managed:`, or `plugin:` prefixes; the trailing event/group/handler selector is currently positional.
 
 ```json
 {
@@ -1471,7 +1471,7 @@ Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled 
     "data": [{
       "cwd": "/Users/me/project",
       "hooks": [{
-        "key": "path:/Users/me/.codex/config.toml:pre_tool_use:0:0",
+        "key": "file:/Users/me/.codex/config.toml:pre_tool_use:0:0",
         "eventName": "pre_tool_use",
         "handlerType": "command",
         "isManaged": false,
@@ -1483,8 +1483,7 @@ Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled 
         "source": "user",
         "pluginId": null,
         "displayOrder": 0,
-        "enabled": true,
-        "isManaged": false
+        "enabled": true
       }],
       "warnings": [],
       "errors": []
@@ -1500,7 +1499,7 @@ To enable or disable a non-managed hook, write the hook key returned by `hooks/l
   "method": "hooks/config/write",
   "id": 29,
   "params": {
-    "key": "path:/Users/me/.codex/config.toml:pre_tool_use:0:0",
+    "key": "file:/Users/me/.codex/config.toml:pre_tool_use:0:0",
     "enabled": false
   }
 }

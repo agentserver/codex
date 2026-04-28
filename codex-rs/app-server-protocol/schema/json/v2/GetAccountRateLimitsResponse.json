@@ -22,6 +22,62 @@
       ],
       "type": "object"
     },
+    "CurrentUsageLimitNudgeState": {
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "unknown"
+              ],
+              "title": "UnknownCurrentUsageLimitNudgeStateType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "UnknownCurrentUsageLimitNudgeState",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "inactive"
+              ],
+              "title": "InactiveCurrentUsageLimitNudgeStateType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "InactiveCurrentUsageLimitNudgeState",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "nudge": {
+              "$ref": "#/definitions/UsageLimitNudge"
+            },
+            "type": {
+              "enum": [
+                "active"
+              ],
+              "title": "ActiveCurrentUsageLimitNudgeStateType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "nudge",
+            "type"
+          ],
+          "title": "ActiveCurrentUsageLimitNudgeState",
+          "type": "object"
+        }
+      ]
+    },
     "PlanType": {
       "enum": [
         "free",
@@ -60,6 +116,16 @@
               "type": "null"
             }
           ]
+        },
+        "currentUsageLimitNudge": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CurrentUsageLimitNudgeState"
+            }
+          ],
+          "default": {
+            "type": "unknown"
+          }
         },
         "limitId": {
           "type": [
@@ -141,6 +207,34 @@
         "usedPercent"
       ],
       "type": "object"
+    },
+    "UsageLimitNudge": {
+      "properties": {
+        "action": {
+          "$ref": "#/definitions/UsageLimitNudgeAction"
+        },
+        "key": {
+          "type": "string"
+        },
+        "threshold": {
+          "format": "uint8",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "action",
+        "key",
+        "threshold"
+      ],
+      "type": "object"
+    },
+    "UsageLimitNudgeAction": {
+      "enum": [
+        "add_credits",
+        "upgrade"
+      ],
+      "type": "string"
     }
   },
   "properties": {

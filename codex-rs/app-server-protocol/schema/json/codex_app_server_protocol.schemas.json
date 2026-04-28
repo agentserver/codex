@@ -7636,6 +7636,62 @@
         ],
         "type": "object"
       },
+      "CurrentUsageLimitNudgeState": {
+        "oneOf": [
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "unknown"
+                ],
+                "title": "UnknownCurrentUsageLimitNudgeStateType",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "UnknownCurrentUsageLimitNudgeState",
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "inactive"
+                ],
+                "title": "InactiveCurrentUsageLimitNudgeStateType",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "InactiveCurrentUsageLimitNudgeState",
+            "type": "object"
+          },
+          {
+            "properties": {
+              "nudge": {
+                "$ref": "#/definitions/v2/UsageLimitNudge"
+              },
+              "type": {
+                "enum": [
+                  "active"
+                ],
+                "title": "ActiveCurrentUsageLimitNudgeStateType",
+                "type": "string"
+              }
+            },
+            "required": [
+              "nudge",
+              "type"
+            ],
+            "title": "ActiveCurrentUsageLimitNudgeState",
+            "type": "object"
+          }
+        ]
+      },
       "DeprecationNoticeNotification": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
@@ -12113,6 +12169,16 @@
                 "type": "null"
               }
             ]
+          },
+          "currentUsageLimitNudge": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/v2/CurrentUsageLimitNudgeState"
+              }
+            ],
+            "default": {
+              "type": "unknown"
+            }
           },
           "limitId": {
             "type": [
@@ -17185,6 +17251,34 @@
         ],
         "title": "TurnSteerResponse",
         "type": "object"
+      },
+      "UsageLimitNudge": {
+        "properties": {
+          "action": {
+            "$ref": "#/definitions/v2/UsageLimitNudgeAction"
+          },
+          "key": {
+            "type": "string"
+          },
+          "threshold": {
+            "format": "uint8",
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action",
+          "key",
+          "threshold"
+        ],
+        "type": "object"
+      },
+      "UsageLimitNudgeAction": {
+        "enum": [
+          "add_credits",
+          "upgrade"
+        ],
+        "type": "string"
       },
       "UserInput": {
         "oneOf": [

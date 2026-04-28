@@ -5,6 +5,7 @@ use app_test_support::to_response;
 use app_test_support::write_chatgpt_auth;
 use codex_app_server_protocol::AddCreditsNudgeCreditType;
 use codex_app_server_protocol::AddCreditsNudgeEmailStatus;
+use codex_app_server_protocol::CurrentUsageLimitNudgeState;
 use codex_app_server_protocol::GetAccountRateLimitsResponse;
 use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCResponse;
@@ -183,6 +184,7 @@ async fn get_account_rate_limits_returns_snapshot() -> Result<()> {
             credits: None,
             plan_type: Some(AccountPlanType::Pro),
             rate_limit_reached_type: Some(RateLimitReachedType::WorkspaceMemberUsageLimitReached),
+            current_usage_limit_nudge: CurrentUsageLimitNudgeState::Unknown,
         },
         rate_limits_by_limit_id: Some(
             [
@@ -206,6 +208,7 @@ async fn get_account_rate_limits_returns_snapshot() -> Result<()> {
                         rate_limit_reached_type: Some(
                             RateLimitReachedType::WorkspaceMemberUsageLimitReached,
                         ),
+                        current_usage_limit_nudge: CurrentUsageLimitNudgeState::Unknown,
                     },
                 ),
                 (
@@ -222,6 +225,7 @@ async fn get_account_rate_limits_returns_snapshot() -> Result<()> {
                         credits: None,
                         plan_type: Some(AccountPlanType::Pro),
                         rate_limit_reached_type: None,
+                        current_usage_limit_nudge: CurrentUsageLimitNudgeState::Unknown,
                     },
                 ),
             ]

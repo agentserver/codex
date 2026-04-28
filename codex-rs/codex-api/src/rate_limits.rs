@@ -2,6 +2,7 @@ use codex_protocol::account::PlanType;
 use codex_protocol::protocol::CreditsSnapshot;
 use codex_protocol::protocol::RateLimitSnapshot;
 use codex_protocol::protocol::RateLimitWindow;
+use codex_protocol::protocol::UsageLimitNudgeStatePayload;
 use http::HeaderMap;
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -94,6 +95,7 @@ pub fn parse_rate_limit_for_limit(
         credits,
         plan_type: None,
         rate_limit_reached_type: None,
+        current_usage_limit_nudge: None,
     })
 }
 
@@ -126,6 +128,7 @@ struct RateLimitEvent {
     credits: Option<RateLimitEventCredits>,
     metered_limit_name: Option<String>,
     limit_name: Option<String>,
+    current_usage_limit_nudge: Option<UsageLimitNudgeStatePayload>,
 }
 
 pub fn parse_rate_limit_event(payload: &str) -> Option<RateLimitSnapshot> {
@@ -158,6 +161,7 @@ pub fn parse_rate_limit_event(payload: &str) -> Option<RateLimitSnapshot> {
         credits,
         plan_type: event.plan_type,
         rate_limit_reached_type: None,
+        current_usage_limit_nudge: event.current_usage_limit_nudge,
     })
 }
 
@@ -364,5 +368,56 @@ mod tests {
         assert_eq!(updates[0].primary, None);
         assert_eq!(updates[0].secondary, None);
         assert_eq!(updates[0].credits, None);
+    }
+
+    #[test]
+    fn parse_rate_limit_event_preserves_active_current_usage_limit_nudge() {
+        let snapshot = parse_rate_limit_event(
+            r#"{
+                "type": "codex.rate_limits",
+                "current_usage_limit_nudge": {
+                    "type": "active",
+                    "key": "near_limit_90_upgrade",
+                    "threshold": 90,
+                    "action": "upgrade"
+                }
+            }"#,
+        )
+        .expect("snapshot");
+
+        assert_eq!(
+            snapshot.current_usage_limit_nudge,
+            Some(UsageLimitNudgeStatePayload::Active {
+                key: "near_limit_90_upgrade".to_string(),
+                threshold: 90,
+                action: codex_protocol::protocol::UsageLimitNudgeAction::Upgrade,
+            })
+        );
+    }
+
+    #[test]
+    fn parse_rate_limit_event_preserves_explicitly_inactive_current_usage_limit_nudge() {
+        let snapshot = parse_rate_limit_event(
+            r#"{
+                "type": "codex.rate_limits",
+                "current_usage_limit_nudge": {
+                    "type": "inactive"
+                }
+            }"#,
+        )
+        .expect("snapshot");
+
+        assert_eq!(
+            snapshot.current_usage_limit_nudge,
+            Some(UsageLimitNudgeStatePayload::Inactive)
+        );
+    }
+
+    #[test]
+    fn parse_rate_limit_event_preserves_missing_current_usage_limit_nudge() {
+        let snapshot =
+            parse_rate_limit_event(r#"{ "type": "codex.rate_limits" }"#).expect("snapshot");
+
+        assert_eq!(snapshot.current_usage_limit_nudge, None);
     }
 }

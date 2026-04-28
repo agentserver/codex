@@ -111,6 +111,7 @@ use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::ReviewTarget as CoreReviewTarget;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionNetworkProxyRuntime;
+use codex_protocol::protocol::UsageLimitNudgeStatePayload;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use color_eyre::eyre::ContextCompat;
 use color_eyre::eyre::Result;
@@ -1464,6 +1465,19 @@ pub(crate) fn app_server_rate_limit_snapshot_to_core(
         credits: snapshot.credits.map(app_server_credits_snapshot_to_core),
         plan_type: snapshot.plan_type,
         rate_limit_reached_type: snapshot.rate_limit_reached_type.map(Into::into),
+        current_usage_limit_nudge: match snapshot.current_usage_limit_nudge {
+            codex_app_server_protocol::CurrentUsageLimitNudgeState::Unknown => None,
+            codex_app_server_protocol::CurrentUsageLimitNudgeState::Inactive => {
+                Some(UsageLimitNudgeStatePayload::Inactive)
+            }
+            codex_app_server_protocol::CurrentUsageLimitNudgeState::Active { nudge } => {
+                Some(UsageLimitNudgeStatePayload::Active {
+                    key: nudge.key,
+                    threshold: nudge.threshold,
+                    action: nudge.action.into(),
+                })
+            }
+        },
     }
 }
 

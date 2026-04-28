@@ -666,6 +666,7 @@ mod tests {
     use codex_app_server_protocol::ApplyPatchApprovalParams;
     use codex_app_server_protocol::AuthMode;
     use codex_app_server_protocol::ConfigWarningNotification;
+    use codex_app_server_protocol::CurrentUsageLimitNudgeState;
     use codex_app_server_protocol::DynamicToolCallParams;
     use codex_app_server_protocol::FileChangeRequestApprovalParams;
     use codex_app_server_protocol::GuardianWarningNotification;
@@ -751,6 +752,7 @@ mod tests {
                     credits: None,
                     plan_type: Some(PlanType::Plus),
                     rate_limit_reached_type: None,
+                    current_usage_limit_nudge: CurrentUsageLimitNudgeState::Unknown,
                 },
             });
 
@@ -770,7 +772,10 @@ mod tests {
                         "secondary": null,
                         "credits": null,
                         "planType": "plus",
-                        "rateLimitReachedType": null
+                        "rateLimitReachedType": null,
+                        "currentUsageLimitNudge": {
+                            "type": "unknown"
+                        }
                     }
                 },
             }),

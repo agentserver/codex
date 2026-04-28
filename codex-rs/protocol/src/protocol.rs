@@ -2125,6 +2125,25 @@ pub struct RateLimitSnapshot {
     pub credits: Option<CreditsSnapshot>,
     pub plan_type: Option<crate::account::PlanType>,
     pub rate_limit_reached_type: Option<RateLimitReachedType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub current_usage_limit_nudge: Option<UsageLimitNudgeStatePayload>,
+}
+
+impl RateLimitSnapshot {
+    pub fn current_usage_limit_nudge_state(&self) -> CurrentUsageLimitNudgeState {
+        match &self.current_usage_limit_nudge {
+            None => CurrentUsageLimitNudgeState::Unknown,
+            Some(UsageLimitNudgeStatePayload::Inactive) => CurrentUsageLimitNudgeState::Inactive,
+            Some(UsageLimitNudgeStatePayload::Active {
+                key,
+                threshold,
+                action,
+            }) => UsageLimitNudge::from_payload(key, *threshold, *action)
+                .map(CurrentUsageLimitNudgeState::Active)
+                .unwrap_or(CurrentUsageLimitNudgeState::Inactive),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema, TS)]
@@ -2136,6 +2155,73 @@ pub enum RateLimitReachedType {
     WorkspaceMemberCreditsDepleted,
     WorkspaceOwnerUsageLimitReached,
     WorkspaceMemberUsageLimitReached,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(tag = "type")]
+pub enum UsageLimitNudgeStatePayload {
+    Inactive,
+    Active {
+        key: String,
+        threshold: u8,
+        action: UsageLimitNudgeAction,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsageLimitNudge {
+    pub key: String,
+    pub threshold: UsageLimitNudgeThreshold,
+    pub action: UsageLimitNudgeAction,
+}
+
+impl UsageLimitNudge {
+    fn from_payload(key: &str, threshold: u8, action: UsageLimitNudgeAction) -> Option<Self> {
+        Some(Self {
+            key: key.to_string(),
+            threshold: UsageLimitNudgeThreshold::from_percent(threshold)?,
+            action,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CurrentUsageLimitNudgeState {
+    Unknown,
+    Inactive,
+    Active(UsageLimitNudge),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UsageLimitNudgeThreshold {
+    Percent75,
+    Percent90,
+}
+
+impl UsageLimitNudgeThreshold {
+    fn from_percent(percent: u8) -> Option<Self> {
+        match percent {
+            75 => Some(Self::Percent75),
+            90 => Some(Self::Percent90),
+            _ => None,
+        }
+    }
+
+    pub fn as_percent(self) -> u8 {
+        match self {
+            Self::Percent75 => 75,
+            Self::Percent90 => 90,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum UsageLimitNudgeAction {
+    AddCredits,
+    Upgrade,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
@@ -3973,6 +4059,61 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
     use tempfile::TempDir;
+
+    fn rate_limit_snapshot_with_nudge(
+        current_usage_limit_nudge: Option<UsageLimitNudgeStatePayload>,
+    ) -> RateLimitSnapshot {
+        RateLimitSnapshot {
+            limit_id: Some("codex".to_string()),
+            limit_name: None,
+            primary: None,
+            secondary: None,
+            credits: None,
+            plan_type: None,
+            rate_limit_reached_type: None,
+            current_usage_limit_nudge,
+        }
+    }
+
+    #[test]
+    fn current_usage_limit_nudge_state_distinguishes_unknown_inactive_and_active() {
+        assert_eq!(
+            rate_limit_snapshot_with_nudge(/*current_usage_limit_nudge*/ None)
+                .current_usage_limit_nudge_state(),
+            CurrentUsageLimitNudgeState::Unknown
+        );
+        assert_eq!(
+            rate_limit_snapshot_with_nudge(Some(UsageLimitNudgeStatePayload::Inactive))
+                .current_usage_limit_nudge_state(),
+            CurrentUsageLimitNudgeState::Inactive
+        );
+        assert_eq!(
+            rate_limit_snapshot_with_nudge(Some(UsageLimitNudgeStatePayload::Active {
+                key: "near_limit_75_add_credits".to_string(),
+                threshold: 75,
+                action: UsageLimitNudgeAction::AddCredits,
+            }))
+            .current_usage_limit_nudge_state(),
+            CurrentUsageLimitNudgeState::Active(UsageLimitNudge {
+                key: "near_limit_75_add_credits".to_string(),
+                threshold: UsageLimitNudgeThreshold::Percent75,
+                action: UsageLimitNudgeAction::AddCredits,
+            })
+        );
+    }
+
+    #[test]
+    fn invalid_current_usage_limit_nudge_threshold_fails_closed() {
+        assert_eq!(
+            rate_limit_snapshot_with_nudge(Some(UsageLimitNudgeStatePayload::Active {
+                key: "near_limit_80_upgrade".to_string(),
+                threshold: 80,
+                action: UsageLimitNudgeAction::Upgrade,
+            }))
+            .current_usage_limit_nudge_state(),
+            CurrentUsageLimitNudgeState::Inactive
+        );
+    }
 
     fn sorted_writable_roots(roots: Vec<WritableRoot>) -> Vec<(PathBuf, Vec<PathBuf>)> {
         let mut sorted_roots: Vec<(PathBuf, Vec<PathBuf>)> = roots

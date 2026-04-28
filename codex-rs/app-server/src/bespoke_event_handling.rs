@@ -4471,6 +4471,7 @@ mod tests {
             }),
             plan_type: None,
             rate_limit_reached_type: None,
+            current_usage_limit_nudge: None,
         };
 
         handle_token_count_event(

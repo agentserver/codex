@@ -27,11 +27,15 @@ use ratatui::prelude::*;
 use tempfile::TempDir;
 
 async fn test_config(temp_home: &TempDir) -> Config {
-    ConfigBuilder::default()
+    let mut config = ConfigBuilder::default()
         .codex_home(temp_home.path().to_path_buf())
         .build()
         .await
-        .expect("load config")
+        .expect("load config");
+    config
+        .set_legacy_sandbox_policy(SandboxPolicy::new_read_only_policy())
+        .expect("set sandbox policy");
+    config
 }
 
 fn test_status_account_display() -> Option<StatusAccountDisplay> {

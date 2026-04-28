@@ -3079,17 +3079,6 @@
             "null"
           ]
         },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Optional full permissions profile for this command.\n\nDefaults to the user's configured permissions when omitted. Cannot be combined with `sandboxPolicy`."
-        },
         "processId": {
           "description": "Optional client-supplied, connection-scoped process id.\n\nRequired for `tty`, `streamStdin`, `streamStdoutStderr`, and follow-up `command/exec/write`, `command/exec/resize`, and `command/exec/terminate` calls. When omitted, buffered execution gets an internal id that is not exposed to the client.",
           "type": [
@@ -4880,7 +4869,8 @@
         "CONFIG",
         "SKILLS",
         "PLUGINS",
-        "MCP_SERVER_CONFIG"
+        "MCP_SERVER_CONFIG",
+        "SESSIONS"
       ],
       "type": "string"
     },
@@ -5835,38 +5825,6 @@
         "requiresOpenaiAuth"
       ],
       "title": "GetAccountResponse",
-      "type": "object"
-    },
-    "GhostCommit": {
-      "description": "Details of a ghost commit created from a repository state.",
-      "properties": {
-        "id": {
-          "type": "string"
-        },
-        "parent": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "preexisting_untracked_dirs": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "preexisting_untracked_files": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "id",
-        "preexisting_untracked_dirs",
-        "preexisting_untracked_files"
-      ],
       "type": "object"
     },
     "GitInfo": {
@@ -7649,15 +7607,20 @@
     "MigrationDetails": {
       "properties": {
         "plugins": {
+          "default": [],
           "items": {
             "$ref": "#/definitions/PluginsMigration"
           },
           "type": "array"
+        },
+        "sessions": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/SessionMigration"
+          },
+          "type": "array"
         }
       },
-      "required": [
-        "plugins"
-      ],
       "type": "object"
     },
     "ModeKind": {
@@ -9959,26 +9922,6 @@
         },
         {
           "properties": {
-            "ghost_commit": {
-              "$ref": "#/definitions/GhostCommit"
-            },
-            "type": {
-              "enum": [
-                "ghost_snapshot"
-              ],
-              "title": "GhostSnapshotResponseItemType",
-              "type": "string"
-            }
-          },
-          "required": [
-            "ghost_commit",
-            "type"
-          ],
-          "title": "GhostSnapshotResponseItem",
-          "type": "object"
-        },
-        {
-          "properties": {
             "encrypted_content": {
               "type": "string"
             },
@@ -11654,6 +11597,27 @@
       ],
       "type": "string"
     },
+    "SessionMigration": {
+      "properties": {
+        "cwd": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "cwd",
+        "path"
+      ],
+      "type": "object"
+    },
     "SessionSource": {
       "oneOf": [
         {
@@ -12541,17 +12505,6 @@
             "null"
           ]
         },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Full permissions override for the forked thread. Cannot be combined with `sandbox`."
-        },
         "sandbox": {
           "anyOf": [
             {
@@ -12619,18 +12572,6 @@
         },
         "modelProvider": {
           "type": "string"
-        },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Canonical active permissions view for this thread."
         },
         "reasoningEffort": {
           "anyOf": [
@@ -14065,17 +14006,6 @@
             "null"
           ]
         },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Full permissions override for the resumed thread. Cannot be combined with `sandbox`."
-        },
         "personality": {
           "anyOf": [
             {
@@ -14153,18 +14083,6 @@
         },
         "modelProvider": {
           "type": "string"
-        },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Canonical active permissions view for this thread."
         },
         "reasoningEffort": {
           "anyOf": [
@@ -14382,17 +14300,6 @@
             "null"
           ]
         },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Full permissions override for this thread. Cannot be combined with `sandbox`."
-        },
         "personality": {
           "anyOf": [
             {
@@ -14480,18 +14387,6 @@
         },
         "modelProvider": {
           "type": "string"
-        },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Canonical active permissions view for this thread."
         },
         "reasoningEffort": {
           "anyOf": [
@@ -15197,17 +15092,6 @@
         },
         "outputSchema": {
           "description": "Optional JSON Schema used to constrain the final assistant message for this turn."
-        },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Override the full permissions profile for this turn and subsequent turns. Cannot be combined with `sandboxPolicy`."
         },
         "personality": {
           "anyOf": [

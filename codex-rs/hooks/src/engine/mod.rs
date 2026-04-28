@@ -8,6 +8,8 @@ use std::collections::HashMap;
 
 use codex_config::ConfigLayerStack;
 use codex_plugin::PluginHookSource;
+use codex_protocol::protocol::HookEventName;
+use codex_protocol::protocol::HookHandlerType;
 use codex_protocol::protocol::HookRunSummary;
 use codex_protocol::protocol::HookSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -34,7 +36,6 @@ pub(crate) struct CommandShell {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConfiguredHandler {
     pub event_name: codex_protocol::protocol::HookEventName,
-    pub is_managed: bool,
     pub matcher: Option<String>,
     pub command: String,
     pub timeout_sec: u64,
@@ -67,6 +68,23 @@ impl ConfiguredHandler {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookListEntry {
+    pub key: String,
+    pub event_name: HookEventName,
+    pub handler_type: HookHandlerType,
+    pub matcher: Option<String>,
+    pub command: Option<String>,
+    pub timeout_sec: u64,
+    pub status_message: Option<String>,
+    pub source_path: AbsolutePathBuf,
+    pub source: HookSource,
+    pub plugin_id: Option<String>,
+    pub display_order: i64,
+    pub enabled: bool,
+    pub is_managed: bool,
+}
+
 #[derive(Clone)]
 pub(crate) struct ClaudeHooksEngine {
     handlers: Vec<ConfiguredHandler>,
@@ -79,6 +97,7 @@ impl ClaudeHooksEngine {
         enabled: bool,
         config_layer_stack: Option<&ConfigLayerStack>,
         plugin_hook_sources: Vec<PluginHookSource>,
+        plugin_hook_load_warnings: Vec<String>,
         shell: CommandShell,
     ) -> Self {
         if !enabled {
@@ -90,7 +109,11 @@ impl ClaudeHooksEngine {
         }
 
         let _ = schema_loader::generated_hook_schemas();
-        let discovered = discovery::discover_handlers(config_layer_stack, plugin_hook_sources);
+        let discovered = discovery::discover_handlers(
+            config_layer_stack,
+            plugin_hook_sources,
+            plugin_hook_load_warnings,
+        );
         Self {
             handlers: discovered.handlers,
             warnings: discovered.warnings,

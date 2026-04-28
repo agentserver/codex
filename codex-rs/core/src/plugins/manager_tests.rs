@@ -94,12 +94,28 @@ fn run_git(repo: &Path, args: &[&str]) {
 }
 
 fn plugin_config_toml(enabled: bool, plugins_feature_enabled: bool) -> String {
+    plugin_config_toml_with_plugin_hooks(
+        enabled,
+        plugins_feature_enabled,
+        /*plugin_hooks_feature_enabled*/ false,
+    )
+}
+
+fn plugin_config_toml_with_plugin_hooks(
+    enabled: bool,
+    plugins_feature_enabled: bool,
+    plugin_hooks_feature_enabled: bool,
+) -> String {
     let mut root = toml::map::Map::new();
 
     let mut features = toml::map::Map::new();
     features.insert(
         "plugins".to_string(),
         Value::Boolean(plugins_feature_enabled),
+    );
+    features.insert(
+        "plugin_hooks".to_string(),
+        Value::Boolean(plugin_hooks_feature_enabled),
     );
     root.insert("features".to_string(), Value::Table(features));
 
@@ -220,6 +236,7 @@ async fn load_plugins_loads_default_skills_and_mcp_servers() {
             )]),
             apps: vec![AppConnectorId("connector_example".to_string())],
             hook_sources: Vec::new(),
+            hook_load_warnings: Vec::new(),
             error: None,
         }]
     );
@@ -721,6 +738,7 @@ async fn load_plugins_preserves_disabled_plugins_without_effective_contributions
             mcp_servers: HashMap::new(),
             apps: Vec::new(),
             hook_sources: Vec::new(),
+            hook_load_warnings: Vec::new(),
             error: None,
         }]
     );
@@ -839,6 +857,7 @@ fn capability_index_filters_inactive_and_zero_capability_plugins() {
         mcp_servers: HashMap::new(),
         apps: Vec::new(),
         hook_sources: Vec::new(),
+        hook_load_warnings: Vec::new(),
         error: None,
     };
     let summary = |config_name: &str, display_name: &str| PluginCapabilitySummary {
@@ -930,6 +949,61 @@ async fn load_plugins_returns_empty_when_feature_disabled() {
         .await;
 
     assert_eq!(outcome, PluginLoadOutcome::default());
+}
+
+#[tokio::test]
+async fn plugins_for_config_reloads_when_plugin_hooks_enablement_changes() {
+    let codex_home = TempDir::new().unwrap();
+    let plugin_root = codex_home
+        .path()
+        .join("plugins/cache")
+        .join("test/sample/local");
+
+    write_file(
+        &plugin_root.join(".codex-plugin/plugin.json"),
+        r#"{"name":"sample"}"#,
+    );
+    write_file(
+        &plugin_root.join("hooks/hooks.json"),
+        r#"{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [{ "type": "command", "command": "echo plugin hook" }]
+      }
+    ]
+  }
+}"#,
+    );
+
+    let manager = PluginsManager::new(codex_home.path().to_path_buf());
+    write_file(
+        &codex_home.path().join(CONFIG_TOML_FILE),
+        &plugin_config_toml_with_plugin_hooks(
+            /*enabled*/ true, /*plugins_feature_enabled*/ true,
+            /*plugin_hooks_feature_enabled*/ false,
+        ),
+    );
+    let config_without_plugin_hooks = load_config(codex_home.path(), codex_home.path()).await;
+    let without_plugin_hooks = manager
+        .plugins_for_config(&config_without_plugin_hooks)
+        .await;
+    assert!(
+        without_plugin_hooks
+            .effective_plugin_hook_sources()
+            .is_empty()
+    );
+
+    write_file(
+        &codex_home.path().join(CONFIG_TOML_FILE),
+        &plugin_config_toml_with_plugin_hooks(
+            /*enabled*/ true, /*plugins_feature_enabled*/ true,
+            /*plugin_hooks_feature_enabled*/ true,
+        ),
+    );
+    let config_with_plugin_hooks = load_config(codex_home.path(), codex_home.path()).await;
+    let with_plugin_hooks = manager.plugins_for_config(&config_with_plugin_hooks).await;
+    assert_eq!(with_plugin_hooks.effective_plugin_hook_sources().len(), 1);
 }
 
 #[tokio::test]
@@ -3343,6 +3417,7 @@ async fn load_plugins_ignores_project_config_files() {
         &stack,
         &PluginStore::new(codex_home.path().to_path_buf()),
         Some(Product::Codex),
+        /*plugin_hooks_enabled*/ false,
     )
     .await;
 

@@ -1355,6 +1355,30 @@
             },
             "method": {
               "enum": [
+                "hooks/list"
+              ],
+              "title": "Hooks/listRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/HooksListParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Hooks/listRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
                 "marketplace/add"
               ],
               "title": "Marketplace/addRequestMethod",
@@ -1970,6 +1994,30 @@
             "params"
           ],
           "title": "Model/listRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "modelProvider/capabilities/read"
+              ],
+              "title": "ModelProvider/capabilities/readRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ModelProviderCapabilitiesReadParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "ModelProvider/capabilities/readRequest",
           "type": "object"
         },
         {
@@ -3055,17 +3103,6 @@
             "null"
           ]
         },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Optional full permissions profile for this command.\n\nDefaults to the user's configured permissions when omitted. Cannot be combined with `sandboxPolicy`."
-        },
         "processId": {
           "description": "Optional client-supplied, connection-scoped process id.\n\nRequired for `tty`, `streamStdin`, `streamStdoutStderr`, and follow-up `command/exec/write`, `command/exec/resize`, and `command/exec/terminate` calls. When omitted, buffered execution gets an internal id that is not exposed to the client.",
           "type": [
@@ -3295,6 +3332,17 @@
         "declined"
       ],
       "type": "string"
+    },
+    "CommandMigration": {
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
     },
     "Config": {
       "additionalProperties": true,
@@ -4856,7 +4904,11 @@
         "CONFIG",
         "SKILLS",
         "PLUGINS",
-        "MCP_SERVER_CONFIG"
+        "MCP_SERVER_CONFIG",
+        "SUBAGENTS",
+        "HOOKS",
+        "COMMANDS",
+        "SESSIONS"
       ],
       "type": "string"
     },
@@ -5090,21 +5142,6 @@
             "kind"
           ],
           "title": "MinimalFileSystemSpecialPath",
-          "type": "object"
-        },
-        {
-          "properties": {
-            "kind": {
-              "enum": [
-                "current_working_directory"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "title": "CurrentWorkingDirectoryFileSystemSpecialPath",
           "type": "object"
         },
         {
@@ -5828,38 +5865,6 @@
       "title": "GetAccountResponse",
       "type": "object"
     },
-    "GhostCommit": {
-      "description": "Details of a ghost commit created from a repository state.",
-      "properties": {
-        "id": {
-          "type": "string"
-        },
-        "parent": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "preexisting_untracked_dirs": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "preexisting_untracked_files": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "id",
-        "preexisting_untracked_dirs",
-        "preexisting_untracked_files"
-      ],
-      "type": "object"
-    },
     "GitInfo": {
       "properties": {
         "branch": {
@@ -6197,6 +6202,21 @@
       "title": "HookCompletedNotification",
       "type": "object"
     },
+    "HookErrorInfo": {
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "message",
+        "path"
+      ],
+      "type": "object"
+    },
     "HookEventName": {
       "enum": [
         "preToolUse",
@@ -6222,6 +6242,87 @@
         "agent"
       ],
       "type": "string"
+    },
+    "HookMetadata": {
+      "properties": {
+        "command": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayOrder": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "eventName": {
+          "$ref": "#/definitions/HookEventName"
+        },
+        "handlerType": {
+          "$ref": "#/definitions/HookHandlerType"
+        },
+        "isManaged": {
+          "type": "boolean"
+        },
+        "key": {
+          "type": "string"
+        },
+        "matcher": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pluginId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "$ref": "#/definitions/HookSource"
+        },
+        "sourcePath": {
+          "$ref": "#/definitions/AbsolutePathBuf"
+        },
+        "statusMessage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeoutSec": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "displayOrder",
+        "enabled",
+        "eventName",
+        "handlerType",
+        "isManaged",
+        "key",
+        "source",
+        "sourcePath",
+        "timeoutSec"
+      ],
+      "type": "object"
+    },
+    "HookMigration": {
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
     },
     "HookOutputEntry": {
       "properties": {
@@ -6368,6 +6469,7 @@
         "mdm",
         "sessionFlags",
         "plugin",
+        "cloudRequirements",
         "legacyManagedConfigFile",
         "legacyManagedConfigMdm",
         "unknown"
@@ -6395,6 +6497,68 @@
         "threadId"
       ],
       "title": "HookStartedNotification",
+      "type": "object"
+    },
+    "HooksListEntry": {
+      "properties": {
+        "cwd": {
+          "type": "string"
+        },
+        "errors": {
+          "items": {
+            "$ref": "#/definitions/HookErrorInfo"
+          },
+          "type": "array"
+        },
+        "hooks": {
+          "items": {
+            "$ref": "#/definitions/HookMetadata"
+          },
+          "type": "array"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "cwd",
+        "errors",
+        "hooks",
+        "warnings"
+      ],
+      "type": "object"
+    },
+    "HooksListParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "cwds": {
+          "description": "When empty, defaults to the current session working directory.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "title": "HooksListParams",
+      "type": "object"
+    },
+    "HooksListResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "data": {
+          "items": {
+            "$ref": "#/definitions/HooksListEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "HooksListResponse",
       "type": "object"
     },
     "ImageDetail": {
@@ -7180,6 +7344,17 @@
       "title": "McpResourceReadResponse",
       "type": "object"
     },
+    "McpServerMigration": {
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
     "McpServerOauthLoginCompletedNotification": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -7504,16 +7679,49 @@
     },
     "MigrationDetails": {
       "properties": {
+        "commands": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/CommandMigration"
+          },
+          "type": "array"
+        },
+        "hooks": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/HookMigration"
+          },
+          "type": "array"
+        },
+        "mcpServers": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/McpServerMigration"
+          },
+          "type": "array"
+        },
         "plugins": {
+          "default": [],
           "items": {
             "$ref": "#/definitions/PluginsMigration"
           },
           "type": "array"
+        },
+        "sessions": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/SessionMigration"
+          },
+          "type": "array"
+        },
+        "subagents": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/SubagentMigration"
+          },
+          "type": "array"
         }
       },
-      "required": [
-        "plugins"
-      ],
       "type": "object"
     },
     "ModeKind": {
@@ -7675,6 +7883,32 @@
         "data"
       ],
       "title": "ModelListResponse",
+      "type": "object"
+    },
+    "ModelProviderCapabilitiesReadParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ModelProviderCapabilitiesReadParams",
+      "type": "object"
+    },
+    "ModelProviderCapabilitiesReadResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "imageGeneration": {
+          "type": "boolean"
+        },
+        "namespaceTools": {
+          "type": "boolean"
+        },
+        "webSearch": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "imageGeneration",
+        "namespaceTools",
+        "webSearch"
+      ],
+      "title": "ModelProviderCapabilitiesReadResponse",
       "type": "object"
     },
     "ModelRerouteReason": {
@@ -9249,6 +9483,35 @@
       ],
       "type": "string"
     },
+    "RemoteControlConnectionStatus": {
+      "enum": [
+        "disabled",
+        "connecting",
+        "connected",
+        "errored"
+      ],
+      "type": "string"
+    },
+    "RemoteControlStatusChangedNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Current remote-control connection status and environment id exposed to clients.",
+      "properties": {
+        "environmentId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/RemoteControlConnectionStatus"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "RemoteControlStatusChangedNotification",
+      "type": "object"
+    },
     "RequestId": {
       "anyOf": [
         {
@@ -9835,26 +10098,6 @@
             "type"
           ],
           "title": "ImageGenerationCallResponseItem",
-          "type": "object"
-        },
-        {
-          "properties": {
-            "ghost_commit": {
-              "$ref": "#/definitions/GhostCommit"
-            },
-            "type": {
-              "enum": [
-                "ghost_snapshot"
-              ],
-              "title": "GhostSnapshotResponseItemType",
-              "type": "string"
-            }
-          },
-          "required": [
-            "ghost_commit",
-            "type"
-          ],
-          "title": "GhostSnapshotResponseItem",
           "type": "object"
         },
         {
@@ -11009,6 +11252,26 @@
           "properties": {
             "method": {
               "enum": [
+                "remoteControl/status/changed"
+              ],
+              "title": "RemoteControl/status/changedNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/RemoteControlStatusChangedNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "RemoteControl/status/changedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
                 "externalAgentConfig/import/completed"
               ],
               "title": "ExternalAgentConfig/import/completedNotificationMethod",
@@ -11534,6 +11797,27 @@
       ],
       "type": "string"
     },
+    "SessionMigration": {
+      "properties": {
+        "cwd": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "cwd",
+        "path"
+      ],
+      "type": "object"
+    },
     "SessionSource": {
       "oneOf": [
         {
@@ -12048,6 +12332,17 @@
         }
       ]
     },
+    "SubagentMigration": {
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
     "TerminalInteractionNotification": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -12421,17 +12716,6 @@
             "null"
           ]
         },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Full permissions override for the forked thread. Cannot be combined with `sandbox`."
-        },
         "sandbox": {
           "anyOf": [
             {
@@ -12499,18 +12783,6 @@
         },
         "modelProvider": {
           "type": "string"
-        },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Canonical active permissions view for this thread."
         },
         "reasoningEffort": {
           "anyOf": [
@@ -13945,17 +14217,6 @@
             "null"
           ]
         },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Full permissions override for the resumed thread. Cannot be combined with `sandbox`."
-        },
         "personality": {
           "anyOf": [
             {
@@ -14033,18 +14294,6 @@
         },
         "modelProvider": {
           "type": "string"
-        },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Canonical active permissions view for this thread."
         },
         "reasoningEffort": {
           "anyOf": [
@@ -14262,17 +14511,6 @@
             "null"
           ]
         },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Full permissions override for this thread. Cannot be combined with `sandbox`."
-        },
         "personality": {
           "anyOf": [
             {
@@ -14360,18 +14598,6 @@
         },
         "modelProvider": {
           "type": "string"
-        },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Canonical active permissions view for this thread."
         },
         "reasoningEffort": {
           "anyOf": [
@@ -15077,17 +15303,6 @@
         },
         "outputSchema": {
           "description": "Optional JSON Schema used to constrain the final assistant message for this turn."
-        },
-        "permissionProfile": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/PermissionProfile"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Override the full permissions profile for this turn and subsequent turns. Cannot be combined with `sandboxPolicy`."
         },
         "personality": {
           "anyOf": [

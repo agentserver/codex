@@ -191,10 +191,12 @@ Example with notification opt-out:
 - `fs/unwatch` — stop sending notifications for a prior `fs/watch`; returns `{}`.
 - `fs/changed` — notification emitted when watched paths change, including the `watchId` and `changedPaths`.
 - `model/list` — list available models (set `includeHidden: true` to include entries with `hidden: true`), with reasoning effort options, `additionalSpeedTiers`, optional legacy `upgrade` model ids, optional `upgradeInfo` metadata (`model`, `upgradeCopy`, `modelLink`, `migrationMarkdown`), and optional `availabilityNux` metadata.
+- `modelProvider/capabilities/read` — read provider-level capabilities for the currently configured model provider.
 - `experimentalFeature/list` — list feature flags with stage metadata (`beta`, `underDevelopment`, `stable`, etc.), enabled/default-enabled state, and cursor pagination. For non-beta flags, `displayName`/`description`/`announcement` are `null`.
-- `experimentalFeature/enablement/set` — patch the in-memory process-wide runtime feature enablement for the currently supported feature keys (`apps`, `plugins`). For each feature, precedence is: cloud requirements > --enable <feature_name> > config.toml > experimentalFeature/enablement/set (new) > code default.
+- `experimentalFeature/enablement/set` — patch the in-memory process-wide runtime feature enablement for the currently supported feature keys (`apps`, `memories`, `plugins`, `remote_control`, `tool_search`, `tool_suggest`, `tool_call_mcp_elicitation`). For each feature, precedence is: cloud requirements > --enable <feature_name> > config.toml > experimentalFeature/enablement/set (new) > code default.
 - `collaborationMode/list` — list available collaboration mode presets (experimental, no pagination). This response omits built-in developer instructions; clients should either pass `settings.developer_instructions: null` when setting a mode to use Codex's built-in instructions, or provide their own instructions explicitly.
 - `skills/list` — list skills for one or more `cwd` values (optional `forceReload`).
+- `hooks/list` — list discovered hooks for one or more `cwd` values.
 - `marketplace/add` — add a remote plugin marketplace from an HTTP(S) Git URL, SSH Git URL, or GitHub `owner/repo` shorthand, then persist it into the user marketplace config. Returns the installed root path plus whether the marketplace was already present.
 - `marketplace/remove` — remove a configured marketplace by name from the user marketplace config, and delete its installed marketplace root when one exists.
 - `marketplace/upgrade` — upgrade all configured Git plugin marketplaces, or one named marketplace when `marketplaceName` is provided. Returns selected marketplace names, upgraded roots, and per-marketplace errors.
@@ -205,9 +207,10 @@ Example with notification opt-out:
 - `device/key/create` — create or load a controller-local device signing key for an account/client binding. This local-key API is available only over local transports such as stdio and in-process; remote transports reject it. Hardware-backed providers are the target protection class; an OS-protected non-extractable fallback is allowed only with `protectionPolicy: "allow_os_protected_nonextractable"` and returns the reported `protectionClass`.
 - `device/key/public` — return a device key's SPKI DER public key as base64 plus its `algorithm` and `protectionClass`.
 - `device/key/sign` — sign one of the accepted structured payload variants with a controller-local device key. The only accepted payload today is `remoteControlClientConnection`, which binds a server-issued `/client` websocket challenge to the enrolled controller device without signing the bearer token itself; this is intentionally not an arbitrary-byte signing API.
+- `remoteControl/status/changed` — notification emitted when the remote-control status or client-visible environment id changes. `status` is one of `disabled`, `connecting`, `connected`, or `errored`; `environmentId` is a string when the app-server has a current enrollment and `null` when that enrollment is cleared, invalidated, or remote control is disabled. Newly initialized app-server clients always receive the current status snapshot.
 - `skills/config/write` — write user-level skill config by name or absolute path.
 - `plugin/install` — install a plugin from a discovered marketplace entry, rejecting marketplace entries marked unavailable for install, install MCPs if any, and return the effective plugin auth policy plus any apps that still need auth (**under development; do not call from production clients yet**).
-- `plugin/uninstall` — uninstall a plugin by id by removing its cached files and clearing its user-level config entry (**under development; do not call from production clients yet**).
+- `plugin/uninstall` — uninstall a local plugin by `pluginId` in `<plugin>@<marketplace>` form by removing its cached files and clearing its user-level config entry, or uninstall a remote ChatGPT plugin by backend `pluginId` by forwarding the uninstall to the ChatGPT plugin backend and removing any downloaded remote-plugin cache (**under development; do not call from production clients yet**).
 - `mcpServer/oauth/login` — start an OAuth login for a configured MCP server; returns an `authorization_url` and later emits `mcpServer/oauthLogin/completed` once the browser flow finishes.
 - `tool/requestUserInput` — prompt the user with 1–3 short questions for a tool call and return their answers (experimental).
 - `config/mcpServer/reload` — reload MCP server config from disk and queue a refresh for loaded threads (applied on each thread's next active turn); returns `{}`. Use this after editing `config.toml` without restarting the server.
@@ -909,7 +912,7 @@ Run a standalone command (argv vector) in the server’s sandbox without creatin
         "type": "managed",
         "fileSystem": { "type": "restricted", "entries": [
             { "path": { "type": "special", "value": { "kind": "root" } }, "access": "read" },
-            { "path": { "type": "special", "value": { "kind": "current_working_directory" } }, "access": "write" }
+            { "path": { "type": "special", "value": { "kind": "project_roots", "subpath": null } }, "access": "write" }
         ] },
         "network": { "enabled": false }
     },
@@ -1255,7 +1258,7 @@ the client can offer session-scoped and/or persistent approval choices.
 
 ### Permission requests
 
-The built-in `request_permissions` tool sends an `item/permissions/requestApproval` JSON-RPC request to the client with the requested permission profile. This v2 payload mirrors the command-execution `additionalPermissions` shape: it can request network access and additional filesystem access. The `cwd` field identifies the directory used to resolve cwd-relative permissions such as `:cwd`, `:project_roots`, and relative deny globs.
+The built-in `request_permissions` tool sends an `item/permissions/requestApproval` JSON-RPC request to the client with the requested permission profile. This v2 payload mirrors the command-execution `additionalPermissions` shape: it can request network access and additional filesystem access. The `cwd` field identifies the directory used to resolve project-root permissions and relative deny globs.
 
 ```json
 {
@@ -1449,6 +1452,69 @@ To enable or disable a skill by name:
   }
 }
 ```
+
+Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled hooks are still returned with `"enabled": false` so clients can render and re-enable them. Hook state is stored under `hooks.state`; clients should treat hooks from managed sources as non-configurable, and user config entries for those keys are ignored during loading. Hook keys combine the source identity with a trailing event/group/handler selector that is currently positional.
+
+```json
+{
+  "method": "hooks/list",
+  "id": 28,
+  "params": {
+    "cwds": ["/Users/me/project"]
+  }
+}
+```
+
+```json
+{
+  "id": 28,
+  "result": {
+    "data": [{
+      "cwd": "/Users/me/project",
+      "hooks": [{
+        "key": "/Users/me/.codex/config.toml:pre_tool_use:0:0",
+        "eventName": "pre_tool_use",
+        "handlerType": "command",
+        "isManaged": false,
+        "matcher": "Bash",
+        "command": "python3 /Users/me/hook.py",
+        "timeoutSec": 5,
+        "statusMessage": "running hook",
+        "sourcePath": "/Users/me/.codex/config.toml",
+        "source": "user",
+        "pluginId": null,
+        "displayOrder": 0,
+        "enabled": true
+      }],
+      "warnings": [],
+      "errors": []
+    }]
+  }
+}
+```
+
+To disable a non-managed hook, upsert a state entry at `hooks.state` with `config/batchWrite`:
+
+```json
+{
+  "method": "config/batchWrite",
+  "id": 29,
+  "params": {
+    "edits": [{
+      "keyPath": "hooks.state",
+      "value": {
+        "/Users/me/.codex/config.toml:pre_tool_use:0:0": {
+          "enabled": false
+        }
+      },
+      "mergeStrategy": "upsert"
+    }],
+    "reloadUserConfig": true
+  }
+}
+```
+
+To re-enable it, upsert the same hook key with `"enabled": true`.
 
 ## Apps
 

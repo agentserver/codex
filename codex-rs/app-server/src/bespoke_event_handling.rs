@@ -2,8 +2,8 @@ use crate::codex_message_processor::ApiVersion;
 use crate::codex_message_processor::read_rollout_items_from_rollout;
 use crate::codex_message_processor::read_summary_from_rollout;
 use crate::codex_message_processor::summary_to_thread;
-use crate::error_code::INTERNAL_ERROR_CODE;
-use crate::error_code::INVALID_REQUEST_ERROR_CODE;
+use crate::error_code::internal_error;
+use crate::error_code::invalid_request;
 use crate::outgoing_message::ClientRequestResult;
 use crate::outgoing_message::ThreadScopedOutgoingMessageSender;
 use crate::server_request_error::is_turn_transition_server_request_error;
@@ -51,7 +51,6 @@ use codex_app_server_protocol::HookStartedNotification;
 use codex_app_server_protocol::InterruptConversationResponse;
 use codex_app_server_protocol::ItemCompletedNotification;
 use codex_app_server_protocol::ItemStartedNotification;
-use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::McpServerElicitationAction;
 use codex_app_server_protocol::McpServerElicitationRequestParams;
 use codex_app_server_protocol::McpServerElicitationRequestResponse;
@@ -179,6 +178,7 @@ pub(crate) async fn apply_bespoke_event_handling(
     outgoing: ThreadScopedOutgoingMessageSender,
     thread_state: Arc<tokio::sync::Mutex<ThreadState>>,
     thread_watch_manager: ThreadWatchManager,
+    thread_list_state_permit: Arc<tokio::sync::Semaphore>,
     api_version: ApiVersion,
     fallback_model_provider: String,
     codex_home: &Path,
@@ -1875,13 +1875,27 @@ pub(crate) async fn apply_bespoke_event_handling(
             };
 
             if let Some(request_id) = pending {
+                let _thread_list_state_permit = match thread_list_state_permit.acquire().await {
+                    Ok(permit) => permit,
+                    Err(err) => {
+                        outgoing
+                            .send_error(
+                                request_id,
+                                internal_error(format!(
+                                    "failed to acquire thread list state permit: {err}"
+                                )),
+                            )
+                            .await;
+                        return;
+                    }
+                };
                 let Some(rollout_path) = conversation.rollout_path() else {
-                    let error = JSONRPCErrorError {
-                        code: INVALID_REQUEST_ERROR_CODE,
-                        message: "thread has no persisted rollout".to_string(),
-                        data: None,
-                    };
-                    outgoing.send_error(request_id, error).await;
+                    outgoing
+                        .send_error(
+                            request_id,
+                            invalid_request("thread has no persisted rollout"),
+                        )
+                        .await;
                     return;
                 };
                 let response = match read_summary_from_rollout(
@@ -1912,29 +1926,29 @@ pub(crate) async fn apply_bespoke_event_handling(
                                 ThreadRollbackResponse { thread }
                             }
                             Err(err) => {
-                                let error = JSONRPCErrorError {
-                                    code: INTERNAL_ERROR_CODE,
-                                    message: format!(
-                                        "failed to load rollout `{}`: {err}",
-                                        rollout_path.display()
-                                    ),
-                                    data: None,
-                                };
-                                outgoing.send_error(request_id.clone(), error).await;
+                                outgoing
+                                    .send_error(
+                                        request_id.clone(),
+                                        internal_error(format!(
+                                            "failed to load rollout `{}`: {err}",
+                                            rollout_path.display()
+                                        )),
+                                    )
+                                    .await;
                                 return;
                             }
                         }
                     }
                     Err(err) => {
-                        let error = JSONRPCErrorError {
-                            code: INTERNAL_ERROR_CODE,
-                            message: format!(
-                                "failed to load rollout `{}`: {err}",
-                                rollout_path.display()
-                            ),
-                            data: None,
-                        };
-                        outgoing.send_error(request_id.clone(), error).await;
+                        outgoing
+                            .send_error(
+                                request_id.clone(),
+                                internal_error(format!(
+                                    "failed to load rollout `{}`: {err}",
+                                    rollout_path.display()
+                                )),
+                            )
+                            .await;
                         return;
                     }
                 };
@@ -2332,14 +2346,7 @@ async fn handle_thread_rollback_failed(
 
     if let Some(request_id) = pending_rollback {
         outgoing
-            .send_error(
-                request_id,
-                JSONRPCErrorError {
-                    code: INVALID_REQUEST_ERROR_CODE,
-                    message: message.clone(),
-                    data: None,
-                },
-            )
+            .send_error(request_id, invalid_request(message))
             .await;
     }
 }
@@ -3279,6 +3286,7 @@ mod tests {
                 self.outgoing.clone(),
                 self.thread_state.clone(),
                 self.thread_watch_manager.clone(),
+                Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
                 ApiVersion::V2,
                 "test-provider".to_string(),
                 &self.codex_home,
@@ -4008,7 +4016,7 @@ mod tests {
             file_system: Some(CoreFileSystemPermissions {
                 entries: vec![FileSystemSandboxEntry {
                     path: FileSystemPath::Special {
-                        value: FileSystemSpecialPath::CurrentWorkingDirectory,
+                        value: FileSystemSpecialPath::project_roots(/*subpath*/ None),
                     },
                     access: FileSystemAccessMode::Write,
                 }],
@@ -4054,7 +4062,7 @@ mod tests {
             file_system: Some(CoreFileSystemPermissions {
                 entries: vec![FileSystemSandboxEntry {
                     path: FileSystemPath::Special {
-                        value: FileSystemSpecialPath::CurrentWorkingDirectory,
+                        value: FileSystemSpecialPath::project_roots(/*subpath*/ None),
                     },
                     access: FileSystemAccessMode::Write,
                 }],
@@ -4104,7 +4112,8 @@ mod tests {
                             "path": {
                                 "type": "special",
                                 "value": {
-                                    "kind": "current_working_directory"
+                                    "kind": "project_roots",
+                                    "subpath": null
                                 }
                             },
                             "access": "write"

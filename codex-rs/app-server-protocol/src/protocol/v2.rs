@@ -470,6 +470,7 @@ v2_enum_from_core!(
         Mdm,
         SessionFlags,
         Plugin,
+        CloudRequirements,
         LegacyManagedConfigFile,
         LegacyManagedConfigMdm,
         Unknown,
@@ -1092,6 +1093,18 @@ pub enum ExternalAgentConfigMigrationItemType {
     #[serde(rename = "MCP_SERVER_CONFIG")]
     #[ts(rename = "MCP_SERVER_CONFIG")]
     McpServerConfig,
+    #[serde(rename = "SUBAGENTS")]
+    #[ts(rename = "SUBAGENTS")]
+    Subagents,
+    #[serde(rename = "HOOKS")]
+    #[ts(rename = "HOOKS")]
+    Hooks,
+    #[serde(rename = "COMMANDS")]
+    #[ts(rename = "COMMANDS")]
+    Commands,
+    #[serde(rename = "SESSIONS")]
+    #[ts(rename = "SESSIONS")]
+    Sessions,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -1109,8 +1122,56 @@ pub struct PluginsMigration {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
+pub struct SessionMigration {
+    pub path: PathBuf,
+    pub cwd: PathBuf,
+    pub title: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct McpServerMigration {
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct HookMigration {
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct SubagentMigration {
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct CommandMigration {
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
 pub struct MigrationDetails {
+    #[serde(default)]
     pub plugins: Vec<PluginsMigration>,
+    #[serde(default)]
+    pub sessions: Vec<SessionMigration>,
+    #[serde(default)]
+    pub mcp_servers: Vec<McpServerMigration>,
+    #[serde(default)]
+    pub hooks: Vec<HookMigration>,
+    #[serde(default)]
+    pub subagents: Vec<SubagentMigration>,
+    #[serde(default)]
+    pub commands: Vec<CommandMigration>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -1435,7 +1496,7 @@ v2_enum_from_core!(
 pub enum FileSystemSpecialPath {
     Root,
     Minimal,
-    CurrentWorkingDirectory,
+    #[serde(alias = "current_working_directory")]
     ProjectRoots {
         subpath: Option<PathBuf>,
     },
@@ -1452,7 +1513,6 @@ impl From<CoreFileSystemSpecialPath> for FileSystemSpecialPath {
         match value {
             CoreFileSystemSpecialPath::Root => Self::Root,
             CoreFileSystemSpecialPath::Minimal => Self::Minimal,
-            CoreFileSystemSpecialPath::CurrentWorkingDirectory => Self::CurrentWorkingDirectory,
             CoreFileSystemSpecialPath::ProjectRoots { subpath } => Self::ProjectRoots { subpath },
             CoreFileSystemSpecialPath::Tmpdir => Self::Tmpdir,
             CoreFileSystemSpecialPath::SlashTmp => Self::SlashTmp,
@@ -1466,7 +1526,6 @@ impl From<FileSystemSpecialPath> for CoreFileSystemSpecialPath {
         match value {
             FileSystemSpecialPath::Root => Self::Root,
             FileSystemSpecialPath::Minimal => Self::Minimal,
-            FileSystemSpecialPath::CurrentWorkingDirectory => Self::CurrentWorkingDirectory,
             FileSystemSpecialPath::ProjectRoots { subpath } => Self::ProjectRoots { subpath },
             FileSystemSpecialPath::Tmpdir => Self::Tmpdir,
             FileSystemSpecialPath::SlashTmp => Self::SlashTmp,
@@ -1999,6 +2058,8 @@ impl From<CoreSessionSource> for SessionSource {
             CoreSessionSource::Exec => SessionSource::Exec,
             CoreSessionSource::Mcp => SessionSource::AppServer,
             CoreSessionSource::Custom(source) => SessionSource::Custom(source),
+            // We do not want to render those at the app-server level.
+            CoreSessionSource::Internal(_) => SessionSource::Unknown,
             CoreSessionSource::SubAgent(sub) => SessionSource::SubAgent(sub),
             CoreSessionSource::Unknown => SessionSource::Unknown,
         }
@@ -2293,6 +2354,20 @@ pub struct GetAccountParams {
 pub struct GetAccountResponse {
     pub account: Option<Account>,
     pub requires_openai_auth: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ModelProviderCapabilitiesReadParams {}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ModelProviderCapabilitiesReadResponse {
+    pub namespace_tools: bool,
+    pub image_generation: bool,
+    pub web_search: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema, TS)]
@@ -2863,6 +2938,25 @@ pub struct DeviceKeyPublicResponse {
     pub protection_class: DeviceKeyProtectionClass,
 }
 
+/// Current remote-control connection status and environment id exposed to clients.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct RemoteControlStatusChangedNotification {
+    pub status: RemoteControlConnectionStatus,
+    pub environment_id: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export_to = "v2/")]
+pub enum RemoteControlConnectionStatus {
+    Disabled,
+    Connecting,
+    Connected,
+    Errored,
+}
+
 /// Audience for a remote-control client connection device-key proof.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
@@ -3166,7 +3260,7 @@ pub struct CommandExecTerminalSize {
 /// The final `command/exec` response is deferred until the process exits and is
 /// sent only after all `command/exec/outputDelta` notifications for that
 /// connection have been emitted.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS, ExperimentalApi)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CommandExecParams {
@@ -3245,6 +3339,7 @@ pub struct CommandExecParams {
     ///
     /// Defaults to the user's configured permissions when omitted. Cannot be
     /// combined with `sandboxPolicy`.
+    #[experimental("command/exec.permissionProfile")]
     #[ts(optional = nullable)]
     pub permission_profile: Option<PermissionProfile>,
 }
@@ -3367,6 +3462,7 @@ pub struct ThreadStartParams {
     pub sandbox: Option<SandboxMode>,
     /// Full permissions override for this thread. Cannot be combined with
     /// `sandbox`.
+    #[experimental("thread/start.permissionProfile")]
     #[ts(optional = nullable)]
     pub permission_profile: Option<PermissionProfile>,
     #[ts(optional = nullable)]
@@ -3450,6 +3546,7 @@ pub struct ThreadStartResponse {
     /// view.
     pub sandbox: SandboxPolicy,
     /// Canonical active permissions view for this thread.
+    #[experimental("thread/start.permissionProfile")]
     #[serde(default)]
     pub permission_profile: Option<PermissionProfile>,
     pub reasoning_effort: Option<ReasoningEffort>,
@@ -3511,6 +3608,7 @@ pub struct ThreadResumeParams {
     pub sandbox: Option<SandboxMode>,
     /// Full permissions override for the resumed thread. Cannot be combined
     /// with `sandbox`.
+    #[experimental("thread/resume.permissionProfile")]
     #[ts(optional = nullable)]
     pub permission_profile: Option<PermissionProfile>,
     #[ts(optional = nullable)]
@@ -3554,6 +3652,7 @@ pub struct ThreadResumeResponse {
     /// view.
     pub sandbox: SandboxPolicy,
     /// Canonical active permissions view for this thread.
+    #[experimental("thread/resume.permissionProfile")]
     #[serde(default)]
     pub permission_profile: Option<PermissionProfile>,
     pub reasoning_effort: Option<ReasoningEffort>,
@@ -3606,6 +3705,7 @@ pub struct ThreadForkParams {
     pub sandbox: Option<SandboxMode>,
     /// Full permissions override for the forked thread. Cannot be combined
     /// with `sandbox`.
+    #[experimental("thread/fork.permissionProfile")]
     #[ts(optional = nullable)]
     pub permission_profile: Option<PermissionProfile>,
     #[ts(optional = nullable)]
@@ -3649,6 +3749,7 @@ pub struct ThreadForkResponse {
     /// view.
     pub sandbox: SandboxPolicy,
     /// Canonical active permissions view for this thread.
+    #[experimental("thread/fork.permissionProfile")]
     #[serde(default)]
     pub permission_profile: Option<PermissionProfile>,
     pub reasoning_effort: Option<ReasoningEffort>,
@@ -4257,6 +4358,22 @@ pub struct SkillsListResponse {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
+pub struct HooksListParams {
+    /// When empty, defaults to the current session working directory.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cwds: Vec<PathBuf>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct HooksListResponse {
+    pub data: Vec<HooksListEntry>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
 pub struct MarketplaceAddParams {
     pub source: String,
     #[ts(optional = nullable)]
@@ -4455,6 +4572,43 @@ pub struct SkillsListEntry {
     pub cwd: PathBuf,
     pub skills: Vec<SkillMetadata>,
     pub errors: Vec<SkillErrorInfo>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct HooksListEntry {
+    pub cwd: PathBuf,
+    pub hooks: Vec<HookMetadata>,
+    pub warnings: Vec<String>,
+    pub errors: Vec<HookErrorInfo>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct HookMetadata {
+    pub key: String,
+    pub event_name: HookEventName,
+    pub handler_type: HookHandlerType,
+    pub matcher: Option<String>,
+    pub command: Option<String>,
+    pub timeout_sec: u64,
+    pub status_message: Option<String>,
+    pub source_path: AbsolutePathBuf,
+    pub source: HookSource,
+    pub plugin_id: Option<String>,
+    pub display_order: i64,
+    pub enabled: bool,
+    pub is_managed: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct HookErrorInfo {
+    pub path: PathBuf,
+    pub message: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -5196,6 +5350,7 @@ pub struct TurnStartParams {
     pub sandbox_policy: Option<SandboxPolicy>,
     /// Override the full permissions profile for this turn and subsequent
     /// turns. Cannot be combined with `sandboxPolicy`.
+    #[experimental("turn/start.permissionProfile")]
     #[ts(optional = nullable)]
     pub permission_profile: Option<PermissionProfile>,
     /// Override the model for this turn and subsequent turns.
@@ -7843,7 +7998,46 @@ mod tests {
                         marketplace_name: "team-marketplace".to_string(),
                         plugin_names: vec!["asana".to_string()],
                     }],
+                    ..Default::default()
                 }),
+            }
+        );
+    }
+
+    #[test]
+    fn external_agent_config_import_params_accept_legacy_plugin_details() {
+        let params: ExternalAgentConfigImportParams = serde_json::from_value(json!({
+            "migrationItems": [{
+                "itemType": "PLUGINS",
+                "description": "Install supported plugins from Claude settings",
+                "cwd": absolute_path_string("repo"),
+                "details": {
+                    "plugins": [
+                        {
+                            "marketplaceName": "team-marketplace",
+                            "pluginNames": ["asana"]
+                        }
+                    ]
+                }
+            }]
+        }))
+        .expect("legacy plugin import params should deserialize");
+
+        assert_eq!(
+            params,
+            ExternalAgentConfigImportParams {
+                migration_items: vec![ExternalAgentConfigMigrationItem {
+                    item_type: ExternalAgentConfigMigrationItemType::Plugins,
+                    description: "Install supported plugins from Claude settings".to_string(),
+                    cwd: Some(PathBuf::from(absolute_path_string("repo"))),
+                    details: Some(MigrationDetails {
+                        plugins: vec![PluginsMigration {
+                            marketplace_name: "team-marketplace".to_string(),
+                            plugin_names: vec!["asana".to_string()],
+                        }],
+                        ..Default::default()
+                    }),
+                }],
             }
         );
     }
@@ -8119,6 +8313,26 @@ mod tests {
             "globScanMaxDepth": 0,
         }))
         .expect_err("zero glob scan depth should fail deserialization");
+    }
+
+    #[test]
+    fn legacy_current_working_directory_special_path_deserializes_as_project_roots() {
+        let special_path = serde_json::from_value::<FileSystemSpecialPath>(json!({
+            "kind": "current_working_directory",
+        }))
+        .expect("legacy cwd special path should deserialize");
+
+        assert_eq!(
+            special_path,
+            FileSystemSpecialPath::ProjectRoots { subpath: None }
+        );
+        assert_eq!(
+            serde_json::to_value(&special_path).expect("serialize special path"),
+            json!({
+                "kind": "project_roots",
+                "subpath": null,
+            })
+        );
     }
 
     #[test]
@@ -10287,6 +10501,27 @@ mod tests {
             .unwrap(),
             PluginUninstallParams {
                 plugin_id: "gmail@openai-curated".to_string(),
+            },
+        );
+
+        assert_eq!(
+            serde_json::to_value(PluginUninstallParams {
+                plugin_id: "plugins~Plugin_gmail".to_string(),
+            })
+            .unwrap(),
+            json!({
+                "pluginId": "plugins~Plugin_gmail",
+            }),
+        );
+
+        assert_eq!(
+            serde_json::from_value::<PluginUninstallParams>(json!({
+                "pluginId": "plugins~Plugin_gmail",
+                "forceRemoteSync": true,
+            }))
+            .unwrap(),
+            PluginUninstallParams {
+                plugin_id: "plugins~Plugin_gmail".to_string(),
             },
         );
     }

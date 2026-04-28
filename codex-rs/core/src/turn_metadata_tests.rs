@@ -149,6 +149,36 @@ fn turn_metadata_state_includes_turn_started_at_unix_ms_after_start() {
 }
 
 #[test]
+fn turn_metadata_state_includes_plugin_ids_used() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let cwd = temp_dir.path().abs();
+    let permission_profile = PermissionProfile::read_only();
+
+    let state = TurnMetadataState::new(
+        "session-a".to_string(),
+        &SessionSource::Exec,
+        "turn-a".to_string(),
+        cwd,
+        &permission_profile,
+        WindowsSandboxLevel::Disabled,
+        /*enforce_managed_network*/ false,
+    );
+    state.set_plugin_ids_used([
+        "slack@openai-curated".to_string(),
+        "github@openai-curated".to_string(),
+        "github@openai-curated".to_string(),
+    ]);
+
+    let header = state.current_header_value().expect("header");
+    let json: Value = serde_json::from_str(&header).expect("json");
+
+    assert_eq!(
+        json["plugin_ids_used"],
+        serde_json::json!(["github@openai-curated", "slack@openai-curated"])
+    );
+}
+
+#[test]
 fn turn_metadata_state_ignores_client_turn_started_at_unix_ms_before_start() {
     let temp_dir = TempDir::new().expect("temp dir");
     let cwd = temp_dir.path().abs();
@@ -175,6 +205,32 @@ fn turn_metadata_state_ignores_client_turn_started_at_unix_ms_before_start() {
 }
 
 #[test]
+fn turn_metadata_state_ignores_client_plugin_ids_used_when_unused() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let cwd = temp_dir.path().abs();
+    let permission_profile = PermissionProfile::read_only();
+
+    let state = TurnMetadataState::new(
+        "session-a".to_string(),
+        &SessionSource::Exec,
+        "turn-a".to_string(),
+        cwd,
+        &permission_profile,
+        WindowsSandboxLevel::Disabled,
+        /*enforce_managed_network*/ false,
+    );
+    state.set_responsesapi_client_metadata(HashMap::from([(
+        "plugin_ids_used".to_string(),
+        "client-supplied".to_string(),
+    )]));
+
+    let header = state.current_header_value().expect("header");
+    let json: Value = serde_json::from_str(&header).expect("json");
+
+    assert!(json.get("plugin_ids_used").is_none());
+}
+
+#[test]
 fn turn_metadata_state_merges_client_metadata_without_replacing_reserved_fields() {
     let temp_dir = TempDir::new().expect("temp dir");
     let cwd = temp_dir.path().abs();
@@ -193,6 +249,7 @@ fn turn_metadata_state_merges_client_metadata_without_replacing_reserved_fields(
         ("fiber_run_id".to_string(), "fiber-123".to_string()),
         ("session_id".to_string(), "client-supplied".to_string()),
         ("thread_source".to_string(), "client-supplied".to_string()),
+        ("turn_id".to_string(), "client-supplied".to_string()),
         (
             "turn_started_at_unix_ms".to_string(),
             "client-supplied".to_string(),

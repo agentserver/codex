@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -19,6 +20,9 @@ use codex_protocol::protocol::SessionSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 const TURN_STARTED_AT_UNIX_MS_KEY: &str = "turn_started_at_unix_ms";
+const PLUGIN_IDS_USED_KEY: &str = "plugin_ids_used";
+const RESERVED_DYNAMIC_METADATA_KEYS: [&str; 2] =
+    [TURN_STARTED_AT_UNIX_MS_KEY, PLUGIN_IDS_USED_KEY];
 
 #[derive(Clone, Debug, Default)]
 struct WorkspaceGitMetadata {
@@ -77,23 +81,20 @@ impl TurnMetadataBag {
 
 fn merge_turn_metadata(
     header: &str,
-    turn_started_at_unix_ms: Option<i64>,
+    additional_metadata: &BTreeMap<String, Value>,
     responsesapi_client_metadata: Option<&HashMap<String, String>>,
 ) -> Option<String> {
-    if turn_started_at_unix_ms.is_none() && responsesapi_client_metadata.is_none() {
+    if additional_metadata.is_empty() && responsesapi_client_metadata.is_none() {
         return None;
     }
 
     let mut metadata = serde_json::from_str::<serde_json::Map<String, Value>>(header).ok()?;
-    if let Some(turn_started_at_unix_ms) = turn_started_at_unix_ms {
-        metadata.insert(
-            TURN_STARTED_AT_UNIX_MS_KEY.to_string(),
-            Value::Number(turn_started_at_unix_ms.into()),
-        );
+    for (key, value) in additional_metadata {
+        metadata.insert(key.clone(), value.clone());
     }
     if let Some(responsesapi_client_metadata) = responsesapi_client_metadata {
         for (key, value) in responsesapi_client_metadata {
-            if key == TURN_STARTED_AT_UNIX_MS_KEY {
+            if RESERVED_DYNAMIC_METADATA_KEYS.contains(&key.as_str()) {
                 continue;
             }
             metadata
@@ -170,7 +171,7 @@ pub(crate) struct TurnMetadataState {
     base_metadata: TurnMetadataBag,
     base_header: String,
     enriched_header: Arc<RwLock<Option<String>>>,
-    turn_started_at_unix_ms: Arc<RwLock<Option<i64>>>,
+    additional_metadata: Arc<RwLock<BTreeMap<String, Value>>>,
     responsesapi_client_metadata: Arc<RwLock<Option<HashMap<String, String>>>>,
     enrichment_task: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
@@ -212,7 +213,7 @@ impl TurnMetadataState {
             base_metadata,
             base_header,
             enriched_header: Arc::new(RwLock::new(None)),
-            turn_started_at_unix_ms: Arc::new(RwLock::new(None)),
+            additional_metadata: Arc::new(RwLock::new(BTreeMap::new())),
             responsesapi_client_metadata: Arc::new(RwLock::new(None)),
             enrichment_task: Arc::new(Mutex::new(None)),
         }
@@ -230,10 +231,11 @@ impl TurnMetadataState {
         } else {
             self.base_header.clone()
         };
-        let turn_started_at_unix_ms = *self
-            .turn_started_at_unix_ms
+        let additional_metadata = self
+            .additional_metadata
             .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         let responsesapi_client_metadata = self
             .responsesapi_client_metadata
             .read()
@@ -241,7 +243,7 @@ impl TurnMetadataState {
             .clone();
         merge_turn_metadata(
             &header,
-            turn_started_at_unix_ms,
+            &additional_metadata,
             responsesapi_client_metadata.as_ref(),
         )
         .or(Some(header))
@@ -264,10 +266,33 @@ impl TurnMetadataState {
     }
 
     pub(crate) fn set_turn_started_at_unix_ms(&self, turn_started_at_unix_ms: i64) {
-        *self
-            .turn_started_at_unix_ms
+        self.additional_metadata
             .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(turn_started_at_unix_ms);
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                TURN_STARTED_AT_UNIX_MS_KEY.to_string(),
+                Value::Number(turn_started_at_unix_ms.into()),
+            );
+    }
+
+    pub(crate) fn set_plugin_ids_used<I>(&self, plugin_ids: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        let plugin_ids = plugin_ids.into_iter().collect::<BTreeSet<_>>();
+        let mut additional_metadata = self
+            .additional_metadata
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if plugin_ids.is_empty() {
+            additional_metadata.remove(PLUGIN_IDS_USED_KEY);
+            return;
+        }
+
+        additional_metadata.insert(
+            PLUGIN_IDS_USED_KEY.to_string(),
+            Value::Array(plugin_ids.into_iter().map(Value::String).collect()),
+        );
     }
 
     pub(crate) fn spawn_git_enrichment_task(&self) {

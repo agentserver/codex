@@ -274,6 +274,11 @@ pub(crate) async fn run_turn(
         .iter()
         .filter_map(crate::plugins::PluginCapabilitySummary::telemetry_metadata)
         .collect::<Vec<_>>();
+    turn_context.turn_metadata_state.set_plugin_ids_used(
+        mentioned_plugin_metadata
+            .iter()
+            .map(|plugin| plugin.plugin_id.as_key()),
+    );
 
     let mut explicitly_enabled_connectors = collect_explicit_app_ids(&input);
     explicitly_enabled_connectors.extend(collect_explicit_app_ids_from_skill_items(

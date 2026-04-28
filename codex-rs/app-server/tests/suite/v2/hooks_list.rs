@@ -59,6 +59,7 @@ async fn hooks_list_shows_discovered_hook() -> Result<()> {
     assert_eq!(data[0].cwd.as_path(), cwd.path());
     assert_eq!(data[0].hooks.len(), 1);
     let hook = &data[0].hooks[0];
+    assert!(hook.key.starts_with("file:"));
     assert_eq!(hook.event_name, HookEventName::PreToolUse);
     assert_eq!(hook.matcher.as_deref(), Some("Bash"));
     assert_eq!(hook.command.as_deref(), Some("python3 /tmp/listed-hook.py"));

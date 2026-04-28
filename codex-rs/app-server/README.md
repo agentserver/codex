@@ -1452,7 +1452,7 @@ To enable or disable a skill by name:
 }
 ```
 
-Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled hooks are still returned with `"enabled": false` so clients can render and re-enable them. Managed hooks are returned with `"isManaged": true` and cannot be changed through `hooks/config/write`.
+Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled hooks are still returned with `"enabled": false` so clients can render and re-enable them. Managed hook keys use the `managed:` prefix and cannot be changed through `hooks/config/write`. Hook keys are source-namespaced with `file:`, `managed:`, or `plugin:` prefixes; the trailing event/group/handler selector is currently positional.
 
 ```json
 {
@@ -1471,7 +1471,7 @@ Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled 
     "data": [{
       "cwd": "/Users/me/project",
       "hooks": [{
-        "key": "path:/Users/me/.codex/config.toml:pre_tool_use:0:0",
+        "key": "file:/Users/me/.codex/config.toml:pre_tool_use:0:0",
         "eventName": "pre_tool_use",
         "handlerType": "command",
         "matcher": "Bash",
@@ -1482,8 +1482,7 @@ Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled 
         "source": "user",
         "pluginId": null,
         "displayOrder": 0,
-        "enabled": true,
-        "isManaged": false
+        "enabled": true
       }],
       "warnings": [],
       "errors": []
@@ -1499,7 +1498,7 @@ To enable or disable a non-managed hook, write the hook key returned by `hooks/l
   "method": "hooks/config/write",
   "id": 29,
   "params": {
-    "key": "path:/Users/me/.codex/config.toml:pre_tool_use:0:0",
+    "key": "file:/Users/me/.codex/config.toml:pre_tool_use:0:0",
     "enabled": false
   }
 }

@@ -92,7 +92,7 @@ pub(crate) fn discover_handlers(
                     &mut display_order,
                     HookHandlerSource {
                         path: &source_path,
-                        key_prefix: format!("path:{}", source_path.display()),
+                        key_prefix: format!("file:{}", source_path.display()),
                         is_managed: false,
                         source: hook_source,
                         hook_config_rules: &hook_config_rules,
@@ -144,7 +144,7 @@ fn append_managed_requirement_handlers(
         display_order,
         HookHandlerSource {
             path: &source_path,
-            key_prefix: format!("path:{}", source_path.display()),
+            key_prefix: format!("managed:{}", source_path.display()),
             is_managed: true,
             source: hook_source_for_requirement_source(managed_hooks.source.as_ref()),
             hook_config_rules,
@@ -406,7 +406,7 @@ fn append_matcher_groups(
                         command.replace(&format!("${{{key}}}"), value)
                     });
                     let timeout_sec = timeout_sec.unwrap_or(600).max(1);
-                    // TODO(abhinav): replace this positional selector with a durable hook id.
+                    // TODO(abhinav): replace this positional suffix with a durable hook id.
                     let key = format!(
                         "{}:{}:{}:{}",
                         source.key_prefix,
@@ -428,7 +428,6 @@ fn append_matcher_groups(
                         plugin_id: source.plugin_id.clone(),
                         display_order: *display_order,
                         enabled,
-                        is_managed: source.is_managed,
                     });
                     if enabled {
                         handlers.push(ConfiguredHandler {
@@ -530,7 +529,7 @@ mod tests {
     ) -> super::HookHandlerSource<'a> {
         super::HookHandlerSource {
             path,
-            key_prefix: format!("path:{}", path.display()),
+            key_prefix: format!("file:{}", path.display()),
             is_managed: false,
             source: hook_source(),
             hook_config_rules,

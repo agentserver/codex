@@ -140,7 +140,7 @@ fn set_hook_config_writes_disabled_entry() {
 
     ConfigEditsBuilder::new(codex_home)
         .with_edits([ConfigEdit::SetHookConfig {
-            key: "path:/tmp/hooks.json:pre_tool_use:0:0".to_string(),
+            key: "file:/tmp/hooks.json:pre_tool_use:0:0".to_string(),
             enabled: false,
         }])
         .apply_blocking()
@@ -148,7 +148,7 @@ fn set_hook_config_writes_disabled_entry() {
 
     let contents = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
     let expected = r#"[[hooks.config]]
-key = "path:/tmp/hooks.json:pre_tool_use:0:0"
+key = "file:/tmp/hooks.json:pre_tool_use:0:0"
 enabled = false
 "#;
     assert_eq!(contents, expected);
@@ -161,7 +161,7 @@ fn set_hook_config_removes_entry_when_enabled() {
     std::fs::write(
         codex_home.join(CONFIG_TOML_FILE),
         r#"[[hooks.config]]
-key = "path:/tmp/hooks.json:pre_tool_use:0:0"
+key = "file:/tmp/hooks.json:pre_tool_use:0:0"
 enabled = false
 "#,
     )
@@ -169,7 +169,7 @@ enabled = false
 
     ConfigEditsBuilder::new(codex_home)
         .with_edits([ConfigEdit::SetHookConfig {
-            key: "path:/tmp/hooks.json:pre_tool_use:0:0".to_string(),
+            key: "file:/tmp/hooks.json:pre_tool_use:0:0".to_string(),
             enabled: true,
         }])
         .apply_blocking()

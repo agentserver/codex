@@ -60,9 +60,6 @@
         "handlerType": {
           "$ref": "#/definitions/HookHandlerType"
         },
-        "isManaged": {
-          "type": "boolean"
-        },
         "key": {
           "type": "string"
         },
@@ -101,7 +98,6 @@
         "enabled",
         "eventName",
         "handlerType",
-        "isManaged",
         "key",
         "source",
         "sourcePath",

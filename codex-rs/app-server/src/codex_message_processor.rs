@@ -6424,14 +6424,7 @@ impl CodexMessageProcessor {
             return;
         }
 
-        let current_workspace_hooks = match self.current_workspace_hooks().await {
-            Ok(hooks) => hooks,
-            Err(error) => {
-                self.outgoing.send_error(request_id, error).await;
-                return;
-            }
-        };
-        if let Err(error) = validate_hook_config_write_target(&current_workspace_hooks, &key) {
+        if let Err(error) = validate_hook_config_write_target(&key) {
             self.outgoing.send_error(request_id, error).await;
             return;
         }
@@ -6463,26 +6456,6 @@ impl CodexMessageProcessor {
                 self.outgoing.send_error(request_id, error).await;
             }
         }
-    }
-
-    async fn current_workspace_hooks(&self) -> Result<Vec<HookMetadata>, JSONRPCErrorError> {
-        let HooksListResponse { mut data } = self
-            .hooks_list_response(HooksListParams { cwds: Vec::new() })
-            .await?;
-        let Some(entry) = data.pop() else {
-            return Ok(Vec::new());
-        };
-        if let Some(error) = entry.errors.into_iter().next() {
-            return Err(JSONRPCErrorError {
-                code: INTERNAL_ERROR_CODE,
-                message: format!(
-                    "failed to resolve current workspace hooks: {}",
-                    error.message
-                ),
-                data: None,
-            });
-        }
-        Ok(entry.hooks)
     }
 
     async fn turn_start(
@@ -8698,16 +8671,12 @@ fn hooks_to_info(hooks: &[codex_core::hooks::HookListEntry]) -> Vec<HookMetadata
             plugin_id: hook.plugin_id.clone(),
             display_order: hook.display_order,
             enabled: hook.enabled,
-            is_managed: hook.is_managed,
         })
         .collect()
 }
 
-fn validate_hook_config_write_target(
-    hooks: &[HookMetadata],
-    key: &str,
-) -> Result<(), JSONRPCErrorError> {
-    if hooks.iter().any(|hook| hook.key == key && hook.is_managed) {
+fn validate_hook_config_write_target(key: &str) -> Result<(), JSONRPCErrorError> {
+    if key.starts_with("managed:") {
         return Err(JSONRPCErrorError {
             code: INVALID_PARAMS_ERROR_CODE,
             message: format!("hook {key} is managed and cannot be configured"),
@@ -9842,30 +9811,11 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    fn hook_metadata_for_test(key: &str, is_managed: bool) -> HookMetadata {
-        HookMetadata {
-            key: key.to_string(),
-            event_name: codex_app_server_protocol::HookEventName::PreToolUse,
-            handler_type: codex_app_server_protocol::HookHandlerType::Command,
-            matcher: Some("^Bash$".to_string()),
-            command: Some("python3 /tmp/hook.py".to_string()),
-            timeout_sec: 10,
-            status_message: Some("checking".to_string()),
-            source_path: test_path_buf("/tmp/hooks.json").abs(),
-            source: codex_app_server_protocol::HookSource::Mdm,
-            plugin_id: None,
-            display_order: 0,
-            enabled: true,
-            is_managed,
-        }
-    }
-
     #[test]
     fn managed_hook_config_write_targets_are_rejected() {
-        let key = "path:/tmp/managed-hooks:pre_tool_use:0:0";
-        let hooks = vec![hook_metadata_for_test(key, true)];
+        let key = "managed:/tmp/managed-hooks:pre_tool_use:0:0";
 
-        let err = validate_hook_config_write_target(&hooks, key)
+        let err = validate_hook_config_write_target(key)
             .expect_err("managed hooks should not be user-configurable");
 
         assert_eq!(err.code, INVALID_PARAMS_ERROR_CODE);

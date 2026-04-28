@@ -757,6 +757,15 @@ async fn status_snapshot_shows_refreshing_limits_notice() {
     let mut config = test_config(&temp_home).await;
     config.model = Some("gpt-5.1-codex-max".to_string());
     config.cwd = test_path_buf("/workspace/tests").abs();
+    config
+        .permissions
+        .set_permission_profile(PermissionProfile::workspace_write_with(
+            &[],
+            NetworkSandboxPolicy::Enabled,
+            /*exclude_tmpdir_env_var*/ false,
+            /*exclude_slash_tmp*/ false,
+        ))
+        .expect("set permission profile");
 
     let usage = TokenUsage {
         input_tokens: 500,

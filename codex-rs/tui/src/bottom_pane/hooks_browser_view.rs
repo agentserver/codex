@@ -262,7 +262,7 @@ impl HooksBrowserView {
         lines.extend(
             self.warnings
                 .iter()
-                .map(|warning| format!("⚠ {warning}").yellow().into()),
+                .map(|warning| format!("⚠ {warning}").into()),
         );
         lines.extend(self.errors.iter().map(|error| {
             format!("■ {}: {}", error.path.display(), error.message)

@@ -1,5 +1,7 @@
 use crate::shell_detect::detect_shell_type;
 use crate::shell_snapshot::ShellSnapshot;
+use codex_shell_command::powershell::try_find_powershell_executable_blocking;
+use codex_shell_command::powershell::try_find_pwsh_executable_blocking;
 use serde::Deserialize;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -249,16 +251,43 @@ const POWERSHELL_FALLBACK_PATHS: &[&str] =
 #[cfg(not(windows))]
 const POWERSHELL_FALLBACK_PATHS: &[&str] = &[];
 
-fn get_powershell_shell(path: Option<&PathBuf>) -> Option<Shell> {
-    let shell_path = get_shell_path(ShellType::PowerShell, path, "pwsh", PWSH_FALLBACK_PATHS)
+#[cfg(windows)]
+fn try_find_windows_powershell_shell_path() -> Option<PathBuf> {
+    try_find_pwsh_executable_blocking()
+        .map(|path| path.into_path_buf())
+        .or_else(|| try_find_powershell_executable_blocking().map(|path| path.into_path_buf()))
         .or_else(|| {
+            PWSH_FALLBACK_PATHS
+                .iter()
+                .find_map(|path| file_exists(&PathBuf::from(path)))
+        })
+        .or_else(|| {
+            POWERSHELL_FALLBACK_PATHS
+                .iter()
+                .find_map(|path| file_exists(&PathBuf::from(path)))
+        })
+}
+
+fn get_powershell_shell(path: Option<&PathBuf>) -> Option<Shell> {
+    let shell_path = if cfg!(windows) {
+        path.and_then(file_exists)
+            .or_else(|| {
+                let default_shell_path = get_user_shell_path()?;
+                (detect_shell_type(&default_shell_path) == Some(ShellType::PowerShell)
+                    && file_exists(&default_shell_path).is_some())
+                .then_some(default_shell_path)
+            })
+            .or_else(try_find_windows_powershell_shell_path)
+    } else {
+        get_shell_path(ShellType::PowerShell, path, "pwsh", PWSH_FALLBACK_PATHS).or_else(|| {
             get_shell_path(
                 ShellType::PowerShell,
                 path,
                 "powershell",
                 POWERSHELL_FALLBACK_PATHS,
             )
-        });
+        })
+    };
 
     shell_path.map(|shell_path| Shell {
         shell_type: ShellType::PowerShell,

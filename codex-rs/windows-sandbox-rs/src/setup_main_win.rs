@@ -22,6 +22,7 @@ use codex_windows_sandbox::is_command_cwd_root;
 use codex_windows_sandbox::load_or_create_cap_sids;
 use codex_windows_sandbox::log_note;
 use codex_windows_sandbox::path_mask_allows;
+use codex_windows_sandbox::path_mask_allows_aggregate;
 use codex_windows_sandbox::sandbox_bin_dir;
 use codex_windows_sandbox::sandbox_dir;
 use codex_windows_sandbox::sandbox_secrets_dir;
@@ -669,33 +670,32 @@ fn run_setup_full(payload: &Payload, log: &mut File, sbx_dir: &Path) -> Result<(
         } else {
             cap_psid
         };
-        for (label, psid) in [
-            ("sandbox_group", sandbox_group_psid),
-            (cap_label, cap_psid_for_root),
-        ] {
-            let has =
-                match path_mask_allows(root, &[psid], write_mask, /*require_all_bits*/ true) {
-                    Ok(h) => h,
-                    Err(e) => {
-                        refresh_errors.push(format!(
-                            "write mask check failed on {} for {label}: {}",
-                            root.display(),
-                            e
-                        ));
-                        log_line(
-                            log,
-                            &format!(
-                                "write mask check failed on {} for {label}: {}; continuing",
-                                root.display(),
-                                e
-                            ),
-                        )?;
-                        false
-                    }
-                };
-            if !has {
-                need_grant = true;
+        let has_effective_write = match path_mask_allows_aggregate(
+            root,
+            &[sandbox_group_psid, cap_psid_for_root],
+            write_mask,
+            /*require_all_bits*/ true,
+        ) {
+            Ok(h) => h,
+            Err(e) => {
+                refresh_errors.push(format!(
+                    "write mask check failed on {} for sandbox_group+{cap_label}: {}",
+                    root.display(),
+                    e
+                ));
+                log_line(
+                    log,
+                    &format!(
+                        "write mask check failed on {} for sandbox_group+{cap_label}: {}; continuing",
+                        root.display(),
+                        e
+                    ),
+                )?;
+                false
             }
+        };
+        if !has_effective_write {
+            need_grant = true;
         }
         if need_grant {
             log_line(

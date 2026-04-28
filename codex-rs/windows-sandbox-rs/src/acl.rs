@@ -173,6 +173,92 @@ pub fn path_mask_allows(
     }
 }
 
+/// Aggregate allow check across all matching ACEs for the provided SIDs.
+///
+/// This is closer to Windows effective-access evaluation than `dacl_mask_allows` because
+/// a token can satisfy a requested mask through multiple allow ACEs across different groups
+/// or capability SIDs.
+pub unsafe fn dacl_mask_allows_aggregate(
+    p_dacl: *mut ACL,
+    psids: &[*mut c_void],
+    desired_mask: u32,
+    require_all_bits: bool,
+) -> bool {
+    if p_dacl.is_null() {
+        return false;
+    }
+    let mut info: ACL_SIZE_INFORMATION = std::mem::zeroed();
+    let ok = GetAclInformation(
+        p_dacl as *const ACL,
+        &mut info as *mut _ as *mut c_void,
+        std::mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
+        AclSizeInformation,
+    );
+    if ok == 0 {
+        return false;
+    }
+    let mapping = GENERIC_MAPPING {
+        GenericRead: FILE_GENERIC_READ,
+        GenericWrite: FILE_GENERIC_WRITE,
+        GenericExecute: FILE_GENERIC_EXECUTE,
+        GenericAll: FILE_ALL_ACCESS,
+    };
+    let mut granted_mask = 0u32;
+    for i in 0..(info.AceCount as usize) {
+        let mut p_ace: *mut c_void = std::ptr::null_mut();
+        if GetAce(p_dacl as *const ACL, i as u32, &mut p_ace) == 0 {
+            continue;
+        }
+        let hdr = &*(p_ace as *const ACE_HEADER);
+        if hdr.AceType != 0 {
+            continue; // not ACCESS_ALLOWED
+        }
+        if (hdr.AceFlags & INHERIT_ONLY_ACE) != 0 {
+            continue;
+        }
+        let base = p_ace as usize;
+        let sid_ptr =
+            (base + std::mem::size_of::<ACE_HEADER>() + std::mem::size_of::<u32>()) as *mut c_void;
+        let mut matched = false;
+        for sid in psids {
+            if EqualSid(sid_ptr, *sid) != 0 {
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            continue;
+        }
+        let ace = &*(p_ace as *const ACCESS_ALLOWED_ACE);
+        let mut mask = ace.Mask;
+        MapGenericMask(&mut mask, &mapping);
+        granted_mask |= mask;
+        if (require_all_bits && (granted_mask & desired_mask) == desired_mask)
+            || (!require_all_bits && (granted_mask & desired_mask) != 0)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Path-based wrapper around the aggregate mask check (single DACL fetch).
+pub fn path_mask_allows_aggregate(
+    path: &Path,
+    psids: &[*mut c_void],
+    desired_mask: u32,
+    require_all_bits: bool,
+) -> Result<bool> {
+    unsafe {
+        let (p_dacl, sd) = fetch_dacl_handle(path)?;
+        let has = dacl_mask_allows_aggregate(p_dacl, psids, desired_mask, require_all_bits);
+        if !sd.is_null() {
+            LocalFree(sd as HLOCAL);
+        }
+        Ok(has)
+    }
+}
+
 pub unsafe fn dacl_has_write_allow_for_sid(p_dacl: *mut ACL, psid: *mut c_void) -> bool {
     if p_dacl.is_null() {
         return false;

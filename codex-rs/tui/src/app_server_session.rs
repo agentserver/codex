@@ -3,6 +3,7 @@ use crate::bottom_pane::FeedbackAudience;
 use crate::legacy_core::append_message_history_entry;
 use crate::legacy_core::config::Config;
 use crate::legacy_core::message_history_metadata;
+use crate::permission_compat::legacy_compatible_permission_profile;
 use crate::status::StatusAccountDisplay;
 use crate::status::plan_type_display_name;
 use codex_app_server_client::AppServerClient;
@@ -542,21 +543,15 @@ impl AppServerSession {
     ) -> Result<TurnStartResponse> {
         let request_id = self.next_request_id();
         let sandbox_policy = if matches!(self.thread_params_mode(), ThreadParamsMode::Remote) {
-            let policy = match permission_profile.to_legacy_sandbox_policy(cwd.as_path()) {
-                Ok(policy) => policy,
-                Err(err) => {
-                    tracing::warn!(
-                        %err,
-                        "permission profile cannot be projected for remote turn/start; using read-only compatibility fallback"
-                    );
-                    match PermissionProfile::read_only().to_legacy_sandbox_policy(cwd.as_path()) {
-                        Ok(policy) => policy,
-                        Err(err) => {
-                            unreachable!("read-only permissions must be legacy-compatible: {err}")
-                        }
-                    }
-                }
-            };
+            let legacy_profile =
+                legacy_compatible_permission_profile(&permission_profile, cwd.as_path());
+            let policy = legacy_profile
+                .to_legacy_sandbox_policy(cwd.as_path())
+                .unwrap_or_else(|err| {
+                    unreachable!(
+                        "legacy-compatible permissions must project to legacy policy: {err}"
+                    )
+                });
             Some(policy.into())
         } else {
             None

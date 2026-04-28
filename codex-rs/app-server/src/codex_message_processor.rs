@@ -4235,9 +4235,13 @@ impl CodexMessageProcessor {
                     thread_status,
                     /*has_live_in_progress_turn*/ false,
                 );
-                let permission_profile = thread_response_permission_profile(
-                    codex_thread.config_snapshot().await.permission_profile,
+                let config_snapshot = codex_thread.config_snapshot().await;
+                let sandbox = thread_response_sandbox_mode(
+                    &config_snapshot.permission_profile,
+                    config_snapshot.cwd.as_path(),
                 );
+                let permission_profile =
+                    thread_response_permission_profile(config_snapshot.permission_profile.clone());
 
                 let response = ThreadResumeResponse {
                     thread,
@@ -4248,7 +4252,7 @@ impl CodexMessageProcessor {
                     instruction_sources,
                     approval_policy: session_configured.approval_policy.into(),
                     approvals_reviewer: session_configured.approvals_reviewer.into(),
-                    sandbox: session_configured.sandbox_policy.into(),
+                    sandbox,
                     permission_profile,
                     reasoning_effort: session_configured.reasoning_effort,
                 };
@@ -4831,9 +4835,13 @@ impl CodexMessageProcessor {
                     .await,
                 /*has_in_progress_turn*/ false,
             );
-            let permission_profile = thread_response_permission_profile(
-                forked_thread.config_snapshot().await.permission_profile,
+            let config_snapshot = forked_thread.config_snapshot().await;
+            let sandbox = thread_response_sandbox_mode(
+                &config_snapshot.permission_profile,
+                config_snapshot.cwd.as_path(),
             );
+            let permission_profile =
+                thread_response_permission_profile(config_snapshot.permission_profile.clone());
 
             let response = ThreadForkResponse {
                 thread: thread.clone(),
@@ -4844,7 +4852,7 @@ impl CodexMessageProcessor {
                 instruction_sources,
                 approval_policy: session_configured.approval_policy.into(),
                 approvals_reviewer: session_configured.approvals_reviewer.into(),
-                sandbox: session_configured.sandbox_policy.into(),
+                sandbox,
                 permission_profile,
                 reasoning_effort: session_configured.reasoning_effort,
             };
@@ -8098,6 +8106,7 @@ async fn handle_pending_thread_resume_request(
         ..
     } = pending.config_snapshot;
     let instruction_sources = pending.instruction_sources;
+    let sandbox = thread_response_sandbox_mode(&permission_profile, cwd.as_path());
     let permission_profile = thread_response_permission_profile(permission_profile);
 
     let response = ThreadResumeResponse {
@@ -8109,7 +8118,7 @@ async fn handle_pending_thread_resume_request(
         instruction_sources,
         approval_policy: approval_policy.into(),
         approvals_reviewer: approvals_reviewer.into(),
-        sandbox: sandbox_policy.into(),
+        sandbox,
         permission_profile,
         reasoning_effort,
     };
@@ -9238,6 +9247,35 @@ fn thread_response_permission_profile(
     permission_profile: codex_protocol::models::PermissionProfile,
 ) -> Option<codex_app_server_protocol::PermissionProfile> {
     Some(permission_profile.into())
+}
+
+fn thread_response_sandbox_mode(
+    permission_profile: &codex_protocol::models::PermissionProfile,
+    cwd: &Path,
+) -> Option<SandboxMode> {
+    let file_system_policy = permission_profile.file_system_sandbox_policy();
+    let sandbox_policy = codex_sandboxing::compatibility_sandbox_policy_for_permission_profile(
+        permission_profile,
+        &file_system_policy,
+        permission_profile.network_sandbox_policy(),
+        cwd,
+    );
+    sandbox_mode_from_policy(sandbox_policy)
+}
+
+fn sandbox_mode_from_policy(
+    policy: codex_protocol::protocol::SandboxPolicy,
+) -> Option<SandboxMode> {
+    match policy {
+        codex_protocol::protocol::SandboxPolicy::DangerFullAccess => {
+            Some(SandboxMode::DangerFullAccess)
+        }
+        codex_protocol::protocol::SandboxPolicy::ReadOnly { .. } => Some(SandboxMode::ReadOnly),
+        codex_protocol::protocol::SandboxPolicy::WorkspaceWrite { .. } => {
+            Some(SandboxMode::WorkspaceWrite)
+        }
+        codex_protocol::protocol::SandboxPolicy::ExternalSandbox { .. } => None,
+    }
 }
 
 fn requested_permissions_trust_project(overrides: &ConfigOverrides, cwd: &Path) -> bool {

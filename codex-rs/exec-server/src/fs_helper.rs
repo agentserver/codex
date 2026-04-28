@@ -3,7 +3,6 @@ use base64::engine::general_purpose::STANDARD;
 use codex_app_server_protocol::JSONRPCErrorError;
 use serde::Deserialize;
 use serde::Serialize;
-use std::path::Path;
 use tokio::io;
 use tokio::io::AsyncWrite;
 
@@ -203,9 +202,10 @@ pub(crate) async fn run_direct_request(
             }))
         }
         FsHelperRequest::ReadFileInfo(params) => {
-            let metadata = tokio::fs::symlink_metadata(params.path.as_path())
+            let file = open_read_file(params.path.as_path())
                 .await
                 .map_err(map_fs_error)?;
+            let metadata = file.metadata().await.map_err(map_fs_error)?;
             validate_read_file_metadata(params.path.as_path(), &metadata).map_err(map_fs_error)?;
             Ok(FsHelperPayload::ReadFileInfo(FsReadFileInfoResponse {
                 file_size_bytes: metadata.len(),
@@ -307,9 +307,9 @@ pub(crate) async fn run_direct_stream_request(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match request {
         FsHelperRequest::ReadFileStream(params) => {
-            let metadata = tokio::fs::symlink_metadata(params.path.as_path()).await?;
+            let mut file = open_read_file(params.path.as_path()).await?;
+            let metadata = file.metadata().await?;
             validate_read_file_metadata(params.path.as_path(), &metadata)?;
-            let mut file = open_read_file_no_follow(params.path.as_path()).await?;
             tokio::io::copy(&mut file, stdout).await?;
             Ok(())
         }
@@ -339,31 +339,8 @@ fn validate_read_file_metadata(
     Ok(())
 }
 
-async fn open_read_file_no_follow(path: &Path) -> io::Result<tokio::fs::File> {
-    #[cfg(unix)]
-    {
-        tokio::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(path)
-            .await
-    }
-
-    #[cfg(windows)]
-    {
-        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-
-        tokio::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(path)
-            .await
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        tokio::fs::File::open(path).await
-    }
+async fn open_read_file(path: &std::path::Path) -> io::Result<tokio::fs::File> {
+    tokio::fs::File::open(path).await
 }
 
 fn map_fs_error(err: io::Error) -> JSONRPCErrorError {

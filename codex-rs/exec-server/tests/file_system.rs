@@ -725,6 +725,42 @@ async fn file_system_sandboxed_read_body_rejects_symlink_to_denied_file(
 #[test_case(false ; "local")]
 #[test_case(true ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn file_system_sandboxed_read_body_allows_symlink_to_readable_file(
+    use_remote: bool,
+) -> Result<()> {
+    let context = create_file_system_context(use_remote).await?;
+    let file_system = context.file_system;
+
+    let tmp = TempDir::new()?;
+    let allowed_dir = tmp.path().join("allowed");
+    let target_path = allowed_dir.join("target.csv");
+    let symlink_path = allowed_dir.join("report.csv");
+    std::fs::create_dir_all(&allowed_dir)?;
+    std::fs::write(&target_path, "readable")?;
+    symlink(&target_path, &symlink_path)?;
+
+    let sandbox = read_only_sandbox(allowed_dir);
+    let body = file_system
+        .read_file_body(&absolute_path(symlink_path), Some(&sandbox))
+        .await
+        .with_context(|| format!("mode={use_remote}"))?;
+
+    assert_eq!(body.file_name, "report.csv");
+    assert_eq!(body.file_size_bytes, "readable".len() as u64);
+    let chunks = body
+        .stream
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<std::io::Result<Vec<_>>>()?;
+    assert_eq!(chunks.concat(), b"readable");
+
+    Ok(())
+}
+
+#[test_case(false ; "local")]
+#[test_case(true ; "remote")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn file_system_sandboxed_read_rejects_symlink_parent_dotdot_escape(
     use_remote: bool,
 ) -> Result<()> {

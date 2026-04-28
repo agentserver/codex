@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import os
 import shutil
@@ -16,15 +15,40 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALL_NATIVE_DEPS = REPO_ROOT / "codex-cli" / "scripts" / "install_native_deps.py"
-PACKAGE_METADATA = REPO_ROOT / "codex-cli" / "scripts" / "package_metadata.py"
 WORKFLOW_NAME = ".github/workflows/rust-release.yml"
 
-_SPEC = importlib.util.spec_from_file_location("codex_package_metadata", PACKAGE_METADATA)
-if _SPEC is None or _SPEC.loader is None:
-    raise RuntimeError(f"Unable to load module from {PACKAGE_METADATA}")
-_BUILD_MODULE = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(_BUILD_MODULE)
-CODEX_PLATFORM_PACKAGES = getattr(_BUILD_MODULE, "CODEX_PLATFORM_PACKAGES", {})
+CODEX_PLATFORM_PACKAGES: dict[str, dict[str, str]] = {
+    "codex-linux-x64": {
+        "npm_tag": "linux-x64",
+        "target_triple": "x86_64-unknown-linux-musl",
+        "os": "linux",
+    },
+    "codex-linux-arm64": {
+        "npm_tag": "linux-arm64",
+        "target_triple": "aarch64-unknown-linux-musl",
+        "os": "linux",
+    },
+    "codex-darwin-x64": {
+        "npm_tag": "darwin-x64",
+        "target_triple": "x86_64-apple-darwin",
+        "os": "darwin",
+    },
+    "codex-darwin-arm64": {
+        "npm_tag": "darwin-arm64",
+        "target_triple": "aarch64-apple-darwin",
+        "os": "darwin",
+    },
+    "codex-win32-x64": {
+        "npm_tag": "win32-x64",
+        "target_triple": "x86_64-pc-windows-msvc",
+        "os": "win32",
+    },
+    "codex-win32-arm64": {
+        "npm_tag": "win32-arm64",
+        "target_triple": "aarch64-pc-windows-msvc",
+        "os": "win32",
+    },
+}
 STANDALONE_NATIVE_COMPONENTS = (
     "codex",
     "codex-command-runner",

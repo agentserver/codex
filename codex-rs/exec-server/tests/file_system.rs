@@ -683,6 +683,38 @@ async fn file_system_sandboxed_read_rejects_symlink_escape(use_remote: bool) -> 
 #[test_case(false ; "local")]
 #[test_case(true ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn file_system_sandboxed_read_body_rejects_symlink_to_denied_file(
+    use_remote: bool,
+) -> Result<()> {
+    let context = create_file_system_context(use_remote).await?;
+    let file_system = context.file_system;
+
+    let tmp = TempDir::new()?;
+    let allowed_dir = tmp.path().join("allowed");
+    let outside_dir = tmp.path().join("outside");
+    let secret_path = outside_dir.join("secret.csv");
+    let symlink_path = allowed_dir.join("report.csv");
+    std::fs::create_dir_all(&allowed_dir)?;
+    std::fs::create_dir_all(&outside_dir)?;
+    std::fs::write(&secret_path, "secret")?;
+    symlink(&secret_path, &symlink_path)?;
+
+    let sandbox = read_only_sandbox(allowed_dir);
+    let error = match file_system
+        .read_file_body(&absolute_path(symlink_path), Some(&sandbox))
+        .await
+    {
+        Ok(_) => anyhow::bail!("read body should be blocked"),
+        Err(error) => error,
+    };
+    assert_sandbox_denied(&error);
+
+    Ok(())
+}
+
+#[test_case(false ; "local")]
+#[test_case(true ; "remote")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn file_system_sandboxed_read_rejects_symlink_parent_dotdot_escape(
     use_remote: bool,
 ) -> Result<()> {

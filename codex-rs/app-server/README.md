@@ -1479,7 +1479,6 @@ Use `hooks/list` to fetch the discovered hooks for one or more `cwds`.
         "sourcePath": "/Users/me/.codex/config.toml",
         "source": "user",
         "pluginId": null,
-        "sourceRelativePath": null,
         "displayOrder": 0
       }],
       "warnings": [],

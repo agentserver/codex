@@ -37,7 +37,6 @@ struct HookHandlerSource<'a> {
     source: HookSource,
     env: HashMap<String, String>,
     plugin_id: Option<String>,
-    source_relative_path: Option<String>,
 }
 
 pub(crate) fn discover_handlers(
@@ -108,7 +107,6 @@ pub(crate) fn discover_handlers(
                     source: hook_source,
                     env: HashMap::new(),
                     plugin_id: None,
-                    source_relative_path: None,
                 },
                 hook_events,
             );
@@ -126,7 +124,6 @@ pub(crate) fn discover_handlers(
                     source: hook_source,
                     env: HashMap::new(),
                     plugin_id: None,
-                    source_relative_path: None,
                 },
                 hook_events,
             );
@@ -174,7 +171,6 @@ fn append_managed_requirement_handlers(
             source: hook_source_for_requirement_source(managed_hooks.source.as_ref()),
             env: HashMap::new(),
             plugin_id: None,
-            source_relative_path: None,
         },
         managed_hooks.get().hooks.clone(),
     );
@@ -193,8 +189,8 @@ fn append_plugin_hook_sources(
             plugin_root,
             plugin_id,
             source_path,
-            source_relative_path,
             hooks,
+            ..
         } = source;
         let mut env = HashMap::new();
         let plugin_root_value = plugin_root.display().to_string();
@@ -213,7 +209,6 @@ fn append_plugin_hook_sources(
                 source: HookSource::Plugin,
                 env,
                 plugin_id: Some(plugin_id),
-                source_relative_path: Some(source_relative_path),
             },
             hooks,
         );
@@ -431,7 +426,6 @@ fn append_matcher_groups(
                         source_path: source.path.clone(),
                         source: source.source,
                         plugin_id: source.plugin_id.clone(),
-                        source_relative_path: source.source_relative_path.clone(),
                         display_order: *display_order,
                     });
                     handlers.push(ConfiguredHandler {
@@ -521,7 +515,6 @@ mod tests {
             source: hook_source(),
             env: std::collections::HashMap::new(),
             plugin_id: None,
-            source_relative_path: None,
         }
     }
 

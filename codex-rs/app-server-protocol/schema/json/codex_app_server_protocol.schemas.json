@@ -9653,12 +9653,6 @@
           "sourcePath": {
             "$ref": "#/definitions/v2/AbsolutePathBuf"
           },
-          "sourceRelativePath": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "statusMessage": {
             "type": [
               "string",

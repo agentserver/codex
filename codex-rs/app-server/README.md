@@ -1452,7 +1452,7 @@ To enable or disable a skill by name:
 }
 ```
 
-Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled hooks are still returned with `"enabled": false` so clients can render and re-enable them.
+Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled hooks are still returned with `"enabled": false` so clients can render and re-enable them. Managed hooks are returned with `"isManaged": true` and cannot be changed through `hooks/config/write`.
 
 ```json
 {
@@ -1482,7 +1482,8 @@ Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled 
         "source": "user",
         "pluginId": null,
         "displayOrder": 0,
-        "enabled": true
+        "enabled": true,
+        "isManaged": false
       }],
       "warnings": [],
       "errors": []
@@ -1491,7 +1492,7 @@ Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Disabled 
 }
 ```
 
-To enable or disable a hook, write the hook key returned by `hooks/list`:
+To enable or disable a non-managed hook, write the hook key returned by `hooks/list`:
 
 ```json
 {

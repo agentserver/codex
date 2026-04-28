@@ -4497,6 +4497,7 @@ pub struct HookMetadata {
     pub plugin_id: Option<String>,
     pub display_order: i64,
     pub enabled: bool,
+    pub is_managed: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

@@ -83,6 +83,7 @@ pub struct HookListEntry {
     pub plugin_id: Option<String>,
     pub display_order: i64,
     pub enabled: bool,
+    pub is_managed: bool,
 }
 
 #[derive(Clone)]

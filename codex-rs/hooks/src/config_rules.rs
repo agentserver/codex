@@ -87,11 +87,11 @@ mod tests {
                     ConfigLayerSource::User {
                         file: test_path_buf("/tmp/config.toml").abs(),
                     },
-                    config_with_hook_override(key, false),
+                    config_with_hook_override(key, /*enabled*/ false),
                 ),
                 ConfigLayerEntry::new(
                     ConfigLayerSource::SessionFlags,
-                    config_with_hook_override(key, true),
+                    config_with_hook_override(key, /*enabled*/ true),
                 ),
             ],
             Default::default(),

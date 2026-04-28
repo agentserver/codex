@@ -109,6 +109,7 @@ pub async fn load_plugins_from_layer_stack(
     config_layer_stack: &ConfigLayerStack,
     store: &PluginStore,
     restriction_product: Option<Product>,
+    plugin_hooks_enabled: bool,
 ) -> PluginLoadOutcome<McpServerConfig> {
     let skill_config_rules = skill_config_rules_from_stack(config_layer_stack);
     let mut configured_plugins: Vec<_> = configured_plugins_from_stack(config_layer_stack)
@@ -125,6 +126,7 @@ pub async fn load_plugins_from_layer_stack(
             store,
             restriction_product,
             &skill_config_rules,
+            plugin_hooks_enabled,
         )
         .await;
         for name in loaded_plugin.mcp_servers.keys() {
@@ -459,6 +461,7 @@ async fn load_plugin(
     store: &PluginStore,
     restriction_product: Option<Product>,
     skill_config_rules: &SkillConfigRules,
+    plugin_hooks_enabled: bool,
 ) -> LoadedPlugin<McpServerConfig> {
     let plugin_id = PluginId::parse(&config_name);
     let active_plugin_root = plugin_id
@@ -551,7 +554,10 @@ async fn load_plugin(
     }
     loaded_plugin.mcp_servers = mcp_servers;
     loaded_plugin.apps = load_plugin_apps(plugin_root.as_path()).await;
-    loaded_plugin.hook_sources = load_plugin_hooks(&plugin_root, &loaded_plugin_id, manifest_paths);
+    if plugin_hooks_enabled {
+        loaded_plugin.hook_sources =
+            load_plugin_hooks(&plugin_root, &loaded_plugin_id, manifest_paths);
+    }
     loaded_plugin
 }
 

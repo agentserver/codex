@@ -409,6 +409,7 @@ impl PluginsManager {
             &config.config_layer_stack,
             &self.store,
             self.restriction_product,
+            config.features.enabled(Feature::PluginHooks),
         )
         .await;
         log_plugin_load_errors(&outcome);
@@ -442,9 +443,14 @@ impl PluginsManager {
         if !plugins_feature_enabled {
             return Vec::new();
         }
-        load_plugins_from_layer_stack(config_layer_stack, &self.store, self.restriction_product)
-            .await
-            .effective_skill_roots()
+        load_plugins_from_layer_stack(
+            config_layer_stack,
+            &self.store,
+            self.restriction_product,
+            /*plugin_hooks_enabled*/ false,
+        )
+        .await
+        .effective_skill_roots()
     }
 
     pub async fn effective_plugin_hook_sources_for_layer_stack(
@@ -456,9 +462,14 @@ impl PluginsManager {
         if !plugins_feature_enabled || !plugin_hooks_feature_enabled {
             return Vec::new();
         }
-        load_plugins_from_layer_stack(config_layer_stack, &self.store, self.restriction_product)
-            .await
-            .effective_plugin_hook_sources()
+        load_plugins_from_layer_stack(
+            config_layer_stack,
+            &self.store,
+            self.restriction_product,
+            /*plugin_hooks_enabled*/ true,
+        )
+        .await
+        .effective_plugin_hook_sources()
     }
 
     fn cached_enabled_outcome(&self) -> Option<PluginLoadOutcome> {

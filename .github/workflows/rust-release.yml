@@ -540,8 +540,16 @@ jobs:
             --release-version "$RELEASE_VERSION" \
             --package codex \
             --package codex-responses-api-proxy \
-            --package codex-sdk \
-            --standalone-output-dir dist/installer
+            --package codex-sdk
+
+      - name: Stage standalone installer archives
+        env:
+          RELEASE_VERSION: ${{ steps.release_name.outputs.name }}
+        run: |
+          ./scripts/stage_standalone_installer_archives.py \
+            --release-version "$RELEASE_VERSION" \
+            --workflow-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --output-dir dist/installer
 
       - name: Stage installer scripts
         run: |

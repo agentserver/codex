@@ -2,10 +2,21 @@ use std::path::PathBuf;
 
 use codex_utils_absolute_path::AbsolutePathBuf;
 
+use crate::command_safety::try_parse_powershell_ast_commands;
 use crate::shell_detect::ShellType;
 use crate::shell_detect::detect_shell_type;
 
 const POWERSHELL_FLAGS: &[&str] = &["-nologo", "-noprofile", "-command", "-c"];
+const POWERSHELL_NO_ARG_PARSE_FLAGS: &[&str] =
+    &["-nologo", "-noprofile", "-noninteractive", "-mta", "-sta"];
+const POWERSHELL_VALUE_PARSE_FLAGS: &[&str] =
+    &["-windowstyle", "-executionpolicy", "-workingdirectory"];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PowershellCommandSequenceParseMode {
+    ExecPolicy,
+    SafeCommand,
+}
 
 /// Prefixed command for powershell shell calls to force UTF-8 console output.
 pub const UTF8_OUTPUT_PREFIX: &str = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;\n";
@@ -66,6 +77,178 @@ pub fn extract_powershell_command(command: &[String]) -> Option<(&str, &str)> {
         i += 1;
     }
     None
+}
+
+/// Recover discrete inner command vectors from an explicit one-layer PowerShell wrapper.
+///
+/// This recognizes top-level `powershell` / `powershell.exe` / `pwsh` / `pwsh.exe`
+/// invocations with an explicit `-Command` / `/Command` / `-c` body and parses that
+/// script with the PowerShell AST parser. Unsupported or opaque forms such as
+/// `-EncodedCommand` return `None`.
+pub fn try_parse_powershell_command_sequence(
+    command: &[String],
+    mode: PowershellCommandSequenceParseMode,
+) -> Option<Vec<Vec<String>>> {
+    let (executable, args) = command.split_first()?;
+    if is_powershell_executable(executable) {
+        parse_powershell_invocation(executable, args, mode)
+    } else {
+        None
+    }
+}
+
+fn parse_powershell_invocation(
+    executable: &str,
+    args: &[String],
+    mode: PowershellCommandSequenceParseMode,
+) -> Option<Vec<Vec<String>>> {
+    if args.is_empty() {
+        return None;
+    }
+
+    let mut idx = 0;
+    while idx < args.len() {
+        let arg = &args[idx];
+        let lower = arg.to_ascii_lowercase();
+        match lower.as_str() {
+            "-command" | "/command" | "-c" => {
+                let script = args.get(idx + 1)?;
+                if idx + 2 != args.len() {
+                    return None;
+                }
+                return parse_powershell_script_to_commands(executable, script);
+            }
+            _ if lower.starts_with("-command:") || lower.starts_with("/command:") => {
+                if idx + 1 != args.len() {
+                    return None;
+                }
+                let script = arg.split_once(':')?.1;
+                return parse_powershell_script_to_commands(executable, script);
+            }
+            _ if is_powershell_no_arg_parse_flag(&lower) => {
+                idx += 1;
+                continue;
+            }
+            _ if is_powershell_value_parse_flag(&lower) => {
+                if mode == PowershellCommandSequenceParseMode::SafeCommand {
+                    return None;
+                }
+                args.get(idx + 1)?;
+                idx += 2;
+                continue;
+            }
+            _ if is_powershell_value_parse_flag_with_inline_value(&lower) => {
+                if mode == PowershellCommandSequenceParseMode::SafeCommand {
+                    return None;
+                }
+                idx += 1;
+                continue;
+            }
+            _ if is_unsupported_powershell_parse_flag(&lower)
+                || has_unsupported_powershell_parse_flag_inline_value(&lower) =>
+            {
+                return None;
+            }
+            _ if lower.starts_with('-') => {
+                return None;
+            }
+            _ => {
+                if mode == PowershellCommandSequenceParseMode::ExecPolicy {
+                    return None;
+                }
+
+                let script = join_arguments_as_script(&args[idx..]);
+                return parse_powershell_script_to_commands(executable, &script);
+            }
+        }
+    }
+
+    None
+}
+
+pub(crate) fn parse_powershell_script_to_commands(
+    executable: &str,
+    script: &str,
+) -> Option<Vec<Vec<String>>> {
+    try_parse_powershell_ast_commands(executable, script)
+}
+
+pub(crate) fn is_powershell_executable(exe: &str) -> bool {
+    let executable_name = std::path::Path::new(exe)
+        .file_name()
+        .and_then(|osstr| osstr.to_str())
+        .unwrap_or(exe)
+        .to_ascii_lowercase();
+
+    matches!(
+        executable_name.as_str(),
+        "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe"
+    )
+}
+
+pub(crate) fn join_arguments_as_script(args: &[String]) -> String {
+    let mut words = Vec::with_capacity(args.len());
+    if let Some((first, rest)) = args.split_first() {
+        words.push(first.clone());
+        for arg in rest {
+            words.push(quote_argument(arg));
+        }
+    }
+    words.join(" ")
+}
+
+fn quote_argument(arg: &str) -> String {
+    if arg.is_empty() {
+        return "''".to_string();
+    }
+
+    if arg.chars().all(|ch| !ch.is_whitespace()) {
+        return arg.to_string();
+    }
+
+    format!("'{}'", arg.replace('\'', "''"))
+}
+
+fn is_powershell_no_arg_parse_flag(lower: &str) -> bool {
+    POWERSHELL_NO_ARG_PARSE_FLAGS.contains(&lower)
+}
+
+fn is_powershell_value_parse_flag(lower: &str) -> bool {
+    POWERSHELL_VALUE_PARSE_FLAGS.contains(&lower)
+        || matches!(
+            lower,
+            "/windowstyle" | "/executionpolicy" | "/workingdirectory"
+        )
+}
+
+fn is_powershell_value_parse_flag_with_inline_value(lower: &str) -> bool {
+    matches!(
+        split_flag_inline_value(lower),
+        Some((
+            "-windowstyle"
+                | "/windowstyle"
+                | "-executionpolicy"
+                | "/executionpolicy"
+                | "-workingdirectory"
+                | "/workingdirectory",
+            _
+        ))
+    )
+}
+
+fn is_unsupported_powershell_parse_flag(lower: &str) -> bool {
+    matches!(lower, "-encodedcommand" | "-ec" | "-file" | "/file")
+}
+
+fn has_unsupported_powershell_parse_flag_inline_value(lower: &str) -> bool {
+    matches!(
+        split_flag_inline_value(lower),
+        Some(("-encodedcommand" | "-ec" | "-file" | "/file", _))
+    )
+}
+
+fn split_flag_inline_value(lower: &str) -> Option<(&str, &str)> {
+    lower.split_once(':')
 }
 
 /// This function attempts to find a powershell.exe executable on the system.

@@ -656,6 +656,148 @@ async fn evaluates_bash_lc_inner_commands() {
     .await;
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn evaluates_powershell_wrapped_inner_commands_against_prefix_rules() {
+    let cases = vec![
+        (
+            r#"prefix_rule(pattern=["git", "push"], decision="forbidden")"#.to_string(),
+            vec_str(&["powershell.exe", "-Command", "git push origin main"]),
+            vec_str(&["git", "push"]),
+        ),
+        (
+            r#"prefix_rule(pattern=["git", "fetch"], decision="forbidden")"#.to_string(),
+            vec_str(&[
+                "powershell.exe",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                "git fetch origin main",
+            ]),
+            vec_str(&["git", "fetch"]),
+        ),
+        (
+            r#"prefix_rule(pattern=["Invoke-WebRequest"], decision="forbidden")"#.to_string(),
+            vec_str(&[
+                "powershell.exe",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "Invoke-WebRequest https://example.com",
+            ]),
+            vec_str(&["Invoke-WebRequest"]),
+        ),
+        (
+            r#"prefix_rule(pattern=["Remove-Item"], decision="forbidden")"#.to_string(),
+            vec_str(&[
+                "powershell.exe",
+                "-WorkingDirectory",
+                "C:\\repo",
+                "-Command",
+                "Remove-Item foo.txt",
+            ]),
+            vec_str(&["Remove-Item"]),
+        ),
+    ];
+
+    for (policy_src, command, matched_prefix) in cases {
+        let expected_reason = format!(
+            "`{}` rejected: policy forbids commands starting with `{}`",
+            render_shlex_command(&command),
+            render_shlex_command(&matched_prefix),
+        );
+        assert_exec_approval_requirement_for_command(
+            ExecApprovalRequirementScenario {
+                policy_src: Some(policy_src),
+                command,
+                approval_policy: AskForApproval::OnRequest,
+                sandbox_policy: SandboxPolicy::DangerFullAccess,
+                file_system_sandbox_policy: unrestricted_file_system_sandbox_policy(),
+                sandbox_permissions: SandboxPermissions::UseDefault,
+                prefix_rule: None,
+            },
+            ExecApprovalRequirement::Forbidden {
+                reason: expected_reason,
+            },
+        )
+        .await;
+    }
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn unmatched_powershell_wrappers_keep_outer_command_heuristics() {
+    for (command, expected) in [
+        (
+            vec_str(&["powershell.exe", "-Command", "Get-Content Cargo.toml"]),
+            ExecApprovalRequirement::Skip {
+                bypass_sandbox: false,
+                proposed_execpolicy_amendment: Some(ExecPolicyAmendment::new(vec_str(&[
+                    "powershell.exe",
+                    "-Command",
+                    "Get-Content Cargo.toml",
+                ]))),
+            },
+        ),
+        (
+            vec_str(&[
+                "powershell.exe",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                "Get-Content Cargo.toml",
+            ]),
+            ExecApprovalRequirement::NeedsApproval {
+                reason: None,
+                proposed_execpolicy_amendment: Some(ExecPolicyAmendment::new(vec_str(&[
+                    "powershell.exe",
+                    "-WindowStyle",
+                    "Hidden",
+                    "-Command",
+                    "Get-Content Cargo.toml",
+                ]))),
+            },
+        ),
+    ] {
+        assert_exec_approval_requirement_for_command(
+            ExecApprovalRequirementScenario {
+                policy_src: None,
+                command,
+                approval_policy: AskForApproval::OnRequest,
+                sandbox_policy: SandboxPolicy::new_read_only_policy(),
+                file_system_sandbox_policy: read_only_file_system_sandbox_policy(),
+                sandbox_permissions: SandboxPermissions::UseDefault,
+                prefix_rule: None,
+            },
+            expected,
+        )
+        .await;
+    }
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn allow_rule_matches_powershell_wrapped_inner_commands() {
+    assert_exec_approval_requirement_for_command(
+        ExecApprovalRequirementScenario {
+            policy_src: Some(
+                r#"prefix_rule(pattern=["Get-Content"], decision="allow")"#.to_string(),
+            ),
+            command: vec_str(&["powershell.exe", "-Command", "Get-Content Cargo.toml"]),
+            approval_policy: AskForApproval::OnRequest,
+            sandbox_policy: SandboxPolicy::new_read_only_policy(),
+            file_system_sandbox_policy: read_only_file_system_sandbox_policy(),
+            sandbox_permissions: SandboxPermissions::UseDefault,
+            prefix_rule: None,
+        },
+        ExecApprovalRequirement::Skip {
+            bypass_sandbox: true,
+            proposed_execpolicy_amendment: None,
+        },
+    )
+    .await;
+}
+
 #[test]
 fn commands_for_exec_policy_falls_back_for_empty_shell_script() {
     let command = vec!["bash".to_string(), "-lc".to_string(), "".to_string()];

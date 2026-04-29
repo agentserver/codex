@@ -37,6 +37,10 @@ use crate::sandboxing::SandboxPermissions;
 use crate::tools::sandboxing::ExecApprovalRequirement;
 use codex_shell_command::bash::parse_shell_lc_plain_commands;
 use codex_shell_command::bash::parse_shell_lc_single_command_prefix;
+#[cfg(windows)]
+use codex_shell_command::powershell::PowershellCommandSequenceParseMode;
+#[cfg(windows)]
+use codex_shell_command::powershell::try_parse_powershell_command_sequence;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use shlex::try_join as shlex_try_join;
 
@@ -237,7 +241,7 @@ impl ExecPolicyManager {
         req: ExecApprovalRequest<'_>,
     ) -> ExecApprovalRequirement {
         let ExecApprovalRequest {
-            command,
+            command: original_command,
             approval_policy,
             permission_profile,
             file_system_sandbox_policy,
@@ -246,18 +250,32 @@ impl ExecPolicyManager {
             prefix_rule,
         } = req;
         let exec_policy = self.current();
-        let (commands, used_complex_parsing) = commands_for_exec_policy(command);
+        let (commands, used_complex_parsing) = commands_for_exec_policy(original_command);
+        #[cfg(windows)]
+        let powershell_commands = try_parse_powershell_command_sequence(
+            original_command,
+            PowershellCommandSequenceParseMode::ExecPolicy,
+        )
+        .filter(|commands| !commands.is_empty());
         // Keep heredoc prefix parsing for rule evaluation so existing
         // allow/prompt/forbidden rules still apply, but avoid auto-derived
         // amendments when only the heredoc fallback parser matched.
         let auto_amendment_allowed = !used_complex_parsing;
-        let exec_policy_fallback = |cmd: &[String]| {
+        let exec_policy_fallback = |parsed_command: &[String]| {
+            #[cfg(windows)]
+            let command_for_heuristics = if powershell_commands.is_some() {
+                original_command
+            } else {
+                parsed_command
+            };
+            #[cfg(not(windows))]
+            let command_for_heuristics = parsed_command;
             render_decision_for_unmatched_command(
                 approval_policy,
                 &permission_profile,
                 file_system_sandbox_policy,
                 sandbox_cwd,
-                cmd,
+                command_for_heuristics,
                 sandbox_permissions,
                 used_complex_parsing,
             )
@@ -265,11 +283,24 @@ impl ExecPolicyManager {
         let match_options = MatchOptions {
             resolve_host_executables: true,
         };
-        let evaluation = exec_policy.check_multiple_with_options(
+        let mut evaluation = exec_policy.check_multiple_with_options(
             commands.iter(),
             &exec_policy_fallback,
             &match_options,
         );
+
+        #[cfg(windows)]
+        if powershell_commands.is_some() {
+            for rule_match in &mut evaluation.matched_rules {
+                if let RuleMatch::HeuristicsRuleMatch {
+                    command: matched_command,
+                    ..
+                } = rule_match
+                {
+                    *matched_command = original_command.to_vec();
+                }
+            }
+        }
 
         let requested_amendment = derive_requested_execpolicy_amendment_from_prefix_rule(
             prefix_rule.as_ref(),
@@ -282,7 +313,7 @@ impl ExecPolicyManager {
 
         match evaluation.decision {
             Decision::Forbidden => ExecApprovalRequirement::Forbidden {
-                reason: derive_forbidden_reason(command, &evaluation),
+                reason: derive_forbidden_reason(original_command, &evaluation),
             },
             Decision::Prompt => {
                 let prompt_is_rule = evaluation.matched_rules.iter().any(|rule_match| {
@@ -293,7 +324,7 @@ impl ExecPolicyManager {
                         reason: reason.to_string(),
                     },
                     None => ExecApprovalRequirement::NeedsApproval {
-                        reason: derive_prompt_reason(command, &evaluation),
+                        reason: derive_prompt_reason(original_command, &evaluation),
                         proposed_execpolicy_amendment: requested_amendment.or_else(|| {
                             if auto_amendment_allowed {
                                 try_derive_execpolicy_amendment_for_prompt_rules(
@@ -701,6 +732,15 @@ fn default_policy_path(codex_home: &Path) -> PathBuf {
 fn commands_for_exec_policy(command: &[String]) -> (Vec<Vec<String>>, bool) {
     if let Some(commands) = parse_shell_lc_plain_commands(command)
         && !commands.is_empty()
+    {
+        return (commands, false);
+    }
+
+    #[cfg(windows)]
+    if let Some(commands) = try_parse_powershell_command_sequence(
+        command,
+        PowershellCommandSequenceParseMode::ExecPolicy,
+    ) && !commands.is_empty()
     {
         return (commands, false);
     }

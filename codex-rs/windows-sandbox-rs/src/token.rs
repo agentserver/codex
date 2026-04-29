@@ -336,12 +336,12 @@ unsafe fn create_token_with_caps_from(
     }
     let mut logon_sid_bytes = get_logon_sid_bytes(base_token)?;
     let psid_logon = logon_sid_bytes.as_mut_ptr() as *mut c_void;
-    let mut everyone = world_sid()?;
-    let psid_everyone = everyone.as_mut_ptr() as *mut c_void;
 
-    // Exact order: Capabilities..., Logon, Everyone
+    // Keep the restricted token scoped to explicit capability SIDs plus the
+    // current logon SID. Including Everyone here widens WRITE_RESTRICTED checks
+    // to any path with an Everyone ACE, which can escape workspace-write.
     let mut entries: Vec<SID_AND_ATTRIBUTES> =
-        vec![std::mem::zeroed(); psid_capabilities.len() + 2];
+        vec![std::mem::zeroed(); psid_capabilities.len() + 1];
     for (i, psid) in psid_capabilities.iter().enumerate() {
         entries[i].Sid = *psid;
         entries[i].Attributes = 0;
@@ -349,8 +349,6 @@ unsafe fn create_token_with_caps_from(
     let logon_idx = psid_capabilities.len();
     entries[logon_idx].Sid = psid_logon;
     entries[logon_idx].Attributes = 0;
-    entries[logon_idx + 1].Sid = psid_everyone;
-    entries[logon_idx + 1].Attributes = 0;
 
     let mut new_token: HANDLE = 0;
     let flags = DISABLE_MAX_PRIVILEGE | LUA_TOKEN | WRITE_RESTRICTED;
@@ -369,9 +367,8 @@ unsafe fn create_token_with_caps_from(
         return Err(anyhow!("CreateRestrictedToken failed: {}", GetLastError()));
     }
 
-    let mut dacl_sids: Vec<*mut c_void> = Vec::with_capacity(psid_capabilities.len() + 2);
+    let mut dacl_sids: Vec<*mut c_void> = Vec::with_capacity(psid_capabilities.len() + 1);
     dacl_sids.push(psid_logon);
-    dacl_sids.push(psid_everyone);
     dacl_sids.extend_from_slice(psid_capabilities);
     set_default_dacl(new_token, &dacl_sids)?;
 

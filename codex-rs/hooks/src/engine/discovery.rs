@@ -32,11 +32,9 @@ pub(crate) struct DiscoveryResult {
     pub warnings: Vec<String>,
 }
 
-#[derive(Clone)]
 struct HookHandlerSource<'a> {
     path: &'a AbsolutePathBuf,
-    key_prefix: String,
-    is_managed: bool,
+    key_source: String,
     source: HookSource,
     disabled_hook_keys: &'a HashSet<String>,
     env: HashMap<String, String>,
@@ -92,8 +90,7 @@ pub(crate) fn discover_handlers(
                     &mut display_order,
                     HookHandlerSource {
                         path: &source_path,
-                        key_prefix: format!("file:{}", source_path.display()),
-                        is_managed: false,
+                        key_source: source_path.display().to_string(),
                         source: hook_source,
                         disabled_hook_keys: &disabled_hook_keys,
                         env: HashMap::new(),
@@ -144,8 +141,7 @@ fn append_managed_requirement_handlers(
         display_order,
         HookHandlerSource {
             path: &source_path,
-            key_prefix: format!("managed:{}", source_path.display()),
-            is_managed: true,
+            key_source: source_path.display().to_string(),
             source: hook_source_for_requirement_source(managed_hooks.source.as_ref()),
             disabled_hook_keys,
             env: HashMap::new(),
@@ -190,8 +186,7 @@ fn append_plugin_hook_sources(
             display_order,
             HookHandlerSource {
                 path: &source_path,
-                key_prefix: format!("plugin:{plugin_id}:{source_relative_path}"),
-                is_managed: false,
+                key_source: format!("{plugin_id}:{source_relative_path}"),
                 source: HookSource::Plugin,
                 disabled_hook_keys,
                 env,
@@ -296,7 +291,7 @@ fn load_toml_hooks_from_layer(
 ) -> Option<(AbsolutePathBuf, HookEventsToml)> {
     let source_path = config_toml_source_path(layer);
     let hook_value = layer.config.get("hooks")?.clone();
-    let parsed = match codex_config::HooksToml::deserialize(hook_value) {
+    let parsed = match HookEventsToml::deserialize(hook_value) {
         Ok(parsed) => parsed,
         Err(err) => {
             warnings.push(format!(
@@ -307,7 +302,7 @@ fn load_toml_hooks_from_layer(
         }
     };
 
-    (!parsed.events.is_empty()).then_some((source_path, parsed.events))
+    (!parsed.is_empty()).then_some((source_path, parsed))
 }
 
 fn config_toml_source_path(layer: &ConfigLayerEntry) -> AbsolutePathBuf {
@@ -352,7 +347,7 @@ fn append_hook_events(
             hook_entries,
             warnings,
             display_order,
-            source.clone(),
+            &source,
             event_name,
             groups,
         );
@@ -364,7 +359,7 @@ fn append_matcher_groups(
     hook_entries: &mut Vec<HookListEntry>,
     warnings: &mut Vec<String>,
     display_order: &mut i64,
-    source: HookHandlerSource<'_>,
+    source: &HookHandlerSource<'_>,
     event_name: codex_protocol::protocol::HookEventName,
     groups: Vec<MatcherGroup>,
 ) {
@@ -409,12 +404,13 @@ fn append_matcher_groups(
                     // TODO(abhinav): replace this positional suffix with a durable hook id.
                     let key = format!(
                         "{}:{}:{}:{}",
-                        source.key_prefix,
+                        source.key_source,
                         hook_event_key_label(event_name),
                         group_index,
                         handler_index
                     );
-                    let enabled = source.is_managed || !source.disabled_hook_keys.contains(&key);
+                    let enabled =
+                        source.source.is_managed() || !source.disabled_hook_keys.contains(&key);
                     hook_entries.push(HookListEntry {
                         key,
                         event_name,
@@ -428,12 +424,11 @@ fn append_matcher_groups(
                         plugin_id: source.plugin_id.clone(),
                         display_order: *display_order,
                         enabled,
-                        is_managed: source.is_managed,
+                        is_managed: source.source.is_managed(),
                     });
                     if enabled {
                         handlers.push(ConfiguredHandler {
                             event_name,
-                            is_managed: source.is_managed,
                             matcher: matcher.map(ToOwned::to_owned),
                             command,
                             timeout_sec,
@@ -494,15 +489,16 @@ fn hook_source_for_requirement_source(source: Option<&RequirementSource>) -> Hoo
         Some(RequirementSource::LegacyManagedConfigTomlFromMdm) => {
             HookSource::LegacyManagedConfigMdm
         }
-        Some(RequirementSource::CloudRequirements | RequirementSource::Unknown) | None => {
-            HookSource::Unknown
-        }
+        Some(RequirementSource::CloudRequirements) => HookSource::CloudRequirements,
+        Some(RequirementSource::Unknown) | None => HookSource::Unknown,
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use codex_config::ConfigLayerEntry;
     use codex_config::ConfigLayerSource;
+    use codex_config::HookEventsToml;
     use codex_protocol::protocol::HookEventName;
     use codex_protocol::protocol::HookSource;
     use codex_utils_absolute_path::AbsolutePathBuf;
@@ -514,6 +510,7 @@ mod tests {
     use super::append_matcher_groups;
     use codex_config::HookHandlerConfig;
     use codex_config::MatcherGroup;
+    use codex_config::TomlValue;
 
     fn source_path() -> AbsolutePathBuf {
         test_path_buf("/tmp/hooks.json").abs()
@@ -529,8 +526,7 @@ mod tests {
     ) -> super::HookHandlerSource<'a> {
         super::HookHandlerSource {
             path,
-            key_prefix: format!("file:{}", path.display()),
-            is_managed: false,
+            key_source: path.display().to_string(),
             source: hook_source(),
             disabled_hook_keys,
             env: std::collections::HashMap::new(),
@@ -563,7 +559,7 @@ mod tests {
             &mut Vec::new(),
             &mut warnings,
             &mut display_order,
-            hook_handler_source(&source_path, &disabled_hook_keys),
+            &hook_handler_source(&source_path, &disabled_hook_keys),
             HookEventName::UserPromptSubmit,
             vec![command_group(Some("["))],
         );
@@ -573,7 +569,6 @@ mod tests {
             handlers,
             vec![ConfiguredHandler {
                 event_name: HookEventName::UserPromptSubmit,
-                is_managed: false,
                 matcher: None,
                 command: "echo hello".to_string(),
                 timeout_sec: 600,
@@ -599,7 +594,7 @@ mod tests {
             &mut Vec::new(),
             &mut warnings,
             &mut display_order,
-            hook_handler_source(&source_path, &disabled_hook_keys),
+            &hook_handler_source(&source_path, &disabled_hook_keys),
             HookEventName::PreToolUse,
             vec![command_group(Some("^Bash$"))],
         );
@@ -609,7 +604,6 @@ mod tests {
             handlers,
             vec![ConfiguredHandler {
                 event_name: HookEventName::PreToolUse,
-                is_managed: false,
                 matcher: Some("^Bash$".to_string()),
                 command: "echo hello".to_string(),
                 timeout_sec: 600,
@@ -635,7 +629,7 @@ mod tests {
             &mut Vec::new(),
             &mut warnings,
             &mut display_order,
-            hook_handler_source(&source_path, &disabled_hook_keys),
+            &hook_handler_source(&source_path, &disabled_hook_keys),
             HookEventName::PreToolUse,
             vec![command_group(Some("*"))],
         );
@@ -658,7 +652,7 @@ mod tests {
             &mut Vec::new(),
             &mut warnings,
             &mut display_order,
-            hook_handler_source(&source_path, &disabled_hook_keys),
+            &hook_handler_source(&source_path, &disabled_hook_keys),
             HookEventName::PostToolUse,
             vec![command_group(Some("Edit|Write"))],
         );
@@ -667,6 +661,56 @@ mod tests {
         assert_eq!(handlers.len(), 1);
         assert_eq!(handlers[0].event_name, HookEventName::PostToolUse);
         assert_eq!(handlers[0].matcher.as_deref(), Some("Edit|Write"));
+    }
+
+    #[test]
+    fn toml_hook_discovery_ignores_malformed_state_entries() {
+        let layer = ConfigLayerEntry::new(
+            ConfigLayerSource::User {
+                file: test_path_buf("/tmp/config.toml").abs(),
+            },
+            config_with_malformed_state_and_session_start_hook(),
+        );
+        let mut warnings = Vec::new();
+
+        let (_, hooks) = super::load_toml_hooks_from_layer(&layer, &mut warnings)
+            .expect("valid hook events should still load");
+
+        assert_eq!(warnings, Vec::<String>::new());
+        assert_eq!(
+            hooks,
+            HookEventsToml {
+                session_start: vec![MatcherGroup {
+                    matcher: None,
+                    hooks: vec![HookHandlerConfig::Command {
+                        command: "echo hello".to_string(),
+                        timeout_sec: None,
+                        r#async: false,
+                        status_message: None,
+                    }],
+                }],
+                ..Default::default()
+            }
+        );
+    }
+
+    fn config_with_malformed_state_and_session_start_hook() -> TomlValue {
+        serde_json::from_value(serde_json::json!({
+            "hooks": {
+                "state": {
+                    "some_key": {
+                        "enabled": "not a bool",
+                    },
+                },
+                "SessionStart": [{
+                    "hooks": [{
+                        "type": "command",
+                        "command": "echo hello",
+                    }],
+                }],
+            },
+        }))
+        .expect("config TOML should deserialize")
     }
 
     #[test]

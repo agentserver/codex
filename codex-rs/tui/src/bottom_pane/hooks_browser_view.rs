@@ -575,6 +575,7 @@ fn config_source_label(source: HookSource) -> &'static str {
         HookSource::Mdm => "MDM",
         HookSource::SessionFlags => "Session Flags",
         HookSource::Plugin => unreachable!("plugin hooks are handled by summary_source"),
+        HookSource::CloudRequirements => "Cloud Requirements",
         HookSource::LegacyManagedConfigFile => "Legacy Managed Config",
         HookSource::LegacyManagedConfigMdm => "Legacy Managed MDM",
         HookSource::Unknown => "Unknown Source",

@@ -356,8 +356,6 @@ pub(crate) async fn run_turn(
     track_turn_resolved_config_analytics(&sess, &turn_context, &input).await;
 
     let skills_outcome = Some(turn_context.turn_skills.outcome.as_ref());
-    sess.maybe_start_ghost_snapshot(Arc::clone(&turn_context), cancellation_token.child_token())
-        .await;
     let mut last_agent_message: Option<String> = None;
     let mut stop_hook_active = false;
     // Although from the perspective of codex.rs, TurnDiffTracker has the lifecycle of a Task which contains
@@ -522,7 +520,8 @@ pub(crate) async fn run_turn(
                         stop_hook_active,
                         last_assistant_message: last_agent_message.clone(),
                     };
-                    for run in sess.hooks().preview_stop(&stop_request) {
+                    let hooks = sess.hooks();
+                    for run in hooks.preview_stop(&stop_request) {
                         sess.send_event(
                             &turn_context,
                             EventMsg::HookStarted(codex_protocol::protocol::HookStartedEvent {
@@ -532,7 +531,7 @@ pub(crate) async fn run_turn(
                         )
                         .await;
                     }
-                    let stop_outcome = sess.hooks().run_stop(stop_request).await;
+                    let stop_outcome = hooks.run_stop(stop_request).await;
                     emit_hook_completed_events(&sess, &turn_context, stop_outcome.hook_events)
                         .await;
                     if stop_outcome.should_block {
@@ -1866,6 +1865,11 @@ async fn try_run_sampling_request(
             otel.name = field::Empty,
             tool_name = field::Empty,
             from = field::Empty,
+            gen_ai.usage.input_tokens = field::Empty,
+            gen_ai.usage.cache_read.input_tokens = field::Empty,
+            gen_ai.usage.output_tokens = field::Empty,
+            codex.usage.reasoning_output_tokens = field::Empty,
+            codex.usage.total_tokens = field::Empty,
         );
 
         let event = match stream
@@ -1951,7 +1955,6 @@ async fn try_run_sampling_request(
                     | ResponseItem::ToolSearchOutput { .. }
                     | ResponseItem::WebSearchCall { .. }
                     | ResponseItem::ImageGenerationCall { .. }
-                    | ResponseItem::GhostSnapshot { .. }
                     | ResponseItem::Compaction { .. }
                     | ResponseItem::Other => false,
                 };

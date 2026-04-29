@@ -3,6 +3,7 @@ use crate::path_utils::write_atomically;
 use anyhow::Context;
 use codex_config::CONFIG_TOML_FILE;
 use codex_config::types::McpServerConfig;
+use codex_config::types::ToolSuggestDisabledTool;
 use codex_features::FEATURES;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ServiceTier;
@@ -10,6 +11,7 @@ use codex_protocol::config_types::TrustLevel;
 use codex_protocol::openai_models::ReasoningEffort;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 use tokio::task;
@@ -57,12 +59,12 @@ pub enum ConfigEdit {
     RecordModelMigrationSeen { from: String, to: String },
     /// Replace the entire `[mcp_servers]` table.
     ReplaceMcpServers(BTreeMap<String, McpServerConfig>),
+    /// Add a disabled tool suggestion under `[tool_suggest].disabled_tools`.
+    AddToolSuggestDisabledTool(ToolSuggestDisabledTool),
     /// Set or clear a skill config entry under `[[skills.config]]` by path.
     SetSkillConfig { path: PathBuf, enabled: bool },
     /// Set or clear a skill config entry under `[[skills.config]]` by name.
     SetSkillConfigByName { name: String, enabled: bool },
-    /// Set or clear a hook config entry under `[[hooks.config]]` by key.
-    SetHookConfig { key: String, enabled: bool },
     /// Set trust_level under `[projects."<path>"]`,
     /// migrating inline tables to explicit tables.
     SetProjectTrustLevel { path: PathBuf, level: TrustLevel },
@@ -115,6 +117,45 @@ pub fn terminal_title_items_edit(items: &[String]) -> ConfigEdit {
     }
 }
 
+fn keymap_binding_value(keys: &[String]) -> TomlItem {
+    if let [key] = keys {
+        value(key.to_string())
+    } else {
+        let array = keys.iter().cloned().collect::<toml_edit::Array>();
+        TomlItem::Value(array.into())
+    }
+}
+
+/// Produces a config edit that replaces one root-level TUI keymap binding list.
+pub fn keymap_bindings_edit(context: &str, action: &str, keys: &[String]) -> ConfigEdit {
+    ConfigEdit::SetPath {
+        segments: vec![
+            "tui".to_string(),
+            "keymap".to_string(),
+            context.to_string(),
+            action.to_string(),
+        ],
+        value: keymap_binding_value(keys),
+    }
+}
+
+/// Produces a config edit that replaces one root-level TUI keymap binding.
+pub fn keymap_binding_edit(context: &str, action: &str, key: &str) -> ConfigEdit {
+    keymap_bindings_edit(context, action, &[key.to_string()])
+}
+
+/// Produces a config edit that removes one root-level TUI keymap binding.
+pub fn keymap_binding_clear_edit(context: &str, action: &str) -> ConfigEdit {
+    ConfigEdit::ClearPath {
+        segments: vec![
+            "tui".to_string(),
+            "keymap".to_string(),
+            context.to_string(),
+            action.to_string(),
+        ],
+    }
+}
+
 pub fn model_availability_nux_count_edits(shown_count: &HashMap<String, u32>) -> Vec<ConfigEdit> {
     let mut shown_count_entries: Vec<_> = shown_count.iter().collect();
     shown_count_entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
@@ -143,10 +184,13 @@ mod document_helpers {
     use codex_config::types::McpServerEnvVar;
     use codex_config::types::McpServerToolConfig;
     use codex_config::types::McpServerTransportConfig;
+    use codex_config::types::ToolSuggestDisabledTool;
+    use codex_config::types::ToolSuggestDiscoverableType;
     use toml_edit::Array as TomlArray;
     use toml_edit::InlineTable;
     use toml_edit::Item as TomlItem;
     use toml_edit::Table as TomlTable;
+    use toml_edit::Value as TomlValue;
     use toml_edit::value;
 
     pub(super) fn ensure_table_for_write(item: &mut TomlItem) -> Option<&mut TomlTable> {
@@ -342,6 +386,57 @@ mod document_helpers {
         table
     }
 
+    pub(super) fn parse_tool_suggest_disabled_tool(
+        value: &TomlValue,
+    ) -> Option<ToolSuggestDisabledTool> {
+        let table = value.as_inline_table()?;
+        let kind = match table.get("type").and_then(TomlValue::as_str) {
+            Some("connector") => ToolSuggestDiscoverableType::Connector,
+            Some("plugin") => ToolSuggestDiscoverableType::Plugin,
+            _ => return None,
+        };
+        let id = table.get("id").and_then(TomlValue::as_str)?;
+        Some(ToolSuggestDisabledTool {
+            kind,
+            id: id.to_string(),
+        })
+    }
+
+    pub(super) fn parse_tool_suggest_disabled_tool_table(
+        table: &TomlTable,
+    ) -> Option<ToolSuggestDisabledTool> {
+        let kind = match table.get("type").and_then(TomlItem::as_str) {
+            Some("connector") => ToolSuggestDiscoverableType::Connector,
+            Some("plugin") => ToolSuggestDiscoverableType::Plugin,
+            _ => return None,
+        };
+        let id = table.get("id").and_then(TomlItem::as_str)?;
+        Some(ToolSuggestDisabledTool {
+            kind,
+            id: id.to_string(),
+        })
+    }
+
+    pub(super) fn tool_suggest_disabled_tools_value(
+        disabled_tools: &[ToolSuggestDisabledTool],
+    ) -> TomlItem {
+        let mut array = TomlArray::new();
+        for disabled_tool in disabled_tools {
+            let mut table = InlineTable::new();
+            table.insert(
+                "type",
+                match disabled_tool.kind {
+                    ToolSuggestDiscoverableType::Connector => "connector",
+                    ToolSuggestDiscoverableType::Plugin => "plugin",
+                }
+                .into(),
+            );
+            table.insert("id", disabled_tool.id.clone().into());
+            array.push(table);
+        }
+        TomlItem::Value(array.into())
+    }
+
     fn array_from_iter<I>(iter: I) -> TomlItem
     where
         I: Iterator<Item = String>,
@@ -515,14 +610,14 @@ impl ConfigDocument {
                 value(*acknowledged),
             )),
             ConfigEdit::ReplaceMcpServers(servers) => Ok(self.replace_mcp_servers(servers)),
+            ConfigEdit::AddToolSuggestDisabledTool(disabled_tool) => {
+                Ok(self.add_tool_suggest_disabled_tool(disabled_tool))
+            }
             ConfigEdit::SetSkillConfig { path, enabled } => {
                 Ok(self.set_skill_config(SkillConfigSelector::Path(path.clone()), *enabled))
             }
             ConfigEdit::SetSkillConfigByName { name, enabled } => {
                 Ok(self.set_skill_config(SkillConfigSelector::Name(name.clone()), *enabled))
-            }
-            ConfigEdit::SetHookConfig { key, enabled } => {
-                Ok(self.set_hook_config(key.clone(), *enabled))
             }
             ConfigEdit::SetPath { segments, value } => Ok(self.insert(segments, value.clone())),
             ConfigEdit::ClearPath { segments } => Ok(self.clear_owned(segments)),
@@ -554,6 +649,41 @@ impl ConfigDocument {
     fn clear(&mut self, scope: Scope, segments: &[&str]) -> bool {
         let resolved = self.scoped_segments(scope, segments);
         self.remove(&resolved)
+    }
+
+    fn add_tool_suggest_disabled_tool(&mut self, disabled_tool: &ToolSuggestDisabledTool) -> bool {
+        let disabled_tools_item = self
+            .doc
+            .get("tool_suggest")
+            .and_then(|item| item.as_table_like())
+            .and_then(|table| table.get("disabled_tools"));
+        let existing_from_array = disabled_tools_item
+            .and_then(|item| item.as_value())
+            .and_then(|value| value.as_array())
+            .into_iter()
+            .flat_map(|array| array.iter())
+            .filter_map(document_helpers::parse_tool_suggest_disabled_tool);
+        let existing_from_tables = disabled_tools_item
+            .and_then(|item| match item {
+                TomlItem::ArrayOfTables(array) => Some(array),
+                _ => None,
+            })
+            .into_iter()
+            .flat_map(|array| array.iter())
+            .filter_map(document_helpers::parse_tool_suggest_disabled_tool_table);
+
+        let mut seen = HashSet::new();
+        let disabled_tools = existing_from_array
+            .chain(existing_from_tables)
+            .chain(std::iter::once(disabled_tool.clone()))
+            .filter_map(|disabled_tool| disabled_tool.normalized())
+            .filter(|disabled_tool| seen.insert(disabled_tool.clone()))
+            .collect::<Vec<_>>();
+        self.write_value(
+            Scope::Global,
+            &["tool_suggest", "disabled_tools"],
+            document_helpers::tool_suggest_disabled_tools_value(&disabled_tools),
+        )
     }
 
     fn clear_owned(&mut self, segments: &[String]) -> bool {
@@ -724,121 +854,6 @@ impl ConfigDocument {
         mutated
     }
 
-    /// Set or clear a `[[hooks.config]]` entry by hook key.
-    ///
-    /// Disabled state is represented explicitly as `enabled = false`. Enabled
-    /// state is represented by removing the matching override, matching the
-    /// skills config behavior.
-    fn set_hook_config(&mut self, key: String, enabled: bool) -> bool {
-        let key = key.trim().to_string();
-        if key.is_empty() {
-            return false;
-        }
-        let mut remove_hooks_table = false;
-        let mut mutated = false;
-
-        {
-            let root = self.doc.as_table_mut();
-            let hooks_item = match root.get_mut("hooks") {
-                Some(item) => item,
-                None => {
-                    if enabled {
-                        return false;
-                    }
-                    root.insert(
-                        "hooks",
-                        TomlItem::Table(document_helpers::new_implicit_table()),
-                    );
-                    let Some(item) = root.get_mut("hooks") else {
-                        return false;
-                    };
-                    item
-                }
-            };
-
-            if document_helpers::ensure_table_for_write(hooks_item).is_none() {
-                if enabled {
-                    return false;
-                }
-                *hooks_item = TomlItem::Table(document_helpers::new_implicit_table());
-            }
-            let Some(hooks_table) = hooks_item.as_table_mut() else {
-                return false;
-            };
-
-            let config_item = match hooks_table.get_mut("config") {
-                Some(item) => item,
-                None => {
-                    if enabled {
-                        return false;
-                    }
-                    hooks_table.insert("config", TomlItem::ArrayOfTables(ArrayOfTables::new()));
-                    let Some(item) = hooks_table.get_mut("config") else {
-                        return false;
-                    };
-                    item
-                }
-            };
-
-            if !matches!(config_item, TomlItem::ArrayOfTables(_)) {
-                if enabled {
-                    return false;
-                }
-                *config_item = TomlItem::ArrayOfTables(ArrayOfTables::new());
-            }
-
-            let TomlItem::ArrayOfTables(overrides) = config_item else {
-                return false;
-            };
-
-            // Only persist negative overrides. Re-enabling removes the entry so
-            // the hook's default discovered state applies again.
-            let existing_index = overrides.iter().enumerate().find_map(|(idx, table)| {
-                hook_config_key_from_table(table)
-                    .filter(|value| value == &key)
-                    .map(|_| idx)
-            });
-
-            if enabled {
-                if let Some(index) = existing_index {
-                    overrides.remove(index);
-                    mutated = true;
-                    if overrides.is_empty() {
-                        hooks_table.remove("config");
-                        if hooks_table.is_empty() {
-                            remove_hooks_table = true;
-                        }
-                    }
-                }
-            } else if let Some(index) = existing_index {
-                for (idx, table) in overrides.iter_mut().enumerate() {
-                    if idx == index {
-                        table["key"] = value(key);
-                        table["enabled"] = value(false);
-                        mutated = true;
-                        break;
-                    }
-                }
-            } else {
-                let mut entry = TomlTable::new();
-                entry.set_implicit(false);
-                entry["key"] = value(key);
-                entry["enabled"] = value(false);
-                overrides.push(entry);
-                mutated = true;
-            }
-        }
-
-        // Defer removing the parent table until the nested borrows above are
-        // dropped.
-        if remove_hooks_table {
-            let root = self.doc.as_table_mut();
-            root.remove("hooks");
-        }
-
-        mutated
-    }
-
     fn scoped_segments(&self, scope: Scope, segments: &[&str]) -> Vec<String> {
         let resolved: Vec<String> = segments
             .iter()
@@ -983,15 +998,6 @@ fn write_skill_config_selector(table: &mut TomlTable, selector: &SkillConfigSele
             table["path"] = value(path.to_string_lossy().to_string());
         }
     }
-}
-
-fn hook_config_key_from_table(table: &TomlTable) -> Option<String> {
-    table
-        .get("key")
-        .and_then(|item| item.as_str())
-        .map(str::trim)
-        .filter(|key| !key.is_empty())
-        .map(str::to_string)
 }
 
 /// Persist edits using a blocking strategy.

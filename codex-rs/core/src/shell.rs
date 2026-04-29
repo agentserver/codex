@@ -1,5 +1,7 @@
 use crate::shell_detect::detect_shell_type;
 use crate::shell_snapshot::ShellSnapshot;
+use codex_shell_command::powershell::try_find_powershell_executable_blocking;
+use codex_shell_command::powershell::try_find_pwsh_executable_blocking;
 use serde::Deserialize;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -250,21 +252,49 @@ const POWERSHELL_FALLBACK_PATHS: &[&str] =
 const POWERSHELL_FALLBACK_PATHS: &[&str] = &[];
 
 fn get_powershell_shell(path: Option<&PathBuf>) -> Option<Shell> {
-    let shell_path = get_shell_path(ShellType::PowerShell, path, "pwsh", PWSH_FALLBACK_PATHS)
-        .or_else(|| {
+    let shell_path = if path.is_some() {
+        get_shell_path(ShellType::PowerShell, path, "pwsh", PWSH_FALLBACK_PATHS).or_else(|| {
             get_shell_path(
                 ShellType::PowerShell,
                 path,
                 "powershell",
                 POWERSHELL_FALLBACK_PATHS,
             )
-        });
+        })
+    } else {
+        preferred_powershell_path()
+            .or_else(|| get_shell_path(ShellType::PowerShell, path, "pwsh", PWSH_FALLBACK_PATHS))
+            .or_else(|| {
+                get_shell_path(
+                    ShellType::PowerShell,
+                    path,
+                    "powershell",
+                    POWERSHELL_FALLBACK_PATHS,
+                )
+            })
+    };
 
     shell_path.map(|shell_path| Shell {
         shell_type: ShellType::PowerShell,
         shell_path,
         shell_snapshot: empty_shell_snapshot_receiver(),
     })
+}
+
+#[cfg(windows)]
+fn preferred_powershell_path() -> Option<PathBuf> {
+    // Resolve a real PowerShell executable instead of trusting PATH lookup to
+    // hand back an execution alias or batch shim like `pwsh.cmd`.
+    try_find_pwsh_executable_blocking()
+        .map(|path| path.into_path_buf())
+        .or_else(|| {
+            try_find_powershell_executable_blocking().map(|path| path.into_path_buf())
+        })
+}
+
+#[cfg(not(windows))]
+fn preferred_powershell_path() -> Option<PathBuf> {
+    None
 }
 
 fn get_cmd_shell(path: Option<&PathBuf>) -> Option<Shell> {

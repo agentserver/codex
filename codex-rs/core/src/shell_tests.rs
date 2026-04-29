@@ -1,4 +1,5 @@
 use super::*;
+use codex_shell_command::powershell::try_find_pwsh_executable_blocking;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -176,7 +177,11 @@ async fn detects_powershell_as_default() {
     let powershell_shell = default_user_shell();
     let shell_path = powershell_shell.shell_path;
 
-    assert!(shell_path.ends_with("pwsh.exe") || shell_path.ends_with("powershell.exe"));
+    if let Some(pwsh_path) = try_find_pwsh_executable_blocking() {
+        assert_eq!(shell_path, pwsh_path.into_path_buf());
+    } else {
+        assert!(shell_path.ends_with("powershell.exe"));
+    }
 }
 
 #[test]
@@ -188,5 +193,9 @@ fn finds_powershell() {
     let powershell_shell = get_shell(ShellType::PowerShell, /*path*/ None).unwrap();
     let shell_path = powershell_shell.shell_path;
 
-    assert!(shell_path.ends_with("pwsh.exe") || shell_path.ends_with("powershell.exe"));
+    if let Some(pwsh_path) = try_find_pwsh_executable_blocking() {
+        assert_eq!(shell_path, pwsh_path.into_path_buf());
+    } else {
+        assert!(shell_path.ends_with("powershell.exe"));
+    }
 }

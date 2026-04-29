@@ -5615,7 +5615,7 @@ fn emit_thread_start_skill_metrics_records_enabled_kept_and_truncated_values() {
     assert_eq!(
         rendered.warning_message,
         Some(
-            "Warning: Exceeded skills context budget. All skill descriptions were removed and 1 additional skill was not included in the model-visible skills list."
+            "Exceeded skills context budget. All skill descriptions were removed and 1 additional skill was not included in the model-visible skills list."
                 .to_string()
         )
     );
@@ -5726,7 +5726,7 @@ async fn build_initial_context_emits_thread_start_skill_warning_on_repeated_buil
     assert!(matches!(
         warning_event.msg,
         EventMsg::Warning(WarningEvent { message })
-            if message == "Warning: Exceeded skills context budget of 2%. All skill descriptions were removed and 2 additional skills were not included in the model-visible skills list."
+            if message == "Exceeded skills context budget of 2%. All skill descriptions were removed and 2 additional skills were not included in the model-visible skills list."
     ));
 
     let _ = session.build_initial_context(&turn_context).await;
@@ -5737,7 +5737,7 @@ async fn build_initial_context_emits_thread_start_skill_warning_on_repeated_buil
     assert!(matches!(
         warning_event.msg,
         EventMsg::Warning(WarningEvent { message })
-            if message == "Warning: Exceeded skills context budget of 2%. All skill descriptions were removed and 2 additional skills were not included in the model-visible skills list."
+            if message == "Exceeded skills context budget of 2%. All skill descriptions were removed and 2 additional skills were not included in the model-visible skills list."
     ));
 }
 

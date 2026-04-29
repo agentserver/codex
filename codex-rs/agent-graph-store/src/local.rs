@@ -67,25 +67,10 @@ impl AgentGraphStore for LocalAgentGraphStore {
                 .map_err(internal_error);
         }
 
-        let mut open_children = self
-            .state_db
-            .list_thread_spawn_children_with_status(
-                parent_thread_id,
-                codex_state::DirectionalThreadSpawnEdgeStatus::Open,
-            )
+        self.state_db
+            .list_thread_spawn_children(parent_thread_id)
             .await
-            .map_err(internal_error)?;
-        let closed_children = self
-            .state_db
-            .list_thread_spawn_children_with_status(
-                parent_thread_id,
-                codex_state::DirectionalThreadSpawnEdgeStatus::Closed,
-            )
-            .await
-            .map_err(internal_error)?;
-        open_children.extend(closed_children);
-        open_children.sort_by_key(std::string::ToString::to_string);
-        Ok(open_children)
+            .map_err(internal_error)
     }
 
     async fn list_thread_spawn_descendants(

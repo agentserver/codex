@@ -32,7 +32,7 @@ use crate::history_cell;
 use crate::render::renderable::Renderable;
 
 #[cfg(test)]
-use codex_protocol::protocol::Op;
+use crate::app_command::AppCommand as Op;
 use codex_protocol::request_user_input::RequestUserInputAnswer;
 use codex_protocol::request_user_input::RequestUserInputEvent;
 use codex_protocol::request_user_input::RequestUserInputResponse;

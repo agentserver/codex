@@ -1,11 +1,11 @@
+use crate::diff_model::FileChange;
 use codex_app_server_protocol::AdditionalNetworkPermissions;
 use codex_app_server_protocol::FileUpdateChange;
 use codex_app_server_protocol::GrantedPermissionProfile;
+use codex_app_server_protocol::NetworkApprovalContext;
 use codex_app_server_protocol::NetworkApprovalContext as AppServerNetworkApprovalContext;
+use codex_app_server_protocol::NetworkApprovalProtocol;
 use codex_app_server_protocol::PatchChangeKind;
-use codex_protocol::protocol::FileChange;
-use codex_protocol::protocol::NetworkApprovalContext;
-use codex_protocol::protocol::NetworkApprovalProtocol;
 use codex_protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -72,17 +72,11 @@ mod tests {
     use super::file_update_changes_to_core;
     use super::granted_permission_profile_from_request;
     use super::network_approval_context_to_core;
+    use crate::diff_model::FileChange;
     use codex_app_server_protocol::FileUpdateChange;
+    use codex_app_server_protocol::NetworkApprovalContext;
+    use codex_app_server_protocol::NetworkApprovalProtocol;
     use codex_app_server_protocol::PatchChangeKind;
-    use codex_protocol::models::FileSystemPermissions;
-    use codex_protocol::models::NetworkPermissions;
-    use codex_protocol::permissions::FileSystemAccessMode;
-    use codex_protocol::permissions::FileSystemPath;
-    use codex_protocol::permissions::FileSystemSandboxEntry;
-    use codex_protocol::permissions::FileSystemSpecialPath;
-    use codex_protocol::protocol::FileChange;
-    use codex_protocol::protocol::NetworkApprovalContext;
-    use codex_protocol::protocol::NetworkApprovalProtocol;
     use codex_protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
@@ -127,15 +121,19 @@ mod tests {
     #[test]
     fn converts_request_permissions_into_granted_permissions() {
         assert_eq!(
-            granted_permission_profile_from_request(CoreRequestPermissionProfile {
-                network: Some(NetworkPermissions {
-                    enabled: Some(true),
-                }),
-                file_system: Some(FileSystemPermissions::from_read_write_roots(
-                    Some(vec![absolute_path("/tmp/read-only")]),
-                    Some(vec![absolute_path("/tmp/write")]),
-                )),
-            }),
+            granted_permission_profile_from_request(CoreRequestPermissionProfile::from(
+                codex_app_server_protocol::RequestPermissionProfile {
+                    network: Some(codex_app_server_protocol::AdditionalNetworkPermissions {
+                        enabled: Some(true),
+                    }),
+                    file_system: Some(codex_app_server_protocol::AdditionalFileSystemPermissions {
+                        read: Some(vec![absolute_path("/tmp/read-only")]),
+                        write: Some(vec![absolute_path("/tmp/write")]),
+                        glob_scan_max_depth: None,
+                        entries: None,
+                    }),
+                }
+            )),
             codex_app_server_protocol::GrantedPermissionProfile {
                 network: Some(codex_app_server_protocol::AdditionalNetworkPermissions {
                     enabled: Some(true),
@@ -166,18 +164,22 @@ mod tests {
     #[test]
     fn converts_request_permissions_into_canonical_granted_permissions() {
         assert_eq!(
-            granted_permission_profile_from_request(CoreRequestPermissionProfile {
-                file_system: Some(FileSystemPermissions {
-                    entries: vec![FileSystemSandboxEntry {
-                        path: FileSystemPath::Special {
-                            value: FileSystemSpecialPath::Root,
-                        },
-                        access: FileSystemAccessMode::Write,
-                    }],
-                    glob_scan_max_depth: None,
-                }),
-                ..Default::default()
-            }),
+            granted_permission_profile_from_request(CoreRequestPermissionProfile::from(
+                codex_app_server_protocol::RequestPermissionProfile {
+                    network: None,
+                    file_system: Some(codex_app_server_protocol::AdditionalFileSystemPermissions {
+                        read: None,
+                        write: None,
+                        glob_scan_max_depth: None,
+                        entries: Some(vec![codex_app_server_protocol::FileSystemSandboxEntry {
+                            path: codex_app_server_protocol::FileSystemPath::Special {
+                                value: codex_app_server_protocol::FileSystemSpecialPath::Root,
+                            },
+                            access: codex_app_server_protocol::FileSystemAccessMode::Write,
+                        }]),
+                    }),
+                }
+            )),
             codex_app_server_protocol::GrantedPermissionProfile {
                 network: None,
                 file_system: Some(codex_app_server_protocol::AdditionalFileSystemPermissions {

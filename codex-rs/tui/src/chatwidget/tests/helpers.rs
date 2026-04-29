@@ -99,8 +99,8 @@ pub(super) fn snapshot(percent: f64) -> RateLimitSnapshot {
         limit_id: None,
         limit_name: None,
         primary: Some(RateLimitWindow {
-            used_percent: percent,
-            window_minutes: Some(60),
+            used_percent: percent.round() as i32,
+            window_duration_mins: Some(60),
             resets_at: None,
         }),
         secondary: None,
@@ -122,7 +122,7 @@ pub(super) fn test_session_telemetry(config: &Config, model: &str) -> SessionTel
         "test_originator".to_string(),
         /*log_user_prompts*/ false,
         "test".to_string(),
-        SessionSource::Cli,
+        crate::test_support::session_source_cli(),
     )
 }
 
@@ -1016,7 +1016,7 @@ pub(super) fn type_plugins_search_query(chat: &mut ChatWidget, query: &str) {
 }
 
 pub(super) async fn assert_hook_events_snapshot(
-    event_name: codex_protocol::protocol::HookEventName,
+    event_name: codex_app_server_protocol::HookEventName,
     run_id: &str,
     status_message: &str,
     snapshot_name: &str,
@@ -1025,18 +1025,18 @@ pub(super) async fn assert_hook_events_snapshot(
 
     chat.handle_codex_event(Event {
         id: "hook-1".into(),
-        msg: EventMsg::HookStarted(codex_protocol::protocol::HookStartedEvent {
+        msg: EventMsg::HookStarted(crate::tool_activity::HookStartedEvent {
             turn_id: None,
-            run: codex_protocol::protocol::HookRunSummary {
+            run: codex_app_server_protocol::HookRunSummary {
                 id: run_id.to_string(),
                 event_name,
-                handler_type: codex_protocol::protocol::HookHandlerType::Command,
-                execution_mode: codex_protocol::protocol::HookExecutionMode::Sync,
-                scope: codex_protocol::protocol::HookScope::Turn,
+                handler_type: codex_app_server_protocol::HookHandlerType::Command,
+                execution_mode: codex_app_server_protocol::HookExecutionMode::Sync,
+                scope: codex_app_server_protocol::HookScope::Turn,
                 source_path: PathBuf::from(test_path_display("/tmp/hooks.json")).abs(),
-                source: codex_protocol::protocol::HookSource::User,
+                source: codex_app_server_protocol::HookSource::User,
                 display_order: 0,
-                status: codex_protocol::protocol::HookRunStatus::Running,
+                status: codex_app_server_protocol::HookRunStatus::Running,
                 status_message: Some(status_message.to_string()),
                 started_at: 1,
                 completed_at: None,
@@ -1060,29 +1060,29 @@ pub(super) async fn assert_hook_events_snapshot(
 
     chat.handle_codex_event(Event {
         id: "hook-1".into(),
-        msg: EventMsg::HookCompleted(codex_protocol::protocol::HookCompletedEvent {
+        msg: EventMsg::HookCompleted(crate::tool_activity::HookCompletedEvent {
             turn_id: None,
-            run: codex_protocol::protocol::HookRunSummary {
+            run: codex_app_server_protocol::HookRunSummary {
                 id: run_id.to_string(),
                 event_name,
-                handler_type: codex_protocol::protocol::HookHandlerType::Command,
-                execution_mode: codex_protocol::protocol::HookExecutionMode::Sync,
-                scope: codex_protocol::protocol::HookScope::Turn,
+                handler_type: codex_app_server_protocol::HookHandlerType::Command,
+                execution_mode: codex_app_server_protocol::HookExecutionMode::Sync,
+                scope: codex_app_server_protocol::HookScope::Turn,
                 source_path: PathBuf::from(test_path_display("/tmp/hooks.json")).abs(),
-                source: codex_protocol::protocol::HookSource::User,
+                source: codex_app_server_protocol::HookSource::User,
                 display_order: 0,
-                status: codex_protocol::protocol::HookRunStatus::Completed,
+                status: codex_app_server_protocol::HookRunStatus::Completed,
                 status_message: Some(status_message.to_string()),
                 started_at: 1,
                 completed_at: Some(11),
                 duration_ms: Some(10),
                 entries: vec![
-                    codex_protocol::protocol::HookOutputEntry {
-                        kind: codex_protocol::protocol::HookOutputEntryKind::Warning,
+                    codex_app_server_protocol::HookOutputEntry {
+                        kind: codex_app_server_protocol::HookOutputEntryKind::Warning,
                         text: "Heads up from the hook".to_string(),
                     },
-                    codex_protocol::protocol::HookOutputEntry {
-                        kind: codex_protocol::protocol::HookOutputEntryKind::Context,
+                    codex_app_server_protocol::HookOutputEntry {
+                        kind: codex_app_server_protocol::HookOutputEntryKind::Context,
                         text: "Remember the startup checklist.".to_string(),
                     },
                 ],
@@ -1098,13 +1098,13 @@ pub(super) async fn assert_hook_events_snapshot(
     assert_chatwidget_snapshot!(snapshot_name, combined);
 }
 
-fn hook_event_label(event_name: codex_protocol::protocol::HookEventName) -> &'static str {
+fn hook_event_label(event_name: codex_app_server_protocol::HookEventName) -> &'static str {
     match event_name {
-        codex_protocol::protocol::HookEventName::PreToolUse => "PreToolUse",
-        codex_protocol::protocol::HookEventName::PermissionRequest => "PermissionRequest",
-        codex_protocol::protocol::HookEventName::PostToolUse => "PostToolUse",
-        codex_protocol::protocol::HookEventName::SessionStart => "SessionStart",
-        codex_protocol::protocol::HookEventName::UserPromptSubmit => "UserPromptSubmit",
-        codex_protocol::protocol::HookEventName::Stop => "Stop",
+        codex_app_server_protocol::HookEventName::PreToolUse => "PreToolUse",
+        codex_app_server_protocol::HookEventName::PermissionRequest => "PermissionRequest",
+        codex_app_server_protocol::HookEventName::PostToolUse => "PostToolUse",
+        codex_app_server_protocol::HookEventName::SessionStart => "SessionStart",
+        codex_app_server_protocol::HookEventName::UserPromptSubmit => "UserPromptSubmit",
+        codex_app_server_protocol::HookEventName::Stop => "Stop",
     }
 }

@@ -126,9 +126,9 @@ fn app_server_exec_approval_request_preserves_permissions_context() {
 
     assert_eq!(
         request.network_approval_context,
-        Some(codex_protocol::protocol::NetworkApprovalContext {
+        Some(codex_app_server_protocol::NetworkApprovalContext {
             host: "example.com".to_string(),
-            protocol: codex_protocol::protocol::NetworkApprovalProtocol::Socks5Tcp,
+            protocol: codex_app_server_protocol::NetworkApprovalProtocol::Socks5Tcp,
         })
     );
     assert_eq!(
@@ -222,7 +222,10 @@ async fn exec_approval_uses_approval_id_when_present() {
         } = app_ev
         {
             assert_eq!(id, "approval-subcommand");
-            assert_matches!(decision, codex_protocol::protocol::ReviewDecision::Approved);
+            assert_matches!(
+                decision,
+                codex_app_server_protocol::CommandExecutionApprovalDecision::Accept
+            );
             found = true;
             break;
         }

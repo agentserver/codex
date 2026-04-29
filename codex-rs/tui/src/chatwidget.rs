@@ -30,7 +30,6 @@
 //! here. That split lets the composer stage a recall entry before clearing input while this module
 //! records the attempted slash command after dispatch just like ordinary submitted text.
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
@@ -43,13 +42,52 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
 
-use self::realtime::PendingSteerCompareKey;
+#[cfg(test)]
+use self::test_events::AgentMessageDeltaEvent;
+#[cfg(test)]
+use self::test_events::AgentMessageEvent;
+#[cfg(test)]
+use self::test_events::AgentReasoningDeltaEvent;
+#[cfg(test)]
+use self::test_events::AgentReasoningEvent;
+#[cfg(test)]
+use self::test_events::AgentReasoningRawContentDeltaEvent;
+#[cfg(test)]
+use self::test_events::AgentReasoningRawContentEvent;
+#[cfg(test)]
+use self::test_events::BackgroundEventEvent;
+#[cfg(test)]
+use self::test_events::ErrorEvent;
+#[cfg(test)]
+use self::test_events::Event;
+#[cfg(test)]
+use self::test_events::EventMsg;
+#[cfg(test)]
+use self::test_events::ExitedReviewModeEvent;
+#[cfg(test)]
+use self::test_events::McpListToolsResponseEvent;
+#[cfg(test)]
+use self::test_events::SessionConfiguredEvent;
+#[cfg(test)]
+use self::test_events::StreamErrorEvent;
+#[cfg(test)]
+use self::test_events::TurnCompleteEvent;
+#[cfg(test)]
+use self::test_events::TurnDiffEvent;
+#[cfg(test)]
+use self::test_events::UndoCompletedEvent;
+#[cfg(test)]
+use self::test_events::UndoStartedEvent;
+#[cfg(test)]
+use self::test_events::WarningEvent;
 use crate::app::app_server_requests::ResolvedAppServerRequest;
 use crate::app_command::AppCommand;
+use crate::app_event::HistoryLookupResponse;
 use crate::app_event::RealtimeAudioDeviceKind;
 use crate::app_server_approval_conversions::file_update_changes_to_core;
 use crate::app_server_approval_conversions::network_approval_context_to_core;
-use crate::app_server_session::ThreadSessionState;
+use crate::approval_events::ApplyPatchApprovalRequestEvent;
+use crate::approval_events::ExecApprovalRequestEvent;
 #[cfg(not(target_os = "linux"))]
 use crate::audio_device::list_realtime_audio_device_names;
 use crate::bottom_pane::StatusLineItem;
@@ -68,6 +106,9 @@ use crate::mention_codec::LinkedMention;
 use crate::mention_codec::encode_history_mentions;
 use crate::model_catalog::ModelCatalog;
 use crate::multi_agents;
+use crate::multi_agents::AgentMetadata;
+use crate::session_state::SessionNetworkProxyRuntime;
+use crate::session_state::ThreadSessionState;
 use crate::status::RateLimitWindowDisplay;
 use crate::status::StatusAccountDisplay;
 use crate::status::StatusHistoryHandle;
@@ -78,29 +119,55 @@ use crate::terminal_title::SetTerminalTitleResult;
 use crate::terminal_title::clear_terminal_title;
 use crate::terminal_title::set_terminal_title;
 use crate::text_formatting::proper_join;
+use crate::token_usage::TokenUsage;
+use crate::token_usage::TokenUsageInfo;
+use crate::tool_activity::ExecCommandBeginEvent;
+use crate::tool_activity::ExecCommandEndEvent;
+use crate::tool_activity::ExecCommandOutputDeltaEvent;
+use crate::tool_activity::HookCompletedEvent;
+use crate::tool_activity::HookStartedEvent;
+use crate::tool_activity::ImageGenerationBeginEvent;
+use crate::tool_activity::ImageGenerationEndEvent;
+use crate::tool_activity::McpInvocation;
+use crate::tool_activity::McpToolCallBeginEvent;
+use crate::tool_activity::McpToolCallEndEvent;
+use crate::tool_activity::PatchApplyBeginEvent;
+use crate::tool_activity::PatchApplyEndEvent;
+use crate::tool_activity::TerminalInteractionEvent;
+use crate::tool_activity::ViewImageToolCallEvent;
+use crate::tool_activity::WebSearchBeginEvent;
+use crate::tool_activity::WebSearchEndEvent;
+use crate::turn_state::TurnAbortReason;
 use crate::version::CODEX_CLI_VERSION;
 use codex_app_server_protocol::AddCreditsNudgeCreditType;
 use codex_app_server_protocol::AddCreditsNudgeEmailStatus;
 use codex_app_server_protocol::AppInfo;
 use codex_app_server_protocol::AppSummary;
+#[cfg(test)]
+use codex_app_server_protocol::CodexErrorInfo as CoreCodexErrorInfo;
 use codex_app_server_protocol::CodexErrorInfo as AppServerCodexErrorInfo;
-use codex_app_server_protocol::CollabAgentState as AppServerCollabAgentState;
-use codex_app_server_protocol::CollabAgentStatus as AppServerCollabAgentStatus;
 use codex_app_server_protocol::CollabAgentTool;
 use codex_app_server_protocol::CollabAgentToolCallStatus;
 use codex_app_server_protocol::CommandExecutionRequestApprovalParams;
+use codex_app_server_protocol::CommandExecutionSource as ExecCommandSource;
 use codex_app_server_protocol::ConfigLayerSource;
+use codex_app_server_protocol::CreditsSnapshot;
 use codex_app_server_protocol::ErrorNotification;
 use codex_app_server_protocol::FileChangeRequestApprovalParams;
 use codex_app_server_protocol::GuardianApprovalReviewAction;
 use codex_app_server_protocol::ItemCompletedNotification;
 use codex_app_server_protocol::ItemStartedNotification;
-use codex_app_server_protocol::McpServerStartupState;
 use codex_app_server_protocol::McpServerStatusDetail;
-use codex_app_server_protocol::McpServerStatusUpdatedNotification;
+#[cfg(test)]
+use codex_app_server_protocol::ModelVerification as CoreModelVerification;
 use codex_app_server_protocol::ModelVerification as AppServerModelVerification;
+use codex_app_server_protocol::RateLimitReachedType;
+use codex_app_server_protocol::RateLimitSnapshot;
+use codex_app_server_protocol::ReviewTarget;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
+use codex_app_server_protocol::SkillMetadata as ProtocolSkillMetadata;
+use codex_app_server_protocol::SkillsListResponse;
 use codex_app_server_protocol::ThreadGoal as AppThreadGoal;
 use codex_app_server_protocol::ThreadGoalStatus as AppThreadGoalStatus;
 use codex_app_server_protocol::ThreadItem;
@@ -130,6 +197,10 @@ use codex_plugin::PluginCapabilitySummary;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
 use codex_protocol::approvals::ElicitationRequestEvent;
+use codex_protocol::approvals::GuardianAssessmentAction;
+use codex_protocol::approvals::GuardianAssessmentDecisionSource;
+use codex_protocol::approvals::GuardianAssessmentEvent;
+use codex_protocol::approvals::GuardianAssessmentStatus;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::config_types::ModeKind;
@@ -146,89 +217,6 @@ use codex_protocol::models::local_image_label_text;
 use codex_protocol::parse_command::ParsedCommand;
 use codex_protocol::plan_tool::PlanItemArg as UpdatePlanItemArg;
 use codex_protocol::plan_tool::StepStatus as UpdatePlanItemStatus;
-#[cfg(test)]
-use codex_protocol::protocol::AgentMessageDeltaEvent;
-#[cfg(test)]
-use codex_protocol::protocol::AgentMessageEvent;
-#[cfg(test)]
-use codex_protocol::protocol::AgentReasoningDeltaEvent;
-#[cfg(test)]
-use codex_protocol::protocol::AgentReasoningEvent;
-#[cfg(test)]
-use codex_protocol::protocol::AgentReasoningRawContentDeltaEvent;
-#[cfg(test)]
-use codex_protocol::protocol::AgentReasoningRawContentEvent;
-use codex_protocol::protocol::AgentStatus;
-use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
-#[cfg(test)]
-use codex_protocol::protocol::BackgroundEventEvent;
-#[cfg(test)]
-use codex_protocol::protocol::CodexErrorInfo as CoreCodexErrorInfo;
-use codex_protocol::protocol::CollabAgentRef;
-#[cfg(test)]
-use codex_protocol::protocol::CollabAgentSpawnBeginEvent;
-use codex_protocol::protocol::CollabAgentStatusEntry;
-use codex_protocol::protocol::CreditsSnapshot;
-use codex_protocol::protocol::DeprecationNoticeEvent;
-#[cfg(test)]
-use codex_protocol::protocol::ErrorEvent;
-#[cfg(test)]
-use codex_protocol::protocol::Event;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::ExecApprovalRequestEvent;
-use codex_protocol::protocol::ExecCommandBeginEvent;
-use codex_protocol::protocol::ExecCommandEndEvent;
-use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
-use codex_protocol::protocol::ExecCommandSource;
-#[cfg(test)]
-use codex_protocol::protocol::ExitedReviewModeEvent;
-use codex_protocol::protocol::GuardianAssessmentAction;
-use codex_protocol::protocol::GuardianAssessmentDecisionSource;
-use codex_protocol::protocol::GuardianAssessmentEvent;
-use codex_protocol::protocol::GuardianAssessmentStatus;
-use codex_protocol::protocol::ImageGenerationBeginEvent;
-use codex_protocol::protocol::ImageGenerationEndEvent;
-use codex_protocol::protocol::ListSkillsResponseEvent;
-#[cfg(test)]
-use codex_protocol::protocol::McpListToolsResponseEvent;
-#[cfg(test)]
-use codex_protocol::protocol::McpStartupCompleteEvent;
-use codex_protocol::protocol::McpStartupStatus;
-#[cfg(test)]
-use codex_protocol::protocol::McpStartupUpdateEvent;
-use codex_protocol::protocol::McpToolCallBeginEvent;
-use codex_protocol::protocol::McpToolCallEndEvent;
-#[cfg(test)]
-use codex_protocol::protocol::ModelVerification as CoreModelVerification;
-use codex_protocol::protocol::Op;
-use codex_protocol::protocol::PatchApplyBeginEvent;
-use codex_protocol::protocol::RateLimitReachedType;
-use codex_protocol::protocol::RateLimitSnapshot;
-use codex_protocol::protocol::ReviewRequest;
-use codex_protocol::protocol::ReviewTarget;
-use codex_protocol::protocol::SkillMetadata as ProtocolSkillMetadata;
-#[cfg(test)]
-use codex_protocol::protocol::StreamErrorEvent;
-use codex_protocol::protocol::TerminalInteractionEvent;
-#[cfg(test)]
-use codex_protocol::protocol::ThreadGoalStatus as ProtocolThreadGoalStatus;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::protocol::TokenUsageInfo;
-use codex_protocol::protocol::TurnAbortReason;
-#[cfg(test)]
-use codex_protocol::protocol::TurnCompleteEvent;
-#[cfg(test)]
-use codex_protocol::protocol::TurnDiffEvent;
-#[cfg(test)]
-use codex_protocol::protocol::UndoCompletedEvent;
-#[cfg(test)]
-use codex_protocol::protocol::UndoStartedEvent;
-use codex_protocol::protocol::UserMessageEvent;
-use codex_protocol::protocol::ViewImageToolCallEvent;
-#[cfg(test)]
-use codex_protocol::protocol::WarningEvent;
-use codex_protocol::protocol::WebSearchBeginEvent;
-use codex_protocol::protocol::WebSearchEndEvent;
 use codex_protocol::request_permissions::RequestPermissionsEvent;
 use codex_protocol::request_user_input::RequestUserInputEvent;
 use codex_protocol::request_user_input::RequestUserInputQuestionOption;
@@ -363,8 +351,6 @@ use crate::exec_command::split_command_string;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::get_git_diff::get_git_diff;
 use crate::history_cell;
-#[cfg(test)]
-use crate::history_cell::AgentMessageCell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::HookCell;
 use crate::history_cell::McpToolCallCell;
@@ -395,6 +381,8 @@ mod goal_menu;
 mod interrupts;
 use self::interrupts::InterruptManager;
 mod keymap_picker;
+mod mcp_startup;
+use self::mcp_startup::McpStartupStatus;
 mod session_header;
 use self::session_header::SessionHeader;
 mod skills;
@@ -408,12 +396,15 @@ mod plan_implementation;
 use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
 mod realtime;
 use self::realtime::RealtimeConversationUiState;
-use self::realtime::RenderedUserMessageEvent;
 mod reasoning_shortcuts;
 mod side;
 mod status_surfaces;
 use self::status_surfaces::CachedProjectRootName;
 use self::status_surfaces::TerminalTitleStatusKind;
+mod user_messages;
+use self::user_messages::PendingSteerCompareKey;
+use self::user_messages::RenderedUserMessageEvent;
+use self::user_messages::UserMessageEvent;
 use crate::streaming::chunking::AdaptiveChunkingPolicy;
 use crate::streaming::commit_tick::CommitTickScope;
 use crate::streaming::commit_tick::run_commit_tick;
@@ -421,6 +412,7 @@ use crate::streaming::controller::PlanStreamController;
 use crate::streaming::controller::StreamController;
 
 use chrono::Local;
+use codex_app_server_protocol::AskForApproval;
 use codex_file_search::FileMatch;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::InputModality;
@@ -428,7 +420,6 @@ use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::plan_tool::StepStatus;
 use codex_protocol::plan_tool::UpdatePlanArgs;
-use codex_protocol::protocol::AskForApproval;
 use codex_utils_approval_presets::ApprovalPreset;
 use codex_utils_approval_presets::builtin_approval_presets;
 use strum::IntoEnumIterator;
@@ -870,7 +861,7 @@ pub(crate) struct ChatWidget {
     /// emitted.
     saw_copy_source_this_turn: bool,
     running_commands: HashMap<String, RunningCommand>,
-    collab_agent_metadata: HashMap<ThreadId, CollabAgentMetadata>,
+    collab_agent_metadata: HashMap<ThreadId, AgentMetadata>,
     pending_collab_spawn_requests: HashMap<String, multi_agents::SpawnRequestSummary>,
     suppressed_exec_calls: HashSet<String>,
     skills_all: Vec<ProtocolSkillMetadata>,
@@ -1039,7 +1030,7 @@ pub(crate) struct ChatWidget {
     // Instruction source files loaded for the current session, supplied by app-server.
     instruction_source_paths: Vec<AbsolutePathBuf>,
     // Runtime network proxy bind addresses from SessionConfigured.
-    session_network_proxy: Option<codex_protocol::protocol::SessionNetworkProxyRuntime>,
+    session_network_proxy: Option<SessionNetworkProxyRuntime>,
     // Shared latch so we only warn once about invalid status-line item IDs.
     status_line_invalid_items_warned: Arc<AtomicBool>,
     // Shared latch so we only warn once about invalid terminal-title item IDs.
@@ -1078,21 +1069,9 @@ pub(crate) struct ChatWidget {
     last_non_retry_error: Option<(String, String)>,
 }
 
-/// Cached nickname and role for a collab agent thread, used to attach human-readable labels to
-/// rendered tool-call items.
-///
-/// Populated externally by `App` via `set_collab_agent_metadata` and consulted by the
-/// notification-to-core-event conversion helpers. Defaults to empty so that missing metadata
-/// degrades to the previous behavior of showing raw thread ids.
-#[derive(Clone, Debug, Default)]
-struct CollabAgentMetadata {
-    agent_nickname: Option<String>,
-    agent_role: Option<String>,
-}
-
 #[cfg_attr(not(test), allow(dead_code))]
 enum CodexOpTarget {
-    Direct(UnboundedSender<Op>),
+    Direct(UnboundedSender<AppCommand>),
     AppEvent,
 }
 
@@ -1638,51 +1617,28 @@ impl ThreadItemRenderSource {
     }
 }
 
-fn thread_session_state_to_legacy_event(
-    session: ThreadSessionState,
-) -> codex_protocol::protocol::SessionConfiguredEvent {
-    codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: session.thread_id,
-        forked_from_id: session.forked_from_id,
-        thread_name: session.thread_name,
-        model: session.model,
-        model_provider_id: session.model_provider_id,
-        service_tier: session.service_tier,
-        approval_policy: session.approval_policy,
-        approvals_reviewer: session.approvals_reviewer,
-        permission_profile: session.permission_profile,
-        cwd: session.cwd,
-        reasoning_effort: session.reasoning_effort,
-        history_log_id: session.history_log_id,
-        history_entry_count: usize::try_from(session.history_entry_count).unwrap_or(usize::MAX),
-        initial_messages: None,
-        network_proxy: session.network_proxy,
-        rollout_path: session.rollout_path,
-    }
-}
-
 fn hook_output_entry_from_notification(
     entry: codex_app_server_protocol::HookOutputEntry,
-) -> codex_protocol::protocol::HookOutputEntry {
-    codex_protocol::protocol::HookOutputEntry {
-        kind: entry.kind.to_core(),
+) -> codex_app_server_protocol::HookOutputEntry {
+    codex_app_server_protocol::HookOutputEntry {
+        kind: entry.kind,
         text: entry.text,
     }
 }
 
 fn hook_run_summary_from_notification(
     run: codex_app_server_protocol::HookRunSummary,
-) -> codex_protocol::protocol::HookRunSummary {
-    codex_protocol::protocol::HookRunSummary {
+) -> codex_app_server_protocol::HookRunSummary {
+    codex_app_server_protocol::HookRunSummary {
         id: run.id,
-        event_name: run.event_name.to_core(),
-        handler_type: run.handler_type.to_core(),
-        execution_mode: run.execution_mode.to_core(),
-        scope: run.scope.to_core(),
+        event_name: run.event_name,
+        handler_type: run.handler_type,
+        execution_mode: run.execution_mode,
+        scope: run.scope,
         source_path: run.source_path,
-        source: run.source.to_core(),
+        source: run.source,
         display_order: run.display_order,
-        status: run.status.to_core(),
+        status: run.status,
         status_message: run.status_message,
         started_at: run.started_at,
         completed_at: run.completed_at,
@@ -1697,8 +1653,8 @@ fn hook_run_summary_from_notification(
 
 fn hook_started_event_from_notification(
     notification: codex_app_server_protocol::HookStartedNotification,
-) -> codex_protocol::protocol::HookStartedEvent {
-    codex_protocol::protocol::HookStartedEvent {
+) -> HookStartedEvent {
+    HookStartedEvent {
         turn_id: notification.turn_id,
         run: hook_run_summary_from_notification(notification.run),
     }
@@ -1706,8 +1662,8 @@ fn hook_started_event_from_notification(
 
 fn hook_completed_event_from_notification(
     notification: codex_app_server_protocol::HookCompletedNotification,
-) -> codex_protocol::protocol::HookCompletedEvent {
-    codex_protocol::protocol::HookCompletedEvent {
+) -> HookCompletedEvent {
+    HookCompletedEvent {
         turn_id: notification.turn_id,
         run: hook_run_summary_from_notification(notification.run),
     }
@@ -1761,26 +1717,26 @@ fn exec_approval_request_from_params(
                 .into_iter()
                 .map(|decision| match decision {
                     codex_app_server_protocol::CommandExecutionApprovalDecision::Accept => {
-                        codex_protocol::protocol::ReviewDecision::Approved
+                        crate::approval_display::ReviewDecision::Approved
                     }
                     codex_app_server_protocol::CommandExecutionApprovalDecision::AcceptForSession => {
-                        codex_protocol::protocol::ReviewDecision::ApprovedForSession
+                        crate::approval_display::ReviewDecision::ApprovedForSession
                     }
                     codex_app_server_protocol::CommandExecutionApprovalDecision::AcceptWithExecpolicyAmendment {
                         execpolicy_amendment,
-                    } => codex_protocol::protocol::ReviewDecision::ApprovedExecpolicyAmendment {
+                    } => crate::approval_display::ReviewDecision::ApprovedExecpolicyAmendment {
                         proposed_execpolicy_amendment: execpolicy_amendment.into_core(),
                     },
                     codex_app_server_protocol::CommandExecutionApprovalDecision::ApplyNetworkPolicyAmendment {
                         network_policy_amendment,
-                    } => codex_protocol::protocol::ReviewDecision::NetworkPolicyAmendment {
+                    } => crate::approval_display::ReviewDecision::NetworkPolicyAmendment {
                         network_policy_amendment: network_policy_amendment.into_core(),
                     },
                     codex_app_server_protocol::CommandExecutionApprovalDecision::Decline => {
-                        codex_protocol::protocol::ReviewDecision::Denied
+                        crate::approval_display::ReviewDecision::Denied
                     }
                     codex_app_server_protocol::CommandExecutionApprovalDecision::Cancel => {
-                        codex_protocol::protocol::ReviewDecision::Abort
+                        crate::approval_display::ReviewDecision::Abort
                     }
                 })
                 .collect()
@@ -1804,92 +1760,6 @@ fn patch_approval_request_from_params(
         reason: params.reason,
         grant_root: params.grant_root,
     }
-}
-
-fn app_server_collab_thread_id_to_core(thread_id: &str) -> Option<ThreadId> {
-    match ThreadId::from_string(thread_id) {
-        Ok(thread_id) => Some(thread_id),
-        Err(err) => {
-            warn!("ignoring collab tool-call item with invalid thread id {thread_id}: {err}");
-            None
-        }
-    }
-}
-
-fn app_server_collab_state_to_core(state: &AppServerCollabAgentState) -> AgentStatus {
-    match state.status {
-        AppServerCollabAgentStatus::PendingInit => AgentStatus::PendingInit,
-        AppServerCollabAgentStatus::Running => AgentStatus::Running,
-        AppServerCollabAgentStatus::Interrupted => AgentStatus::Interrupted,
-        AppServerCollabAgentStatus::Completed => AgentStatus::Completed(state.message.clone()),
-        AppServerCollabAgentStatus::Errored => AgentStatus::Errored(
-            state
-                .message
-                .clone()
-                .unwrap_or_else(|| "Agent errored".into()),
-        ),
-        AppServerCollabAgentStatus::Shutdown => AgentStatus::Shutdown,
-        AppServerCollabAgentStatus::NotFound => AgentStatus::NotFound,
-    }
-}
-
-/// Converts app-server collab agent states into the core protocol representation, enriching each
-/// entry with cached nickname and role metadata so rendered items show human-readable names.
-fn app_server_collab_agent_statuses_to_core(
-    receiver_thread_ids: &[String],
-    agents_states: &HashMap<String, AppServerCollabAgentState>,
-    collab_agent_metadata: &HashMap<ThreadId, CollabAgentMetadata>,
-) -> (Vec<CollabAgentStatusEntry>, HashMap<ThreadId, AgentStatus>) {
-    let mut agent_statuses = Vec::new();
-    let mut statuses = HashMap::new();
-
-    for receiver_thread_id in receiver_thread_ids {
-        let Some(thread_id) = app_server_collab_thread_id_to_core(receiver_thread_id) else {
-            continue;
-        };
-        let Some(agent_state) = agents_states.get(receiver_thread_id) else {
-            continue;
-        };
-        let status = app_server_collab_state_to_core(agent_state);
-        let metadata = collab_agent_metadata
-            .get(&thread_id)
-            .cloned()
-            .unwrap_or_default();
-        agent_statuses.push(CollabAgentStatusEntry {
-            thread_id,
-            agent_nickname: metadata.agent_nickname,
-            agent_role: metadata.agent_role,
-            status: status.clone(),
-        });
-        statuses.insert(thread_id, status);
-    }
-
-    (agent_statuses, statuses)
-}
-
-/// Builds `CollabAgentRef` entries for every valid receiver thread, attaching cached metadata.
-///
-/// Used when converting collab `Wait` tool-call items so the rendered waiting list shows agent
-/// names instead of bare thread ids.
-fn app_server_collab_receiver_agent_refs(
-    receiver_thread_ids: &[String],
-    collab_agent_metadata: &HashMap<ThreadId, CollabAgentMetadata>,
-) -> Vec<CollabAgentRef> {
-    receiver_thread_ids
-        .iter()
-        .filter_map(|thread_id| {
-            let thread_id = app_server_collab_thread_id_to_core(thread_id)?;
-            let metadata = collab_agent_metadata
-                .get(&thread_id)
-                .cloned()
-                .unwrap_or_default();
-            Some(CollabAgentRef {
-                thread_id,
-                agent_nickname: metadata.agent_nickname,
-                agent_role: metadata.agent_role,
-            })
-        })
-        .collect()
 }
 
 fn request_permissions_from_params(
@@ -1987,7 +1857,7 @@ impl ChatWidget {
     ) {
         self.collab_agent_metadata.insert(
             thread_id,
-            CollabAgentMetadata {
+            AgentMetadata {
                 agent_nickname,
                 agent_role,
             },
@@ -1995,7 +1865,7 @@ impl ChatWidget {
     }
 
     /// Returns the cached metadata for a thread, defaulting to empty if none has been registered.
-    fn collab_agent_metadata(&self, thread_id: ThreadId) -> CollabAgentMetadata {
+    fn collab_agent_metadata(&self, thread_id: ThreadId) -> AgentMetadata {
         self.collab_agent_metadata
             .get(&thread_id)
             .cloned()
@@ -2329,79 +2199,84 @@ impl ChatWidget {
 
     // --- Small event handlers ---
     #[cfg(test)]
-    fn on_session_configured(&mut self, event: codex_protocol::protocol::SessionConfiguredEvent) {
+    fn on_session_configured(&mut self, event: SessionConfiguredEvent) {
+        let (session, initial_messages) = event.into_session();
         self.on_session_configured_with_display_and_fork_parent_title(
-            event,
+            session,
             SessionConfiguredDisplay::Normal,
             /*fork_parent_title*/ None,
+            initial_messages,
         );
     }
 
     fn on_session_configured_with_display_and_fork_parent_title(
         &mut self,
-        event: codex_protocol::protocol::SessionConfiguredEvent,
+        session: ThreadSessionState,
         display: SessionConfiguredDisplay,
         fork_parent_title: Option<String>,
+        #[cfg(test)] initial_messages: Option<Vec<EventMsg>>,
     ) {
         self.last_agent_markdown = None;
         self.agent_turn_markdowns.clear();
         self.visible_user_turn_count = 0;
         self.copy_history_evicted_by_rollback = false;
         self.saw_copy_source_this_turn = false;
+        let history_entry_count =
+            usize::try_from(session.history_entry_count).unwrap_or(usize::MAX);
         self.bottom_pane
-            .set_history_metadata(event.history_log_id, event.history_entry_count);
+            .set_history_metadata(session.history_log_id, history_entry_count);
         self.set_skills(/*skills*/ None);
-        self.session_network_proxy = event.network_proxy.clone();
+        self.session_network_proxy = session.network_proxy.clone();
         let previous_thread_id = self.thread_id;
-        self.thread_id = Some(event.session_id);
+        self.thread_id = Some(session.thread_id);
         if previous_thread_id != self.thread_id {
             self.recent_auto_review_denials = RecentAutoReviewDenials::default();
         }
         self.refresh_plan_mode_nudge();
         self.last_turn_id = None;
-        self.thread_name = event.thread_name.clone();
+        self.thread_name = session.thread_name.clone();
         self.current_goal_status_indicator = None;
         self.current_goal_status = None;
         self.goal_status_active_turn_started_at = None;
         self.budget_limited_turn_ids.clear();
         self.update_collaboration_mode_indicator();
-        self.forked_from = event.forked_from_id;
-        self.current_rollout_path = event.rollout_path.clone();
-        self.current_cwd = Some(event.cwd.to_path_buf());
-        self.config.cwd = event.cwd.clone();
-        self.effective_service_tier = event.service_tier;
+        self.forked_from = session.forked_from_id;
+        self.current_rollout_path = session.rollout_path.clone();
+        self.current_cwd = Some(session.cwd.to_path_buf());
+        self.config.cwd = session.cwd.clone();
+        self.effective_service_tier = session.service_tier;
         if let Err(err) = self
             .config
             .permissions
             .approval_policy
-            .set(event.approval_policy)
+            .set(session.approval_policy.to_core())
         {
             tracing::warn!(%err, "failed to sync approval_policy from SessionConfigured");
             self.config.permissions.approval_policy =
-                Constrained::allow_only(event.approval_policy);
+                Constrained::allow_only(session.approval_policy.to_core());
         }
         let permission_sync = self
             .config
             .permissions
-            .set_permission_profile(event.permission_profile.clone());
+            .set_permission_profile(session.permission_profile.clone());
         if let Err(err) = permission_sync {
             tracing::warn!(%err, "failed to sync permissions from SessionConfigured");
             self.config.permissions.permission_profile =
-                Constrained::allow_only(event.permission_profile.clone());
+                Constrained::allow_only(session.permission_profile.clone());
         }
-        self.config.approvals_reviewer = event.approvals_reviewer;
+        self.config.approvals_reviewer = session.approvals_reviewer;
         self.status_line_project_root_name_cache = None;
-        let forked_from_id = event.forked_from_id;
-        let model_for_header = event.model.clone();
+        let forked_from_id = session.forked_from_id;
+        let model_for_header = session.model.clone();
         self.session_header.set_model(&model_for_header);
         self.current_collaboration_mode = self.current_collaboration_mode.with_updates(
             Some(model_for_header.clone()),
-            Some(event.reasoning_effort),
+            Some(session.reasoning_effort),
             /*developer_instructions*/ None,
         );
         if let Some(mask) = self.active_collaboration_mask.as_mut() {
             mask.model = Some(model_for_header.clone());
-            mask.reasoning_effort = Some(event.reasoning_effort);
+            mask.reasoning_effort = Some(session.reasoning_effort);
         }
         self.refresh_model_display();
         self.refresh_status_surfaces();
@@ -2413,13 +2288,11 @@ impl ChatWidget {
         if display == SessionConfiguredDisplay::Normal {
             let startup_tooltip_override = self.startup_tooltip_override.take();
             let show_fast_status =
-                self.should_show_fast_status(&model_for_header, event.service_tier);
-            #[cfg(test)]
-            let initial_messages = event.initial_messages.clone();
+                self.should_show_fast_status(&model_for_header, session.service_tier);
             let session_info_cell = history_cell::new_session_info(
                 &self.config,
                 &model_for_header,
-                event,
+                &session,
                 self.show_welcome_banner,
                 startup_tooltip_override,
                 self.plan_type,
@@ -2475,18 +2348,24 @@ impl ChatWidget {
         self.instruction_source_paths = session.instruction_source_paths.clone();
         let fork_parent_title = session.fork_parent_title.clone();
         self.on_session_configured_with_display_and_fork_parent_title(
-            thread_session_state_to_legacy_event(session),
+            session,
             SessionConfiguredDisplay::Normal,
             fork_parent_title,
+            #[cfg(test)]
+            /*initial_messages*/
+            None,
         );
     }
 
     pub(crate) fn handle_thread_session_quiet(&mut self, session: ThreadSessionState) {
         self.instruction_source_paths = session.instruction_source_paths.clone();
         self.on_session_configured_with_display_and_fork_parent_title(
-            thread_session_state_to_legacy_event(session),
+            session,
             SessionConfiguredDisplay::Quiet,
             /*fork_parent_title*/ None,
+            #[cfg(test)]
+            /*initial_messages*/
+            None,
         );
     }
 
@@ -2494,9 +2373,12 @@ impl ChatWidget {
         self.instruction_source_paths = session.instruction_source_paths.clone();
         let fork_parent_title = session.fork_parent_title.clone();
         self.on_session_configured_with_display_and_fork_parent_title(
-            thread_session_state_to_legacy_event(session),
+            session,
             SessionConfiguredDisplay::SideConversation,
             fork_parent_title,
+            #[cfg(test)]
+            /*initial_messages*/
+            None,
         );
     }
 
@@ -2531,13 +2413,13 @@ impl ChatWidget {
         )));
     }
 
-    fn on_thread_name_updated(&mut self, event: codex_protocol::protocol::ThreadNameUpdatedEvent) {
-        if self.thread_id == Some(event.thread_id) {
-            if let Some(name) = event.thread_name.as_deref() {
+    fn on_thread_name_updated(&mut self, thread_id: ThreadId, thread_name: Option<String>) {
+        if self.thread_id == Some(thread_id) {
+            if let Some(name) = thread_name.as_deref() {
                 let cell = Self::rename_confirmation_cell(name, self.thread_id);
                 self.add_boxed_history(Box::new(cell));
             }
-            self.thread_name = event.thread_name;
+            self.thread_name = thread_name;
             self.refresh_status_surfaces();
             self.request_redraw();
             self.maybe_send_next_queued_input();
@@ -3245,16 +3127,19 @@ impl ChatWidget {
                     snapshot
                         .secondary
                         .as_ref()
-                        .map(|window| window.used_percent),
+                        .map(|window| f64::from(window.used_percent)),
                     snapshot
                         .secondary
                         .as_ref()
-                        .and_then(|window| window.window_minutes),
-                    snapshot.primary.as_ref().map(|window| window.used_percent),
+                        .and_then(|window| window.window_duration_mins),
                     snapshot
                         .primary
                         .as_ref()
-                        .and_then(|window| window.window_minutes),
+                        .map(|window| f64::from(window.used_percent)),
+                    snapshot
+                        .primary
+                        .as_ref()
+                        .and_then(|window| window.window_duration_mins),
                 )
             } else {
                 vec![]
@@ -3264,12 +3149,12 @@ impl ChatWidget {
                 && (snapshot
                     .secondary
                     .as_ref()
-                    .map(|w| w.used_percent >= RATE_LIMIT_SWITCH_PROMPT_THRESHOLD)
+                    .map(|w| f64::from(w.used_percent) >= RATE_LIMIT_SWITCH_PROMPT_THRESHOLD)
                     .unwrap_or(false)
                     || snapshot
                         .primary
                         .as_ref()
-                        .map(|w| w.used_percent >= RATE_LIMIT_SWITCH_PROMPT_THRESHOLD)
+                        .map(|w| f64::from(w.used_percent) >= RATE_LIMIT_SWITCH_PROMPT_THRESHOLD)
                         .unwrap_or(false));
 
             let has_workspace_credits = snapshot
@@ -3469,249 +3354,6 @@ impl ChatWidget {
         if verifications.contains(&AppServerModelVerification::TrustedAccessForCyber) {
             self.on_warning(TRUSTED_ACCESS_FOR_CYBER_VERIFICATION_WARNING);
         }
-    }
-
-    /// Record one MCP startup update, promoting it into either the active startup
-    /// round or a buffered "next" round.
-    ///
-    /// This path has to deal with lossy app-server delivery. After
-    /// `finish_mcp_startup()` or `finish_mcp_startup_after_lag()`, we briefly
-    /// ignore incoming updates so stale events from the just-finished round do not
-    /// reopen startup. While that guard is active we buffer updates for a possible
-    /// next round, and only reactivate once the buffered set is coherent enough to
-    /// treat as a fresh startup round.
-    fn update_mcp_startup_status(
-        &mut self,
-        server: String,
-        status: McpStartupStatus,
-        complete_when_settled: bool,
-    ) {
-        let mut activated_pending_round = false;
-        let startup_status = if self.mcp_startup_ignore_updates_until_next_start {
-            // Ignore-mode buffers the next plausible round so stale post-finish
-            // updates cannot immediately reopen startup. A fresh `Starting`
-            // update resets the buffer only if we have not already seen a
-            // pending-round `Starting`; this preserves valid interleavings like
-            // `alpha: Starting -> alpha: Ready -> beta: Starting`.
-            if matches!(status, McpStartupStatus::Starting)
-                && !self.mcp_startup_pending_next_round_saw_starting
-            {
-                self.mcp_startup_pending_next_round.clear();
-                self.mcp_startup_allow_terminal_only_next_round = false;
-            }
-            self.mcp_startup_pending_next_round_saw_starting |=
-                matches!(status, McpStartupStatus::Starting);
-            self.mcp_startup_pending_next_round.insert(server, status);
-            let Some(expected_servers) = &self.mcp_startup_expected_servers else {
-                return;
-            };
-            let saw_full_round = expected_servers.is_empty()
-                || expected_servers
-                    .iter()
-                    .all(|name| self.mcp_startup_pending_next_round.contains_key(name));
-            let saw_starting = self
-                .mcp_startup_pending_next_round
-                .values()
-                .any(|state| matches!(state, McpStartupStatus::Starting));
-            if !(saw_full_round
-                && (saw_starting || self.mcp_startup_allow_terminal_only_next_round))
-            {
-                return;
-            }
-
-            // The buffered map now looks like a complete next round, so promote it
-            // to the active round and resume normal completion tracking.
-            self.mcp_startup_ignore_updates_until_next_start = false;
-            self.mcp_startup_allow_terminal_only_next_round = false;
-            self.mcp_startup_pending_next_round_saw_starting = false;
-            activated_pending_round = true;
-            std::mem::take(&mut self.mcp_startup_pending_next_round)
-        } else {
-            // Normal path: fold the update into the active round and surface
-            // per-server failures immediately.
-            let mut startup_status = self.mcp_startup_status.take().unwrap_or_default();
-            if let McpStartupStatus::Failed { error } = &status {
-                self.on_warning(error);
-            }
-            startup_status.insert(server, status);
-            startup_status
-        };
-        if activated_pending_round {
-            // A promoted buffered round may already contain terminal failures.
-            for state in startup_status.values() {
-                if let McpStartupStatus::Failed { error } = state {
-                    self.on_warning(error);
-                }
-            }
-        }
-        self.mcp_startup_status = Some(startup_status);
-        self.update_task_running_state();
-
-        // App-server-backed startup completes when every expected server has
-        // reported a non-Starting status. Lag handling can force an earlier
-        // settle via `finish_mcp_startup_after_lag()`.
-        if complete_when_settled
-            && let Some(current) = &self.mcp_startup_status
-            && let Some(expected_servers) = &self.mcp_startup_expected_servers
-            && !current.is_empty()
-            && expected_servers
-                .iter()
-                .all(|name| current.contains_key(name))
-            && current
-                .values()
-                .all(|state| !matches!(state, McpStartupStatus::Starting))
-        {
-            let mut failed = Vec::new();
-            let mut cancelled = Vec::new();
-            for (name, state) in current {
-                match state {
-                    McpStartupStatus::Ready => {}
-                    McpStartupStatus::Failed { .. } => failed.push(name.clone()),
-                    McpStartupStatus::Cancelled => cancelled.push(name.clone()),
-                    McpStartupStatus::Starting => {}
-                }
-            }
-            failed.sort();
-            cancelled.sort();
-            self.finish_mcp_startup(failed, cancelled);
-            return;
-        }
-        if let Some(current) = &self.mcp_startup_status {
-            // Otherwise keep the status header focused on the remaining
-            // in-progress servers for the active round.
-            let total = current.len();
-            let mut starting: Vec<_> = current
-                .iter()
-                .filter_map(|(name, state)| {
-                    if matches!(state, McpStartupStatus::Starting) {
-                        Some(name)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            starting.sort();
-            if let Some(first) = starting.first() {
-                let completed = total.saturating_sub(starting.len());
-                let max_to_show = 3;
-                let mut to_show: Vec<String> = starting
-                    .iter()
-                    .take(max_to_show)
-                    .map(ToString::to_string)
-                    .collect();
-                if starting.len() > max_to_show {
-                    to_show.push("…".to_string());
-                }
-                let header = if total > 1 {
-                    format!(
-                        "Starting MCP servers ({completed}/{total}): {}",
-                        to_show.join(", ")
-                    )
-                } else {
-                    format!("Booting MCP server: {first}")
-                };
-                self.set_status_header(header);
-            }
-        }
-        self.request_redraw();
-    }
-
-    pub(crate) fn set_mcp_startup_expected_servers<I>(&mut self, server_names: I)
-    where
-        I: IntoIterator<Item = String>,
-    {
-        self.mcp_startup_expected_servers = Some(server_names.into_iter().collect());
-    }
-
-    #[cfg(test)]
-    fn on_mcp_startup_update(&mut self, ev: McpStartupUpdateEvent) {
-        self.update_mcp_startup_status(ev.server, ev.status, /*complete_when_settled*/ false);
-    }
-
-    fn finish_mcp_startup(&mut self, failed: Vec<String>, cancelled: Vec<String>) {
-        if !cancelled.is_empty() {
-            self.on_warning(format!(
-                "MCP startup interrupted. The following servers were not initialized: {}",
-                cancelled.join(", ")
-            ));
-        }
-        let mut parts = Vec::new();
-        if !failed.is_empty() {
-            parts.push(format!("failed: {}", failed.join(", ")));
-        }
-        if !parts.is_empty() {
-            self.on_warning(format!("MCP startup incomplete ({})", parts.join("; ")));
-        }
-
-        self.mcp_startup_status = None;
-        self.mcp_startup_ignore_updates_until_next_start = true;
-        self.mcp_startup_allow_terminal_only_next_round = false;
-        self.mcp_startup_pending_next_round.clear();
-        self.mcp_startup_pending_next_round_saw_starting = false;
-        self.update_task_running_state();
-        self.maybe_send_next_queued_input();
-        self.request_redraw();
-    }
-
-    pub(crate) fn finish_mcp_startup_after_lag(&mut self) {
-        if self.mcp_startup_ignore_updates_until_next_start {
-            if self.mcp_startup_pending_next_round.is_empty() {
-                self.mcp_startup_pending_next_round_saw_starting = false;
-            }
-            self.mcp_startup_allow_terminal_only_next_round = true;
-        }
-
-        let Some(current) = &self.mcp_startup_status else {
-            return;
-        };
-
-        let mut failed = Vec::new();
-        let mut cancelled = Vec::new();
-
-        let mut server_names: BTreeSet<String> = current.keys().cloned().collect();
-        if let Some(expected_servers) = &self.mcp_startup_expected_servers {
-            server_names.extend(expected_servers.iter().cloned());
-        }
-
-        for name in server_names {
-            match current.get(&name) {
-                Some(McpStartupStatus::Ready) => {}
-                Some(McpStartupStatus::Failed { .. }) => failed.push(name),
-                Some(McpStartupStatus::Cancelled | McpStartupStatus::Starting) | None => {
-                    cancelled.push(name);
-                }
-            }
-        }
-
-        failed.sort();
-        failed.dedup();
-        cancelled.sort();
-        cancelled.dedup();
-        self.finish_mcp_startup(failed, cancelled);
-    }
-
-    #[cfg(test)]
-    fn on_mcp_startup_complete(&mut self, ev: McpStartupCompleteEvent) {
-        let failed = ev.failed.into_iter().map(|f| f.server).collect();
-        self.finish_mcp_startup(failed, ev.cancelled);
-    }
-
-    fn on_mcp_server_status_updated(&mut self, notification: McpServerStatusUpdatedNotification) {
-        let status = match notification.status {
-            McpServerStartupState::Starting => McpStartupStatus::Starting,
-            McpServerStartupState::Ready => McpStartupStatus::Ready,
-            McpServerStartupState::Failed => McpStartupStatus::Failed {
-                error: notification.error.unwrap_or_else(|| {
-                    format!("MCP client for `{}` failed to start", notification.name)
-                }),
-            },
-            McpServerStartupState::Cancelled => McpStartupStatus::Cancelled,
-        };
-        self.update_mcp_startup_status(
-            notification.name,
-            status,
-            /*complete_when_settled*/ true,
-        );
     }
 
     /// Handle a turn aborted due to user interrupt (Esc), budget exhaustion,
@@ -4122,7 +3764,7 @@ impl ChatWidget {
             let cell = if let Some(command) = guardian_command(&ev.action) {
                 history_cell::new_approval_decision_cell(
                     command,
-                    codex_protocol::protocol::ReviewDecision::Approved,
+                    crate::approval_display::ReviewDecision::Approved,
                     history_cell::ApprovalDecisionActor::Guardian,
                 )
             } else if let Some(summary) = guardian_action_summary(&ev.action) {
@@ -4142,7 +3784,7 @@ impl ChatWidget {
             let cell = if let Some(command) = guardian_command(&ev.action) {
                 history_cell::new_approval_decision_cell(
                     command,
-                    codex_protocol::protocol::ReviewDecision::TimedOut,
+                    crate::approval_display::ReviewDecision::TimedOut,
                     history_cell::ApprovalDecisionActor::Guardian,
                 )
             } else {
@@ -4186,7 +3828,7 @@ impl ChatWidget {
         let cell = if let Some(command) = guardian_command(&ev.action) {
             history_cell::new_approval_decision_cell(
                 command,
-                codex_protocol::protocol::ReviewDecision::Denied,
+                crate::approval_display::ReviewDecision::Denied,
                 history_cell::ApprovalDecisionActor::Guardian,
             )
         } else {
@@ -4368,7 +4010,7 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn on_patch_apply_end(&mut self, event: codex_protocol::protocol::PatchApplyEndEvent) {
+    fn on_patch_apply_end(&mut self, event: PatchApplyEndEvent) {
         let ev2 = event.clone();
         self.defer_or_handle(
             |q| q.push_patch_end(event),
@@ -4522,213 +4164,37 @@ impl ChatWidget {
 
     fn on_collab_agent_tool_call(&mut self, item: ThreadItem) {
         let ThreadItem::CollabAgentToolCall {
-            id,
-            tool,
-            status,
-            sender_thread_id,
-            receiver_thread_ids,
-            prompt,
-            model,
-            reasoning_effort,
-            agents_states,
-        } = item
+            id, tool, status, ..
+        } = &item
         else {
             return;
         };
-        let sender_thread_id = app_server_collab_thread_id_to_core(&sender_thread_id)
-            .or(self.thread_id)
-            .unwrap_or_default();
-        let first_receiver = receiver_thread_ids
-            .first()
-            .and_then(|thread_id| app_server_collab_thread_id_to_core(thread_id));
-        let first_receiver_metadata =
-            first_receiver.map(|thread_id| self.collab_agent_metadata(thread_id));
+        if matches!(tool, CollabAgentTool::SpawnAgent)
+            && let Some(spawn_request) = multi_agents::spawn_request_summary(&item)
+        {
+            self.pending_collab_spawn_requests
+                .insert(id.clone(), spawn_request);
+        }
 
-        match tool {
-            CollabAgentTool::SpawnAgent => {
-                if let (Some(model), Some(reasoning_effort)) = (model.clone(), reasoning_effort) {
-                    self.pending_collab_spawn_requests.insert(
-                        id.clone(),
-                        multi_agents::SpawnRequestSummary {
-                            model,
-                            reasoning_effort,
-                        },
-                    );
-                }
+        let cached_spawn_request = if matches!(tool, CollabAgentTool::SpawnAgent)
+            && !matches!(status, CollabAgentToolCallStatus::InProgress)
+        {
+            self.pending_collab_spawn_requests.remove(id)
+        } else {
+            None
+        };
 
-                if !matches!(status, CollabAgentToolCallStatus::InProgress) {
-                    let spawn_request =
-                        self.pending_collab_spawn_requests.remove(&id).or_else(|| {
-                            model
-                                .zip(reasoning_effort)
-                                .map(|(model, reasoning_effort)| {
-                                    multi_agents::SpawnRequestSummary {
-                                        model,
-                                        reasoning_effort,
-                                    }
-                                })
-                        });
-                    self.on_collab_event(multi_agents::spawn_end(
-                        codex_protocol::protocol::CollabAgentSpawnEndEvent {
-                            call_id: id,
-                            sender_thread_id,
-                            new_thread_id: first_receiver,
-                            new_agent_nickname: first_receiver_metadata
-                                .as_ref()
-                                .and_then(|metadata| metadata.agent_nickname.clone()),
-                            new_agent_role: first_receiver_metadata
-                                .as_ref()
-                                .and_then(|metadata| metadata.agent_role.clone()),
-                            prompt: prompt.unwrap_or_default(),
-                            model: String::new(),
-                            reasoning_effort: ReasoningEffortConfig::Medium,
-                            status: first_receiver
-                                .as_ref()
-                                .and_then(|thread_id| agents_states.get(&thread_id.to_string()))
-                                .map(app_server_collab_state_to_core)
-                                .unwrap_or_else(|| {
-                                    AgentStatus::Errored("Agent spawn failed".into())
-                                }),
-                        },
-                        spawn_request.as_ref(),
-                    ));
-                }
-            }
-            CollabAgentTool::SendInput => {
-                if let Some(receiver_thread_id) = first_receiver
-                    && !matches!(status, CollabAgentToolCallStatus::InProgress)
-                {
-                    self.on_collab_event(multi_agents::interaction_end(
-                        codex_protocol::protocol::CollabAgentInteractionEndEvent {
-                            call_id: id,
-                            sender_thread_id,
-                            receiver_thread_id,
-                            receiver_agent_nickname: first_receiver_metadata
-                                .as_ref()
-                                .and_then(|metadata| metadata.agent_nickname.clone()),
-                            receiver_agent_role: first_receiver_metadata
-                                .as_ref()
-                                .and_then(|metadata| metadata.agent_role.clone()),
-                            prompt: prompt.unwrap_or_default(),
-                            status: receiver_thread_ids
-                                .iter()
-                                .find_map(|thread_id| agents_states.get(thread_id))
-                                .map(app_server_collab_state_to_core)
-                                .unwrap_or_else(|| {
-                                    AgentStatus::Errored("Agent interaction failed".into())
-                                }),
-                        },
-                    ));
-                }
-            }
-            CollabAgentTool::ResumeAgent => {
-                if let Some(receiver_thread_id) = first_receiver {
-                    if matches!(status, CollabAgentToolCallStatus::InProgress) {
-                        self.on_collab_event(multi_agents::resume_begin(
-                            codex_protocol::protocol::CollabResumeBeginEvent {
-                                call_id: id,
-                                sender_thread_id,
-                                receiver_thread_id,
-                                receiver_agent_nickname: first_receiver_metadata
-                                    .as_ref()
-                                    .and_then(|metadata| metadata.agent_nickname.clone()),
-                                receiver_agent_role: first_receiver_metadata
-                                    .as_ref()
-                                    .and_then(|metadata| metadata.agent_role.clone()),
-                            },
-                        ));
-                    } else {
-                        self.on_collab_event(multi_agents::resume_end(
-                            codex_protocol::protocol::CollabResumeEndEvent {
-                                call_id: id,
-                                sender_thread_id,
-                                receiver_thread_id,
-                                receiver_agent_nickname: first_receiver_metadata
-                                    .as_ref()
-                                    .and_then(|metadata| metadata.agent_nickname.clone()),
-                                receiver_agent_role: first_receiver_metadata
-                                    .as_ref()
-                                    .and_then(|metadata| metadata.agent_role.clone()),
-                                status: receiver_thread_ids
-                                    .iter()
-                                    .find_map(|thread_id| agents_states.get(thread_id))
-                                    .map(app_server_collab_state_to_core)
-                                    .unwrap_or_else(|| {
-                                        AgentStatus::Errored("Agent resume failed".into())
-                                    }),
-                            },
-                        ));
-                    }
-                }
-            }
-            CollabAgentTool::Wait => {
-                if matches!(status, CollabAgentToolCallStatus::InProgress) {
-                    self.on_collab_event(multi_agents::waiting_begin(
-                        codex_protocol::protocol::CollabWaitingBeginEvent {
-                            sender_thread_id,
-                            receiver_thread_ids: receiver_thread_ids
-                                .iter()
-                                .filter_map(|thread_id| {
-                                    app_server_collab_thread_id_to_core(thread_id)
-                                })
-                                .collect(),
-                            receiver_agents: app_server_collab_receiver_agent_refs(
-                                &receiver_thread_ids,
-                                &self.collab_agent_metadata,
-                            ),
-                            call_id: id,
-                        },
-                    ));
-                } else {
-                    let (agent_statuses, statuses) = app_server_collab_agent_statuses_to_core(
-                        &receiver_thread_ids,
-                        &agents_states,
-                        &self.collab_agent_metadata,
-                    );
-                    self.on_collab_event(multi_agents::waiting_end(
-                        codex_protocol::protocol::CollabWaitingEndEvent {
-                            sender_thread_id,
-                            call_id: id,
-                            agent_statuses,
-                            statuses,
-                        },
-                    ));
-                }
-            }
-            CollabAgentTool::CloseAgent => {
-                if let Some(receiver_thread_id) = first_receiver
-                    && !matches!(status, CollabAgentToolCallStatus::InProgress)
-                {
-                    self.on_collab_event(multi_agents::close_end(
-                        codex_protocol::protocol::CollabCloseEndEvent {
-                            call_id: id,
-                            sender_thread_id,
-                            receiver_thread_id,
-                            receiver_agent_nickname: first_receiver_metadata
-                                .as_ref()
-                                .and_then(|metadata| metadata.agent_nickname.clone()),
-                            receiver_agent_role: first_receiver_metadata
-                                .as_ref()
-                                .and_then(|metadata| metadata.agent_role.clone()),
-                            status: receiver_thread_ids
-                                .iter()
-                                .find_map(|thread_id| agents_states.get(thread_id))
-                                .map(app_server_collab_state_to_core)
-                                .unwrap_or_else(|| {
-                                    AgentStatus::Errored("Agent close failed".into())
-                                }),
-                        },
-                    ));
-                }
-            }
+        if let Some(cell) = multi_agents::tool_call_history_cell(
+            &item,
+            cached_spawn_request.as_ref(),
+            |thread_id| self.collab_agent_metadata(thread_id),
+        ) {
+            self.on_collab_event(cell);
         }
     }
 
-    pub(crate) fn handle_history_entry_response(
-        &mut self,
-        event: codex_protocol::protocol::GetHistoryEntryResponseEvent,
-    ) {
-        let codex_protocol::protocol::GetHistoryEntryResponseEvent {
+    pub(crate) fn handle_history_entry_response(&mut self, event: HistoryLookupResponse) {
+        let HistoryLookupResponse {
             offset,
             log_id,
             entry,
@@ -4754,8 +4220,7 @@ impl ChatWidget {
         "Conversation interrupted - tell the model what to do differently. Something went wrong? Hit `/feedback` to report the issue.".to_string()
     }
 
-    fn on_deprecation_notice(&mut self, event: DeprecationNoticeEvent) {
-        let DeprecationNoticeEvent { summary, details } = event;
+    fn on_deprecation_notice(&mut self, summary: String, details: Option<String>) {
         self.add_to_history(history_cell::new_deprecation_notice(summary, details));
         self.request_redraw();
     }
@@ -4770,7 +4235,7 @@ impl ChatWidget {
         self.set_status_header(message);
     }
 
-    fn on_hook_started(&mut self, event: codex_protocol::protocol::HookStartedEvent) {
+    fn on_hook_started(&mut self, event: HookStartedEvent) {
         self.flush_answer_stream_with_separator();
         self.flush_completed_hook_output();
         match self.active_hook_cell.as_mut() {
@@ -4789,7 +4254,7 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn on_hook_completed(&mut self, event: codex_protocol::protocol::HookCompletedEvent) {
+    fn on_hook_completed(&mut self, event: HookCompletedEvent) {
         let completed = event.run;
         let completed_existing_run = self
             .active_hook_cell
@@ -5218,10 +4683,7 @@ impl ChatWidget {
         }
     }
 
-    pub(crate) fn handle_patch_apply_end_now(
-        &mut self,
-        event: codex_protocol::protocol::PatchApplyEndEvent,
-    ) {
+    pub(crate) fn handle_patch_apply_end_now(&mut self, event: PatchApplyEndEvent) {
         // If the patch was successful, just let the "Edited" block stand.
         // Otherwise, add a failure block.
         if !event.success {
@@ -5237,7 +4699,11 @@ impl ChatWidget {
             .unwrap_or_else(|_| ev.command.join(" "));
         self.notify(Notification::ExecApprovalRequested { command });
 
-        let available_decisions = ev.effective_available_decisions();
+        let available_decisions = ev
+            .effective_available_decisions()
+            .into_iter()
+            .map(Into::into)
+            .collect();
         let request = ApprovalRequest::Exec {
             thread_id: self.thread_id.unwrap_or_default(),
             thread_label: None,
@@ -5246,7 +4712,7 @@ impl ChatWidget {
             reason: ev.reason,
             available_decisions,
             network_approval_context: ev.network_approval_context,
-            additional_permissions: ev.additional_permissions,
+            additional_permissions: ev.additional_permissions.map(Into::into),
         };
         self.bottom_pane
             .push_approval_request(request, &self.config.features);
@@ -6195,9 +5661,7 @@ impl ChatWidget {
     ) -> QueueDrain {
         let drain = self.submit_shell_command(command);
         if drain == QueueDrain::Stop {
-            self.submit_op(Op::AddToHistory {
-                text: history_text.to_string(),
-            });
+            self.submit_op(AppCommand::add_to_history(history_text.to_string()));
         }
         drain
     }
@@ -6486,7 +5950,7 @@ impl ChatWidget {
         let op = AppCommand::user_turn(
             items,
             self.config.cwd.to_path_buf(),
-            self.config.permissions.approval_policy.value(),
+            AskForApproval::from(self.config.permissions.approval_policy.value()),
             permission_profile,
             effective_mode.model().to_string(),
             effective_mode.reasoning_effort(),
@@ -6525,7 +5989,7 @@ impl ChatWidget {
             }
         };
         if let Some(history_text) = history_text {
-            self.submit_op(Op::AddToHistory { text: history_text });
+            self.submit_op(AppCommand::add_to_history(history_text));
         }
 
         if let Some(pending_steer) = pending_steer {
@@ -6771,7 +6235,7 @@ impl ChatWidget {
                             .into_iter()
                             .map(codex_app_server_protocol::CommandAction::into_core)
                             .collect(),
-                        source: source.to_core(),
+                        source,
                         interaction_input: None,
                     });
                 } else {
@@ -6786,7 +6250,7 @@ impl ChatWidget {
                             .into_iter()
                             .map(codex_app_server_protocol::CommandAction::into_core)
                             .collect(),
-                        source: source.to_core(),
+                        source,
                         interaction_input: None,
                         stdout: String::new(),
                         stderr: String::new(),
@@ -6798,16 +6262,16 @@ impl ChatWidget {
                         formatted_output: aggregated_output,
                         status: match status {
                             codex_app_server_protocol::CommandExecutionStatus::Completed => {
-                                codex_protocol::protocol::ExecCommandStatus::Completed
+                                codex_app_server_protocol::CommandExecutionStatus::Completed
                             }
                             codex_app_server_protocol::CommandExecutionStatus::Failed => {
-                                codex_protocol::protocol::ExecCommandStatus::Failed
+                                codex_app_server_protocol::CommandExecutionStatus::Failed
                             }
                             codex_app_server_protocol::CommandExecutionStatus::Declined => {
-                                codex_protocol::protocol::ExecCommandStatus::Declined
+                                codex_app_server_protocol::CommandExecutionStatus::Declined
                             }
                             codex_app_server_protocol::CommandExecutionStatus::InProgress => {
-                                codex_protocol::protocol::ExecCommandStatus::Failed
+                                codex_app_server_protocol::CommandExecutionStatus::Failed
                             }
                         },
                     });
@@ -6822,7 +6286,7 @@ impl ChatWidget {
                     status,
                     codex_app_server_protocol::PatchApplyStatus::InProgress
                 ) {
-                    self.on_patch_apply_end(codex_protocol::protocol::PatchApplyEndEvent {
+                    self.on_patch_apply_end(PatchApplyEndEvent {
                         call_id: id,
                         turn_id: turn_id.clone(),
                         stdout: String::new(),
@@ -6834,16 +6298,16 @@ impl ChatWidget {
                         changes: file_update_changes_to_core(changes),
                         status: match status {
                             codex_app_server_protocol::PatchApplyStatus::Completed => {
-                                codex_protocol::protocol::PatchApplyStatus::Completed
+                                codex_app_server_protocol::PatchApplyStatus::Completed
                             }
                             codex_app_server_protocol::PatchApplyStatus::Failed => {
-                                codex_protocol::protocol::PatchApplyStatus::Failed
+                                codex_app_server_protocol::PatchApplyStatus::Failed
                             }
                             codex_app_server_protocol::PatchApplyStatus::Declined => {
-                                codex_protocol::protocol::PatchApplyStatus::Declined
+                                codex_app_server_protocol::PatchApplyStatus::Declined
                             }
                             codex_app_server_protocol::PatchApplyStatus::InProgress => {
-                                codex_protocol::protocol::PatchApplyStatus::Failed
+                                codex_app_server_protocol::PatchApplyStatus::Failed
                             }
                         },
                     });
@@ -6860,9 +6324,9 @@ impl ChatWidget {
                 duration_ms,
                 ..
             } => {
-                self.on_mcp_tool_call_end(codex_protocol::protocol::McpToolCallEndEvent {
+                self.on_mcp_tool_call_end(McpToolCallEndEvent {
                     call_id: id,
-                    invocation: codex_protocol::protocol::McpInvocation {
+                    invocation: McpInvocation {
                         server,
                         tool,
                         arguments: Some(arguments),
@@ -7030,12 +6494,9 @@ impl ChatWidget {
             }
             ServerNotification::ThreadNameUpdated(notification) => {
                 match ThreadId::from_string(&notification.thread_id) {
-                    Ok(thread_id) => self.on_thread_name_updated(
-                        codex_protocol::protocol::ThreadNameUpdatedEvent {
-                            thread_id,
-                            thread_name: notification.thread_name,
-                        },
-                    ),
+                    Ok(thread_id) => {
+                        self.on_thread_name_updated(thread_id, notification.thread_name)
+                    }
                     Err(err) => {
                         tracing::warn!(
                             thread_id = notification.thread_id,
@@ -7090,7 +6551,7 @@ impl ChatWidget {
             ServerNotification::CommandExecutionOutputDelta(notification) => {
                 self.on_exec_command_output_delta(ExecCommandOutputDeltaEvent {
                     call_id: notification.item_id,
-                    stream: codex_protocol::protocol::ExecOutputStream::Stdout,
+                    stream: codex_app_server_protocol::CommandExecOutputStream::Stdout,
                     chunk: notification.delta.into_bytes(),
                 });
             }
@@ -7154,10 +6615,7 @@ impl ChatWidget {
                 self.on_warning(notification.message)
             }
             ServerNotification::DeprecationNotice(notification) => {
-                self.on_deprecation_notice(DeprecationNoticeEvent {
-                    summary: notification.summary,
-                    details: notification.details,
-                })
+                self.on_deprecation_notice(notification.summary, notification.details)
             }
             ServerNotification::ConfigWarning(notification) => self.on_warning(
                 notification
@@ -7193,54 +6651,25 @@ impl ChatWidget {
             }
             ServerNotification::ThreadRealtimeStarted(notification) => {
                 if !from_replay {
-                    self.on_realtime_conversation_started(
-                        codex_protocol::protocol::RealtimeConversationStartedEvent {
-                            session_id: notification.session_id,
-                            version: notification.version,
-                        },
-                    );
+                    self.on_realtime_conversation_started(notification);
                 }
             }
-            ServerNotification::ThreadRealtimeItemAdded(notification) => {
-                if !from_replay {
-                    self.on_realtime_conversation_realtime(
-                        codex_protocol::protocol::RealtimeConversationRealtimeEvent {
-                            payload: codex_protocol::protocol::RealtimeEvent::ConversationItemAdded(
-                                notification.item,
-                            ),
-                        },
-                    );
-                }
+            ServerNotification::ThreadRealtimeItemAdded(_notification) => {
+                // The TUI currently renders transcript-specific realtime notifications instead.
             }
             ServerNotification::ThreadRealtimeOutputAudioDelta(notification) => {
                 if !from_replay {
-                    self.on_realtime_conversation_realtime(
-                        codex_protocol::protocol::RealtimeConversationRealtimeEvent {
-                            payload: codex_protocol::protocol::RealtimeEvent::AudioOut(
-                                notification.audio.into(),
-                            ),
-                        },
-                    );
+                    self.on_realtime_output_audio_delta(notification);
                 }
             }
             ServerNotification::ThreadRealtimeError(notification) => {
                 if !from_replay {
-                    self.on_realtime_conversation_realtime(
-                        codex_protocol::protocol::RealtimeConversationRealtimeEvent {
-                            payload: codex_protocol::protocol::RealtimeEvent::Error(
-                                notification.message,
-                            ),
-                        },
-                    );
+                    self.on_realtime_error(notification);
                 }
             }
             ServerNotification::ThreadRealtimeClosed(notification) => {
                 if !from_replay {
-                    self.on_realtime_conversation_closed(
-                        codex_protocol::protocol::RealtimeConversationClosedEvent {
-                            reason: notification.reason,
-                        },
-                    );
+                    self.on_realtime_conversation_closed(notification);
                 }
             }
             ServerNotification::ThreadRealtimeSdp(notification) => {
@@ -7275,7 +6704,7 @@ impl ChatWidget {
         }
     }
 
-    pub(crate) fn handle_skills_list_response(&mut self, response: ListSkillsResponseEvent) {
+    pub(crate) fn handle_skills_list_response(&mut self, response: SkillsListResponse) {
         self.on_list_skills(response);
     }
 
@@ -7386,7 +6815,7 @@ impl ChatWidget {
                         .into_iter()
                         .map(codex_app_server_protocol::CommandAction::into_core)
                         .collect(),
-                    source: source.to_core(),
+                    source,
                     interaction_input: None,
                 });
             }
@@ -7408,7 +6837,7 @@ impl ChatWidget {
             } => {
                 self.on_mcp_tool_call_begin(McpToolCallBeginEvent {
                     call_id: id,
-                    invocation: codex_protocol::protocol::McpInvocation {
+                    invocation: McpInvocation {
                         server,
                         tool,
                         arguments: Some(arguments),
@@ -7497,31 +6926,31 @@ impl ChatWidget {
             },
             risk_level: review.risk_level.map(|risk_level| match risk_level {
                 codex_app_server_protocol::GuardianRiskLevel::Low => {
-                    codex_protocol::protocol::GuardianRiskLevel::Low
+                    codex_protocol::approvals::GuardianRiskLevel::Low
                 }
                 codex_app_server_protocol::GuardianRiskLevel::Medium => {
-                    codex_protocol::protocol::GuardianRiskLevel::Medium
+                    codex_protocol::approvals::GuardianRiskLevel::Medium
                 }
                 codex_app_server_protocol::GuardianRiskLevel::High => {
-                    codex_protocol::protocol::GuardianRiskLevel::High
+                    codex_protocol::approvals::GuardianRiskLevel::High
                 }
                 codex_app_server_protocol::GuardianRiskLevel::Critical => {
-                    codex_protocol::protocol::GuardianRiskLevel::Critical
+                    codex_protocol::approvals::GuardianRiskLevel::Critical
                 }
             }),
             user_authorization: review.user_authorization.map(|user_authorization| {
                 match user_authorization {
                     codex_app_server_protocol::GuardianUserAuthorization::Unknown => {
-                        codex_protocol::protocol::GuardianUserAuthorization::Unknown
+                        codex_protocol::approvals::GuardianUserAuthorization::Unknown
                     }
                     codex_app_server_protocol::GuardianUserAuthorization::Low => {
-                        codex_protocol::protocol::GuardianUserAuthorization::Low
+                        codex_protocol::approvals::GuardianUserAuthorization::Low
                     }
                     codex_app_server_protocol::GuardianUserAuthorization::Medium => {
-                        codex_protocol::protocol::GuardianUserAuthorization::Medium
+                        codex_protocol::approvals::GuardianUserAuthorization::Medium
                     }
                     codex_app_server_protocol::GuardianUserAuthorization::High => {
-                        codex_protocol::protocol::GuardianUserAuthorization::High
+                        codex_protocol::approvals::GuardianUserAuthorization::High
                     }
                 }
             }),
@@ -7568,7 +6997,7 @@ impl ChatWidget {
         self.dispatch_event_msg(/*id*/ None, msg, Some(ReplayKind::ThreadSnapshot));
     }
 
-    /// Dispatch a protocol `EventMsg` to the appropriate handler.
+    /// Dispatch a test-only event message to the appropriate handler.
     ///
     /// `id` is `Some` for live events and `None` for replayed events from
     /// `replay_initial_messages()`. Callers should treat `None` as a "fake" id
@@ -7593,7 +7022,6 @@ impl ChatWidget {
             | EventMsg::PlanDelta(_)
             | EventMsg::AgentReasoningDelta(_)
             | EventMsg::TerminalInteraction(_)
-            | EventMsg::PatchApplyUpdated(_)
             | EventMsg::ExecCommandOutputDelta(_) => {}
             _ => {
                 tracing::trace!("handle_codex_event: {:?}", msg);
@@ -7602,29 +7030,8 @@ impl ChatWidget {
 
         match msg {
             EventMsg::SessionConfigured(e) => self.on_session_configured(e),
-            EventMsg::ThreadNameUpdated(e) => self.on_thread_name_updated(e),
-            EventMsg::ThreadGoalUpdated(event) => {
-                let goal = event.goal;
-                self.on_thread_goal_updated(
-                    AppThreadGoal {
-                        thread_id: goal.thread_id.to_string(),
-                        objective: goal.objective,
-                        status: match goal.status {
-                            ProtocolThreadGoalStatus::Active => AppThreadGoalStatus::Active,
-                            ProtocolThreadGoalStatus::Paused => AppThreadGoalStatus::Paused,
-                            ProtocolThreadGoalStatus::BudgetLimited => {
-                                AppThreadGoalStatus::BudgetLimited
-                            }
-                            ProtocolThreadGoalStatus::Complete => AppThreadGoalStatus::Complete,
-                        },
-                        token_budget: goal.token_budget,
-                        tokens_used: goal.tokens_used,
-                        time_used_seconds: goal.time_used_seconds,
-                        created_at: goal.created_at,
-                        updated_at: goal.updated_at,
-                    },
-                    event.turn_id,
-                );
+            EventMsg::ThreadNameUpdated(e) => {
+                self.on_thread_name_updated(e.thread_id, e.thread_name)
             }
             // NOTE: All three AgentMessage arms feed `record_agent_markdown` even
             // when the message is otherwise not rendered (thread-snapshot replay,
@@ -7667,7 +7074,6 @@ impl ChatWidget {
                 self.on_agent_reasoning_delta(text);
                 self.on_agent_reasoning_final();
             }
-            EventMsg::AgentReasoningSectionBreak(_) => self.on_reasoning_section_break(),
             EventMsg::TurnStarted(event) => {
                 let turn_id = event.turn_id;
                 let model_context_window = event.model_context_window;
@@ -7691,7 +7097,6 @@ impl ChatWidget {
             EventMsg::Warning(WarningEvent { message })
             | EventMsg::GuardianWarning(WarningEvent { message }) => self.on_warning(message),
             EventMsg::GuardianAssessment(ev) => self.on_guardian_assessment(ev),
-            EventMsg::ModelReroute(_) => {}
             EventMsg::ModelVerification(event) => {
                 self.on_core_model_verification(&event.verifications)
             }
@@ -7785,7 +7190,6 @@ impl ChatWidget {
             EventMsg::McpToolCallEnd(ev) => self.on_mcp_tool_call_end(ev),
             EventMsg::WebSearchBegin(ev) => self.on_web_search_begin(ev),
             EventMsg::WebSearchEnd(ev) => self.on_web_search_end(ev),
-            EventMsg::GetHistoryEntryResponse(ev) => self.handle_history_entry_response(ev),
             EventMsg::McpListToolsResponse(ev) => self.on_list_mcp_tools(ev),
             EventMsg::ListSkillsResponse(ev) => self.on_list_skills(ev),
             EventMsg::SkillsUpdateAvailable => {
@@ -7793,7 +7197,7 @@ impl ChatWidget {
             }
             EventMsg::ShutdownComplete => self.on_shutdown_complete(),
             EventMsg::TurnDiff(TurnDiffEvent { unified_diff }) => self.on_turn_diff(unified_diff),
-            EventMsg::DeprecationNotice(ev) => self.on_deprecation_notice(ev),
+            EventMsg::DeprecationNotice(ev) => self.on_deprecation_notice(ev.summary, ev.details),
             EventMsg::BackgroundEvent(BackgroundEventEvent { message }) => {
                 self.on_background_event(message)
             }
@@ -7813,41 +7217,10 @@ impl ChatWidget {
                     self.on_user_message_event(ev);
                 }
             }
-            EventMsg::EnteredReviewMode(review_request) => {
-                self.on_entered_review_mode(review_request, from_replay)
+            EventMsg::EnteredReviewMode(hint) => {
+                self.enter_review_mode_with_hint(hint, from_replay)
             }
             EventMsg::ExitedReviewMode(review) => self.on_exited_review_mode(review),
-            EventMsg::ContextCompacted(_) => {}
-            EventMsg::CollabAgentSpawnBegin(CollabAgentSpawnBeginEvent {
-                call_id,
-                model,
-                reasoning_effort,
-                ..
-            }) => {
-                self.pending_collab_spawn_requests.insert(
-                    call_id,
-                    multi_agents::SpawnRequestSummary {
-                        model,
-                        reasoning_effort,
-                    },
-                );
-            }
-            EventMsg::CollabAgentSpawnEnd(ev) => {
-                let spawn_request = self.pending_collab_spawn_requests.remove(&ev.call_id);
-                self.on_collab_event(multi_agents::spawn_end(ev, spawn_request.as_ref()));
-            }
-            EventMsg::CollabAgentInteractionBegin(_) => {}
-            EventMsg::CollabAgentInteractionEnd(ev) => {
-                self.on_collab_event(multi_agents::interaction_end(ev))
-            }
-            EventMsg::CollabWaitingBegin(ev) => {
-                self.on_collab_event(multi_agents::waiting_begin(ev))
-            }
-            EventMsg::CollabWaitingEnd(ev) => self.on_collab_event(multi_agents::waiting_end(ev)),
-            EventMsg::CollabCloseBegin(_) => {}
-            EventMsg::CollabCloseEnd(ev) => self.on_collab_event(multi_agents::close_end(ev)),
-            EventMsg::CollabResumeBegin(ev) => self.on_collab_event(multi_agents::resume_begin(ev)),
-            EventMsg::CollabResumeEnd(ev) => self.on_collab_event(multi_agents::resume_end(ev)),
             EventMsg::ThreadRolledBack(rollback) => {
                 if from_replay {
                     self.app_event_tx.send(AppEvent::ApplyThreadRollback {
@@ -7855,37 +7228,8 @@ impl ChatWidget {
                     });
                 }
             }
-            EventMsg::RawResponseItem(_)
-            | EventMsg::ItemStarted(_)
-            | EventMsg::AgentMessageContentDelta(_)
-            | EventMsg::PatchApplyUpdated(_)
-            | EventMsg::ReasoningContentDelta(_)
-            | EventMsg::ReasoningRawContentDelta(_)
-            | EventMsg::DynamicToolCallRequest(_)
-            | EventMsg::DynamicToolCallResponse(_)
-            | EventMsg::RealtimeConversationListVoicesResponse(_) => {}
             EventMsg::HookStarted(event) => self.on_hook_started(event),
             EventMsg::HookCompleted(event) => self.on_hook_completed(event),
-            EventMsg::RealtimeConversationStarted(ev) => {
-                if !from_replay {
-                    self.on_realtime_conversation_started(ev);
-                }
-            }
-            EventMsg::RealtimeConversationSdp(ev) => {
-                if !from_replay {
-                    self.on_realtime_conversation_sdp(ev.sdp);
-                }
-            }
-            EventMsg::RealtimeConversationRealtime(ev) => {
-                if !from_replay {
-                    self.on_realtime_conversation_realtime(ev);
-                }
-            }
-            EventMsg::RealtimeConversationClosed(ev) => {
-                if !from_replay {
-                    self.on_realtime_conversation_closed(ev);
-                }
-            }
             EventMsg::ItemCompleted(event) => {
                 let item = event.item;
                 if !from_replay && let codex_protocol::items::TurnItem::UserMessage(item) = &item {
@@ -7931,52 +7275,18 @@ impl ChatWidget {
     }
 
     #[cfg(test)]
-    fn on_entered_review_mode(&mut self, review: ReviewRequest, from_replay: bool) {
-        let hint = review.user_facing_hint.unwrap_or_else(|| {
-            crate::legacy_core::review_prompts::user_facing_hint(&review.target)
-        });
-        self.enter_review_mode_with_hint(hint, from_replay);
-    }
-
-    #[cfg(test)]
-    fn on_exited_review_mode(&mut self, review: ExitedReviewModeEvent) {
-        if let Some(output) = review.review_output {
-            let review_markdown =
-                crate::legacy_core::review_format::render_review_output_text(&output);
-            self.record_agent_markdown(&review_markdown);
-            self.flush_answer_stream_with_separator();
-            self.flush_interrupt_queue();
-            self.flush_active_cell();
-
-            if output.findings.is_empty() {
-                let explanation = output.overall_explanation.trim().to_string();
-                if explanation.is_empty() {
-                    tracing::error!("Reviewer failed to output a response.");
-                    self.add_to_history(history_cell::new_error_event(
-                        "Reviewer failed to output a response.".to_owned(),
-                    ));
-                } else {
-                    // Show explanation when there are no structured findings.
-                    let mut rendered: Vec<ratatui::text::Line<'static>> = vec!["".into()];
-                    crate::markdown::append_markdown(
-                        &explanation,
-                        /*width*/ None,
-                        Some(self.config.cwd.as_path()),
-                        &mut rendered,
-                    );
-                    let body_cell = AgentMessageCell::new(rendered, /*is_first_line*/ false);
-                    self.app_event_tx
-                        .send(AppEvent::InsertHistoryCell(Box::new(body_cell)));
-                }
-            }
-            // Final message is rendered as part of the AgentMessage.
-        }
+    fn on_exited_review_mode(&mut self, _review: ExitedReviewModeEvent) {
         self.exit_review_mode_after_item();
     }
 
     fn on_committed_user_message(&mut self, item: &UserMessageItem, from_replay: bool) {
-        let EventMsg::UserMessage(event) = item.as_legacy_event() else {
-            unreachable!("user message item should convert to a legacy user message");
+        let rendered_event = Self::rendered_user_message_event_from_inputs(&item.content);
+        let event = UserMessageEvent {
+            message: rendered_event.message,
+            images: (!rendered_event.remote_image_urls.is_empty())
+                .then_some(rendered_event.remote_image_urls),
+            local_images: rendered_event.local_images,
+            text_elements: rendered_event.text_elements,
         };
         if from_replay {
             if !self.is_review_mode {
@@ -8562,22 +7872,19 @@ impl ChatWidget {
         let default_effort: ReasoningEffortConfig = preset.default_reasoning_effort;
 
         let switch_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-            tx.send(AppEvent::CodexOp(
-                AppCommand::override_turn_context(
-                    /*cwd*/ None,
-                    /*approval_policy*/ None,
-                    /*approvals_reviewer*/ None,
-                    /*permission_profile*/ None,
-                    /*windows_sandbox_level*/ None,
-                    Some(switch_model_for_events.clone()),
-                    Some(Some(default_effort)),
-                    /*summary*/ None,
-                    /*service_tier*/ None,
-                    /*collaboration_mode*/ None,
-                    /*personality*/ None,
-                )
-                .into_core(),
-            ));
+            tx.send(AppEvent::CodexOp(AppCommand::override_turn_context(
+                /*cwd*/ None,
+                /*approval_policy*/ None,
+                /*approvals_reviewer*/ None,
+                /*permission_profile*/ None,
+                /*windows_sandbox_level*/ None,
+                Some(switch_model_for_events.clone()),
+                Some(Some(default_effort)),
+                /*summary*/ None,
+                /*service_tier*/ None,
+                /*collaboration_mode*/ None,
+                /*personality*/ None,
+            )));
             tx.send(AppEvent::UpdateModel(switch_model_for_events.clone()));
             tx.send(AppEvent::UpdateReasoningEffort(Some(default_effort)));
         })];
@@ -8786,22 +8093,19 @@ impl ChatWidget {
                 let name = Self::personality_label(personality).to_string();
                 let description = Some(Self::personality_description(personality).to_string());
                 let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-                    tx.send(AppEvent::CodexOp(
-                        AppCommand::override_turn_context(
-                            /*cwd*/ None,
-                            /*approval_policy*/ None,
-                            /*approvals_reviewer*/ None,
-                            /*permission_profile*/ None,
-                            /*windows_sandbox_level*/ None,
-                            /*model*/ None,
-                            /*effort*/ None,
-                            /*summary*/ None,
-                            /*service_tier*/ None,
-                            /*collaboration_mode*/ None,
-                            Some(personality),
-                        )
-                        .into_core(),
-                    ));
+                    tx.send(AppEvent::CodexOp(AppCommand::override_turn_context(
+                        /*cwd*/ None,
+                        /*approval_policy*/ None,
+                        /*approvals_reviewer*/ None,
+                        /*permission_profile*/ None,
+                        /*windows_sandbox_level*/ None,
+                        /*model*/ None,
+                        /*effort*/ None,
+                        /*summary*/ None,
+                        /*service_tier*/ None,
+                        /*collaboration_mode*/ None,
+                        Some(personality),
+                    )));
                     tx.send(AppEvent::UpdatePersonality(personality));
                     tx.send(AppEvent::PersistPersonalitySelection { personality });
                 })];
@@ -9543,7 +8847,8 @@ impl ChatWidget {
     /// Open a popup to choose the permissions mode.
     pub(crate) fn open_permissions_popup(&mut self) {
         let include_read_only = cfg!(target_os = "windows");
-        let current_approval = self.config.permissions.approval_policy.value();
+        let current_approval =
+            AskForApproval::from(self.config.permissions.approval_policy.value());
         let current_permission_profile = self.config.permissions.permission_profile();
         let guardian_approval_enabled = self.config.features.enabled(Feature::GuardianApproval);
         let current_review_policy = self.config.approvals_reviewer;
@@ -9582,6 +8887,7 @@ impl ChatWidget {
             } else {
                 preset.label.to_string()
             };
+            let preset_approval = AskForApproval::from(preset.approval);
             let base_description =
                 Some(preset.description.replace(" (Identical to Agent mode)", ""));
             let approval_disabled_reason = match self
@@ -9649,7 +8955,7 @@ impl ChatWidget {
                         })]
                     } else {
                         Self::approval_preset_actions(
-                            preset.approval,
+                            preset_approval,
                             preset.permission_profile.clone(),
                             base_name.clone(),
                             ApprovalsReviewer::User,
@@ -9659,7 +8965,7 @@ impl ChatWidget {
                 #[cfg(not(target_os = "windows"))]
                 {
                     Self::approval_preset_actions(
-                        preset.approval,
+                        preset_approval,
                         preset.permission_profile.clone(),
                         base_name.clone(),
                         ApprovalsReviewer::User,
@@ -9667,7 +8973,7 @@ impl ChatWidget {
                 }
             } else {
                 Self::approval_preset_actions(
-                    preset.approval,
+                    preset_approval,
                     preset.permission_profile.clone(),
                     base_name.clone(),
                     ApprovalsReviewer::User,
@@ -9699,13 +9005,13 @@ impl ChatWidget {
                         ),
                         is_current: current_review_policy == ApprovalsReviewer::AutoReview
                             && Self::preset_matches_current(
-                            current_approval,
-                            &current_permission_profile,
-                            self.config.cwd.as_path(),
-                            &preset,
-                        ),
+                                current_approval,
+                                &current_permission_profile,
+                                self.config.cwd.as_path(),
+                                &preset,
+                            ),
                         actions: Self::approval_preset_actions(
-                            preset.approval,
+                            preset_approval,
                             preset.permission_profile.clone(),
                             "Auto-review".to_string(),
                             ApprovalsReviewer::AutoReview,
@@ -9816,7 +9122,7 @@ impl ChatWidget {
 
         self.app_event_tx.send(AppEvent::SubmitThreadOp {
             thread_id,
-            op: Op::ApproveGuardianDeniedAction { event },
+            op: AppCommand::approve_guardian_denied_action(event),
         });
         self.add_info_message(
             "Approval recorded for one retry of the selected auto-review denial.".to_string(),
@@ -9854,22 +9160,19 @@ impl ChatWidget {
     ) -> Vec<SelectionAction> {
         vec![Box::new(move |tx| {
             let permission_profile_clone = permission_profile.clone();
-            tx.send(AppEvent::CodexOp(
-                AppCommand::override_turn_context(
-                    /*cwd*/ None,
-                    Some(approval),
-                    Some(approvals_reviewer),
-                    Some(permission_profile_clone.clone()),
-                    /*windows_sandbox_level*/ None,
-                    /*model*/ None,
-                    /*effort*/ None,
-                    /*summary*/ None,
-                    /*service_tier*/ None,
-                    /*collaboration_mode*/ None,
-                    /*personality*/ None,
-                )
-                .into_core(),
-            ));
+            tx.send(AppEvent::CodexOp(AppCommand::override_turn_context(
+                /*cwd*/ None,
+                Some(approval),
+                Some(approvals_reviewer),
+                Some(permission_profile_clone.clone()),
+                /*windows_sandbox_level*/ None,
+                /*model*/ None,
+                /*effort*/ None,
+                /*summary*/ None,
+                /*service_tier*/ None,
+                /*collaboration_mode*/ None,
+                /*personality*/ None,
+            )));
             tx.send(AppEvent::UpdateAskForApprovalPolicy(approval));
             tx.send(AppEvent::UpdatePermissionProfile(permission_profile_clone));
             tx.send(AppEvent::UpdateApprovalsReviewer(approvals_reviewer));
@@ -9888,7 +9191,8 @@ impl ChatWidget {
         cwd: &std::path::Path,
         preset: &ApprovalPreset,
     ) -> bool {
-        if current_approval != preset.approval {
+        let preset_approval = AskForApproval::from(preset.approval);
+        if current_approval != preset_approval {
             return false;
         }
 
@@ -9964,7 +9268,7 @@ impl ChatWidget {
         return_to_permissions: bool,
     ) {
         let selected_name = preset.label.to_string();
-        let approval = preset.approval;
+        let approval = AskForApproval::from(preset.approval);
         let permission_profile = preset.permission_profile;
         let mut header_children: Vec<Box<dyn Renderable>> = Vec::new();
         let title_line = Line::from("Enable full access?").bold();
@@ -10050,7 +9354,10 @@ impl ChatWidget {
         failed_scan: bool,
     ) {
         let (approval, permission_profile) = match &preset {
-            Some(p) => (Some(p.approval), Some(p.permission_profile.clone())),
+            Some(p) => (
+                Some(AskForApproval::from(p.approval)),
+                Some(p.permission_profile.clone()),
+            ),
             None => (None, None),
         };
         let mut header_children: Vec<Box<dyn Renderable>> = Vec::new();
@@ -10443,7 +9750,12 @@ impl ChatWidget {
 
     /// Set the approval policy in the widget's config copy.
     pub(crate) fn set_approval_policy(&mut self, policy: AskForApproval) {
-        if let Err(err) = self.config.permissions.approval_policy.set(policy) {
+        if let Err(err) = self
+            .config
+            .permissions
+            .approval_policy
+            .set(policy.to_core())
+        {
             tracing::warn!(%err, "failed to set approval_policy on chat config");
         }
     }
@@ -10706,8 +10018,8 @@ impl ChatWidget {
             self.config.notices.fast_default_opt_out = Some(true);
         }
         self.set_service_tier(service_tier);
-        self.app_event_tx.send(AppEvent::CodexOp(
-            AppCommand::override_turn_context(
+        self.app_event_tx
+            .send(AppEvent::CodexOp(AppCommand::override_turn_context(
                 /*cwd*/ None,
                 /*approval_policy*/ None,
                 /*approvals_reviewer*/ None,
@@ -10719,9 +10031,7 @@ impl ChatWidget {
                 Some(service_tier),
                 /*collaboration_mode*/ None,
                 /*personality*/ None,
-            )
-            .into_core(),
-        ));
+            )));
         self.app_event_tx
             .send(AppEvent::PersistServiceTierSelection { service_tier });
     }
@@ -11782,22 +11092,20 @@ impl ChatWidget {
         match &self.codex_op_target {
             CodexOpTarget::Direct(codex_op_tx) => {
                 crate::session_log::log_outbound_op(&op);
-                if let Err(e) = codex_op_tx.send(op.into_core()) {
+                if let Err(e) = codex_op_tx.send(op) {
                     tracing::error!("failed to submit op: {e}");
                     return false;
                 }
             }
             CodexOpTarget::AppEvent => {
-                self.app_event_tx.send(AppEvent::CodexOp(op.into()));
+                self.app_event_tx.send(AppEvent::CodexOp(op));
             }
         }
         true
     }
 
     pub(crate) fn prepare_local_op_submission(&mut self, op: &AppCommand) {
-        if matches!(op.view(), crate::app_command::AppCommandView::Interrupt)
-            && self.agent_turn_running
-        {
+        if matches!(op, AppCommand::Interrupt) && self.agent_turn_running {
             if let Some(controller) = self.stream_controller.as_mut() {
                 controller.clear_queue();
             }
@@ -11819,7 +11127,7 @@ impl ChatWidget {
         ));
     }
 
-    fn on_list_skills(&mut self, ev: ListSkillsResponseEvent) {
+    fn on_list_skills(&mut self, ev: SkillsListResponse) {
         self.set_skills_from_response(&ev);
         self.refresh_plugin_mentions();
     }
@@ -11962,10 +11270,7 @@ impl ChatWidget {
         items.push(SelectionItem {
             name: "Review uncommitted changes".to_string(),
             actions: vec![Box::new(move |tx: &AppEventSender| {
-                tx.review(ReviewRequest {
-                    target: ReviewTarget::UncommittedChanges,
-                    user_facing_hint: None,
-                });
+                tx.review(ReviewTarget::UncommittedChanges);
             })],
             dismiss_on_select: true,
             ..Default::default()
@@ -12015,11 +11320,8 @@ impl ChatWidget {
             items.push(SelectionItem {
                 name: format!("{current_branch} -> {branch}"),
                 actions: vec![Box::new(move |tx3: &AppEventSender| {
-                    tx3.review(ReviewRequest {
-                        target: ReviewTarget::BaseBranch {
-                            branch: branch.clone(),
-                        },
-                        user_facing_hint: None,
+                    tx3.review(ReviewTarget::BaseBranch {
+                        branch: branch.clone(),
                     });
                 })],
                 dismiss_on_select: true,
@@ -12050,12 +11352,9 @@ impl ChatWidget {
             items.push(SelectionItem {
                 name: subject.clone(),
                 actions: vec![Box::new(move |tx3: &AppEventSender| {
-                    tx3.review(ReviewRequest {
-                        target: ReviewTarget::Commit {
-                            sha: sha.clone(),
-                            title: Some(subject.clone()),
-                        },
-                        user_facing_hint: None,
+                    tx3.review(ReviewTarget::Commit {
+                        sha: sha.clone(),
+                        title: Some(subject.clone()),
                     });
                 })],
                 dismiss_on_select: true,
@@ -12086,11 +11385,8 @@ impl ChatWidget {
                 if trimmed.is_empty() {
                     return;
                 }
-                tx.review(ReviewRequest {
-                    target: ReviewTarget::Custom {
-                        instructions: trimmed,
-                    },
-                    user_facing_hint: None,
+                tx.review(ReviewTarget::Custom {
+                    instructions: trimmed,
                 });
             }),
         );
@@ -12428,12 +11724,9 @@ pub(crate) fn show_review_commit_picker_with_entries(
         items.push(SelectionItem {
             name: subject.clone(),
             actions: vec![Box::new(move |tx3: &AppEventSender| {
-                tx3.review(ReviewRequest {
-                    target: ReviewTarget::Commit {
-                        sha: sha.clone(),
-                        title: Some(subject.clone()),
-                    },
-                    user_facing_hint: None,
+                tx3.review(ReviewTarget::Commit {
+                    sha: sha.clone(),
+                    title: Some(subject.clone()),
                 });
             })],
             dismiss_on_select: true,
@@ -12451,6 +11744,9 @@ pub(crate) fn show_review_commit_picker_with_entries(
         ..Default::default()
     });
 }
+
+#[cfg(test)]
+pub(crate) mod test_events;
 
 #[cfg(test)]
 pub(crate) mod tests;

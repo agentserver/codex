@@ -131,24 +131,18 @@ async fn queued_slash_review_with_args_dispatches_after_active_turn() {
 
     match op_rx.try_recv() {
         Ok(Op::AddToHistory { .. }) => match op_rx.try_recv() {
-            Ok(Op::Review { review_request }) => assert_eq!(
-                review_request,
-                ReviewRequest {
-                    target: ReviewTarget::Custom {
-                        instructions: "check regressions".to_string(),
-                    },
-                    user_facing_hint: None,
+            Ok(Op::Review { target }) => assert_eq!(
+                target,
+                ReviewTarget::Custom {
+                    instructions: "check regressions".to_string(),
                 }
             ),
             other => panic!("expected queued /review to submit review op, got {other:?}"),
         },
-        Ok(Op::Review { review_request }) => assert_eq!(
-            review_request,
-            ReviewRequest {
-                target: ReviewTarget::Custom {
-                    instructions: "check regressions".to_string(),
-                },
-                user_facing_hint: None,
+        Ok(Op::Review { target }) => assert_eq!(
+            target,
+            ReviewTarget::Custom {
+                instructions: "check regressions".to_string(),
             }
         ),
         other => panic!("expected queued /review to submit review op, got {other:?}"),
@@ -453,7 +447,7 @@ async fn queued_bare_rename_drains_next_input_after_name_update() {
 
     chat.handle_codex_event(Event {
         id: "rename".into(),
-        msg: EventMsg::ThreadNameUpdated(codex_protocol::protocol::ThreadNameUpdatedEvent {
+        msg: EventMsg::ThreadNameUpdated(crate::chatwidget::test_events::ThreadNameUpdatedEvent {
             thread_id,
             thread_name: Some("Queued rename".to_string()),
         }),
@@ -536,7 +530,7 @@ async fn queued_inline_rename_does_not_drain_again_before_turn_started() {
 
     chat.handle_codex_event(Event {
         id: "rename".into(),
-        msg: EventMsg::ThreadNameUpdated(codex_protocol::protocol::ThreadNameUpdatedEvent {
+        msg: EventMsg::ThreadNameUpdated(crate::chatwidget::test_events::ThreadNameUpdatedEvent {
             thread_id,
             thread_name: Some("Queued rename".to_string()),
         }),

@@ -1,8 +1,8 @@
+#[cfg(test)]
+use crate::app_command::AppCommand as Op;
 use codex_protocol::ThreadId;
 use codex_protocol::approvals::ElicitationAction;
 use codex_protocol::mcp::RequestId as McpRequestId;
-#[cfg(test)]
-use codex_protocol::protocol::Op;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;

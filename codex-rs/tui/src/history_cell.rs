@@ -10,6 +10,7 @@
 //! bumps the active-cell revision tracked by `ChatWidget`, so the cache key changes whenever the
 //! rendered transcript output can change.
 
+use crate::diff_model::FileChange;
 use crate::diff_render::create_diff_summary;
 use crate::diff_render::display_path_for;
 use crate::exec_cell::CommandOutput;
@@ -27,6 +28,7 @@ use crate::render::line_utils::line_to_static;
 use crate::render::line_utils::prefix_lines;
 use crate::render::line_utils::push_owned_lines;
 use crate::render::renderable::Renderable;
+use crate::session_state::ThreadSessionState;
 use crate::style::proposed_plan_style;
 use crate::style::user_message_style;
 #[cfg(test)]
@@ -35,6 +37,7 @@ use crate::test_support::PathBufExt;
 use crate::test_support::test_path_buf;
 use crate::text_formatting::format_and_truncate_tool_result;
 use crate::text_formatting::truncate_text;
+use crate::tool_activity::McpInvocation;
 use crate::tooltips;
 use crate::ui_consts::LIVE_PREFIX_COLS;
 use crate::update_action::UpdateAction;
@@ -43,8 +46,13 @@ use crate::wrapping::RtOptions;
 use crate::wrapping::adaptive_wrap_line;
 use crate::wrapping::adaptive_wrap_lines;
 use base64::Engine;
+use codex_app_server_protocol::AskForApproval;
+use codex_app_server_protocol::McpAuthStatus;
 use codex_app_server_protocol::McpServerStatus;
 use codex_app_server_protocol::McpServerStatusDetail;
+use codex_app_server_protocol::PermissionProfile as AppServerPermissionProfile;
+use codex_app_server_protocol::PermissionProfileFileSystemPermissions;
+use codex_app_server_protocol::PermissionProfileNetworkPermissions;
 use codex_config::types::McpServerTransportConfig;
 #[cfg(test)]
 use codex_mcp::qualified_mcp_tool_name_prefix;
@@ -54,7 +62,6 @@ use codex_protocol::account::PlanType;
 use codex_protocol::mcp::Resource;
 #[cfg(test)]
 use codex_protocol::mcp::ResourceTemplate;
-use codex_protocol::models::ManagedFileSystemPermissions;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::WebSearchAction;
 use codex_protocol::models::local_image_label_text;
@@ -62,11 +69,6 @@ use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::plan_tool::PlanItemArg;
 use codex_protocol::plan_tool::StepStatus;
 use codex_protocol::plan_tool::UpdatePlanArgs;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::FileChange;
-use codex_protocol::protocol::McpAuthStatus;
-use codex_protocol::protocol::McpInvocation;
-use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::request_user_input::RequestUserInputAnswer;
 use codex_protocol::request_user_input::RequestUserInputQuestion;
 use codex_protocol::user_input::TextElement;
@@ -862,11 +864,11 @@ fn exec_snippet(command: &[String]) -> String {
 
 pub fn new_approval_decision_cell(
     command: Vec<String>,
-    decision: codex_protocol::protocol::ReviewDecision,
+    decision: crate::approval_display::ReviewDecision,
     actor: ApprovalDecisionActor,
 ) -> Box<dyn HistoryCell> {
-    use codex_protocol::protocol::NetworkPolicyRuleAction;
-    use codex_protocol::protocol::ReviewDecision::*;
+    use crate::approval_display::ReviewDecision::*;
+    use codex_protocol::approvals::NetworkPolicyRuleAction;
 
     let (symbol, summary): (Span<'static>, Vec<Span<'static>>) = match decision {
         Approved => {
@@ -1231,28 +1233,24 @@ impl HistoryCell for SessionInfoCell {
 pub(crate) fn new_session_info(
     config: &Config,
     requested_model: &str,
-    event: SessionConfiguredEvent,
+    session: &ThreadSessionState,
     is_first_event: bool,
     tooltip_override: Option<String>,
     auth_plan: Option<PlanType>,
     show_fast_status: bool,
 ) -> SessionInfoCell {
-    let SessionConfiguredEvent {
-        model,
-        reasoning_effort,
-        approval_policy,
-        permission_profile,
-        ..
-    } = event;
     // Header box rendered as history (so it appears at the very top)
     let header = SessionHeaderHistoryCell::new(
-        model.clone(),
-        reasoning_effort,
+        session.model.clone(),
+        session.reasoning_effort,
         show_fast_status,
         config.cwd.to_path_buf(),
         CODEX_CLI_VERSION,
     )
-    .with_yolo_mode(has_yolo_permissions(approval_policy, &permission_profile));
+    .with_yolo_mode(has_yolo_permissions(
+        session.approval_policy,
+        &session.permission_profile,
+    ));
     let mut parts: Vec<Box<dyn HistoryCell>> = vec![Box::new(header)];
 
     if is_first_event {
@@ -1298,11 +1296,11 @@ pub(crate) fn new_session_info(
         {
             parts.push(Box::new(tooltips));
         }
-        if requested_model != model {
+        if requested_model != session.model.as_str() {
             let lines = vec![
                 "model changed:".magenta().bold().into(),
                 format!("requested: {requested_model}").into(),
-                format!("used: {model}").into(),
+                format!("used: {}", session.model).into(),
             ];
             parts.push(Box::new(PlainHistoryCell { lines }));
         }
@@ -1313,7 +1311,7 @@ pub(crate) fn new_session_info(
 
 pub(crate) fn is_yolo_mode(config: &Config) -> bool {
     has_yolo_permissions(
-        config.permissions.approval_policy.value(),
+        AskForApproval::from(config.permissions.approval_policy.value()),
         &config.permissions.permission_profile(),
     )
 }
@@ -1322,15 +1320,25 @@ fn has_yolo_permissions(
     approval_policy: AskForApproval,
     permission_profile: &PermissionProfile,
 ) -> bool {
+    let permission_profile = AppServerPermissionProfile::from(permission_profile.clone());
     approval_policy == AskForApproval::Never
         && matches!(
             permission_profile,
-            PermissionProfile::Disabled
-                | PermissionProfile::Managed {
-                    file_system: ManagedFileSystemPermissions::Unrestricted,
-                    network: codex_protocol::protocol::NetworkSandboxPolicy::Enabled,
+            AppServerPermissionProfile::Disabled
+                | AppServerPermissionProfile::Managed {
+                    file_system: PermissionProfileFileSystemPermissions::Unrestricted,
+                    network: PermissionProfileNetworkPermissions { enabled: true },
                 }
         )
+}
+
+fn mcp_auth_status_label(status: McpAuthStatus) -> &'static str {
+    match status {
+        McpAuthStatus::Unsupported => "Unsupported",
+        McpAuthStatus::NotLoggedIn => "Not logged in",
+        McpAuthStatus::BearerToken => "Bearer token",
+        McpAuthStatus::OAuth => "OAuth",
+    }
 }
 
 pub(crate) fn new_user_prompt(
@@ -2041,7 +2049,13 @@ pub(crate) fn new_mcp_tools_output(
         }
         lines.push(header.into());
         lines.push(vec!["    • Status: ".into(), "enabled".green()].into());
-        lines.push(vec!["    • Auth: ".into(), auth_status.to_string().into()].into());
+        lines.push(
+            vec![
+                "    • Auth: ".into(),
+                mcp_auth_status_label(auth_status).into(),
+            ]
+            .into(),
+        );
 
         match &cfg.transport {
             McpServerTransportConfig::Stdio {
@@ -2219,7 +2233,13 @@ pub(crate) fn new_mcp_tools_output_from_statuses(
                 codex_app_server_protocol::McpAuthStatus::OAuth => McpAuthStatus::OAuth,
             })
             .unwrap_or(McpAuthStatus::Unsupported);
-        lines.push(vec!["    • Auth: ".into(), auth_status.to_string().into()].into());
+        lines.push(
+            vec![
+                "    • Auth: ".into(),
+                mcp_auth_status_label(auth_status).into(),
+            ]
+            .into(),
+        );
 
         if let Some(cfg) = cfg {
             match &cfg.transport {
@@ -2992,7 +3012,10 @@ mod tests {
     use crate::exec_cell::ExecCell;
     use crate::legacy_core::config::Config;
     use crate::legacy_core::config::ConfigBuilder;
+    use crate::session_state::ThreadSessionState;
     use crate::wrapping::word_wrap_lines;
+    use codex_app_server_protocol::AskForApproval;
+    use codex_app_server_protocol::McpAuthStatus;
     use codex_config::types::McpServerConfig;
     use codex_config::types::McpServerDisabledReason;
     use codex_otel::RuntimeMetricTotals;
@@ -3001,9 +3024,6 @@ mod tests {
     use codex_protocol::account::PlanType;
     use codex_protocol::models::WebSearchAction;
     use codex_protocol::parse_command::ParsedCommand;
-    use codex_protocol::protocol::AskForApproval;
-    use codex_protocol::protocol::McpAuthStatus;
-    use codex_protocol::protocol::SessionConfiguredEvent;
     use dirs::home_dir;
     use pretty_assertions::assert_eq;
     use ratatui::buffer::Buffer;
@@ -3012,9 +3032,9 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
+    use codex_app_server_protocol::CommandExecutionSource as ExecCommandSource;
     use codex_protocol::mcp::CallToolResult;
     use codex_protocol::mcp::Tool;
-    use codex_protocol::protocol::ExecCommandSource;
     use rmcp::model::Content;
 
     const SMALL_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
@@ -3183,10 +3203,11 @@ mod tests {
         );
     }
 
-    fn session_configured_event(model: &str) -> SessionConfiguredEvent {
-        SessionConfiguredEvent {
-            session_id: ThreadId::new(),
+    fn session_configured_event(model: &str) -> ThreadSessionState {
+        ThreadSessionState {
+            thread_id: ThreadId::new(),
             forked_from_id: None,
+            fork_parent_title: None,
             thread_name: None,
             model: model.to_string(),
             model_provider_id: "test-provider".to_string(),
@@ -3195,10 +3216,10 @@ mod tests {
             approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),
             cwd: test_path_buf("/tmp/project").abs(),
+            instruction_source_paths: Vec::new(),
             reasoning_effort: None,
             history_log_id: 0,
             history_entry_count: 0,
-            initial_messages: None,
             network_proxy: None,
             rollout_path: Some(PathBuf::new()),
         }
@@ -3296,7 +3317,7 @@ mod tests {
         let cell = new_session_info(
             &config,
             "gpt-5",
-            session_configured_event("gpt-5"),
+            &session_configured_event("gpt-5"),
             /*is_first_event*/ false,
             Some("Model just became available".to_string()),
             Some(PlanType::Free),
@@ -3318,7 +3339,7 @@ mod tests {
         let cell = new_session_info(
             &config,
             "gpt-5",
-            session_configured_event("gpt-5"),
+            &session_configured_event("gpt-5"),
             /*is_first_event*/ false,
             Some("Model just became available".to_string()),
             Some(PlanType::Free),
@@ -3335,7 +3356,7 @@ mod tests {
         let cell = new_session_info(
             &config,
             "gpt-5",
-            session_configured_event("gpt-5"),
+            &session_configured_event("gpt-5"),
             /*is_first_event*/ true,
             Some("Model just became available".to_string()),
             Some(PlanType::Free),
@@ -3354,7 +3375,7 @@ mod tests {
         let cell = new_session_info(
             &config,
             "gpt-5",
-            session_configured_event("gpt-5"),
+            &session_configured_event("gpt-5"),
             /*is_first_event*/ false,
             Some("Model just became available".to_string()),
             Some(PlanType::Free),
@@ -4215,10 +4236,11 @@ mod tests {
 
     #[test]
     fn yolo_mode_includes_managed_full_access_profiles() {
-        let permission_profile = PermissionProfile::Managed {
-            file_system: ManagedFileSystemPermissions::Unrestricted,
-            network: codex_protocol::protocol::NetworkSandboxPolicy::Enabled,
-        };
+        let permission_profile: PermissionProfile = AppServerPermissionProfile::Managed {
+            network: PermissionProfileNetworkPermissions { enabled: true },
+            file_system: PermissionProfileFileSystemPermissions::Unrestricted,
+        }
+        .into();
 
         assert!(has_yolo_permissions(
             AskForApproval::Never,
@@ -4228,9 +4250,10 @@ mod tests {
 
     #[test]
     fn yolo_mode_excludes_external_sandbox_profiles() {
-        let permission_profile = PermissionProfile::External {
-            network: codex_protocol::protocol::NetworkSandboxPolicy::Enabled,
-        };
+        let permission_profile: PermissionProfile = AppServerPermissionProfile::External {
+            network: PermissionProfileNetworkPermissions { enabled: true },
+        }
+        .into();
 
         assert!(!has_yolo_permissions(
             AskForApproval::Never,

@@ -457,7 +457,7 @@ pub(super) async fn fetch_account_rate_limits(
         .await
         .wrap_err("account/rateLimits/read failed in TUI")?;
 
-    Ok(app_server_rate_limit_snapshots_to_core(response))
+    Ok(app_server_rate_limit_snapshots(response))
 }
 
 pub(super) async fn send_add_credits_nudge_email(

@@ -64,7 +64,7 @@ async fn interrupted_turn_restores_queued_messages_with_images_and_elements() {
     // must be renumbered to match the combined local image list.
     chat.handle_codex_event(Event {
         id: "interrupt".into(),
-        msg: EventMsg::TurnAborted(codex_protocol::protocol::TurnAbortedEvent {
+        msg: EventMsg::TurnAborted(crate::chatwidget::test_events::TurnAbortedEvent {
             turn_id: Some("turn-1".to_string()),
             reason: TurnAbortReason::Interrupted,
             completed_at: None,
@@ -113,12 +113,7 @@ async fn entered_review_mode_uses_request_hint() {
 
     chat.handle_codex_event(Event {
         id: "review-start".into(),
-        msg: EventMsg::EnteredReviewMode(ReviewRequest {
-            target: ReviewTarget::BaseBranch {
-                branch: "feature".to_string(),
-            },
-            user_facing_hint: Some("feature branch".to_string()),
-        }),
+        msg: EventMsg::EnteredReviewMode("feature branch".to_string()),
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -134,10 +129,7 @@ async fn entered_review_mode_defaults_to_current_changes_banner() {
 
     chat.handle_codex_event(Event {
         id: "review-start".into(),
-        msg: EventMsg::EnteredReviewMode(ReviewRequest {
-            target: ReviewTarget::UncommittedChanges,
-            user_facing_hint: None,
-        }),
+        msg: EventMsg::EnteredReviewMode("current changes".to_string()),
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -152,12 +144,7 @@ async fn live_core_review_prompt_item_is_not_rendered() {
 
     chat.handle_codex_event(Event {
         id: "review-start".into(),
-        msg: EventMsg::EnteredReviewMode(ReviewRequest {
-            target: ReviewTarget::BaseBranch {
-                branch: "main".to_string(),
-            },
-            user_facing_hint: Some("changes against 'main'".to_string()),
-        }),
+        msg: EventMsg::EnteredReviewMode("changes against 'main'".to_string()),
     });
     let cells = drain_insert_history(&mut rx);
     assert_eq!(cells.len(), 1);
@@ -235,12 +222,7 @@ async fn steer_rejection_queues_review_follow_up_before_existing_queued_messages
     });
     chat.handle_codex_event(Event {
         id: "review-start".into(),
-        msg: EventMsg::EnteredReviewMode(ReviewRequest {
-            target: ReviewTarget::BaseBranch {
-                branch: "feature".to_string(),
-            },
-            user_facing_hint: Some("feature branch".to_string()),
-        }),
+        msg: EventMsg::EnteredReviewMode("feature branch".to_string()),
     });
     let _ = drain_insert_history(&mut rx);
     chat.queued_user_messages
@@ -303,9 +285,7 @@ async fn steer_rejection_queues_review_follow_up_before_existing_queued_messages
 
     chat.handle_codex_event(Event {
         id: "review-exit".into(),
-        msg: EventMsg::ExitedReviewMode(ExitedReviewModeEvent {
-            review_output: None,
-        }),
+        msg: EventMsg::ExitedReviewMode(ExitedReviewModeEvent),
     });
     chat.handle_codex_event(Event {
         id: "turn-complete".into(),
@@ -358,10 +338,7 @@ async fn live_agent_message_renders_during_review_mode() {
 
     chat.handle_codex_event(Event {
         id: "review-start".into(),
-        msg: EventMsg::EnteredReviewMode(ReviewRequest {
-            target: ReviewTarget::UncommittedChanges,
-            user_facing_hint: None,
-        }),
+        msg: EventMsg::EnteredReviewMode("current changes".to_string()),
     });
     let _ = drain_insert_history(&mut rx);
 
@@ -399,12 +376,7 @@ async fn review_restores_context_window_indicator() {
 
     chat.handle_codex_event(Event {
         id: "review-start".into(),
-        msg: EventMsg::EnteredReviewMode(ReviewRequest {
-            target: ReviewTarget::BaseBranch {
-                branch: "feature".to_string(),
-            },
-            user_facing_hint: Some("feature branch".to_string()),
-        }),
+        msg: EventMsg::EnteredReviewMode("feature branch".to_string()),
     });
 
     chat.handle_codex_event(Event {
@@ -418,9 +390,7 @@ async fn review_restores_context_window_indicator() {
 
     chat.handle_codex_event(Event {
         id: "review-end".into(),
-        msg: EventMsg::ExitedReviewMode(ExitedReviewModeEvent {
-            review_output: None,
-        }),
+        msg: EventMsg::ExitedReviewMode(ExitedReviewModeEvent),
     });
     let _ = drain_insert_history(&mut rx);
 
@@ -1022,7 +992,7 @@ async fn replaced_turn_clears_pending_steers_but_keeps_queued_drafts() {
 
     chat.handle_codex_event(Event {
         id: "replaced".into(),
-        msg: EventMsg::TurnAborted(codex_protocol::protocol::TurnAbortedEvent {
+        msg: EventMsg::TurnAborted(crate::chatwidget::test_events::TurnAbortedEvent {
             turn_id: Some("turn-1".to_string()),
             reason: TurnAbortReason::Replaced,
             completed_at: None,
@@ -1224,14 +1194,11 @@ async fn custom_prompt_submit_sends_review_op() {
     // Expect AppEvent::CodexOp(Op::Review { .. }) with trimmed prompt
     let evt = rx.try_recv().expect("expected one app event");
     match evt {
-        AppEvent::CodexOp(Op::Review { review_request }) => {
+        AppEvent::CodexOp(Op::Review { target }) => {
             assert_eq!(
-                review_request,
-                ReviewRequest {
-                    target: ReviewTarget::Custom {
-                        instructions: "please audit dependencies".to_string(),
-                    },
-                    user_facing_hint: None,
+                target,
+                ReviewTarget::Custom {
+                    instructions: "please audit dependencies".to_string(),
                 }
             );
         }
@@ -1265,7 +1232,7 @@ async fn interrupt_exec_marks_failed_snapshot() {
     // cause the active exec cell to be finalized as failed and flushed.
     chat.handle_codex_event(Event {
         id: "call-int".into(),
-        msg: EventMsg::TurnAborted(codex_protocol::protocol::TurnAbortedEvent {
+        msg: EventMsg::TurnAborted(crate::chatwidget::test_events::TurnAbortedEvent {
             turn_id: Some("turn-1".to_string()),
             reason: TurnAbortReason::Interrupted,
             completed_at: None,
@@ -1304,7 +1271,7 @@ async fn interrupted_turn_error_message_snapshot() {
     // Abort the turn (like pressing Esc) and drain inserted history.
     chat.handle_codex_event(Event {
         id: "task-1".into(),
-        msg: EventMsg::TurnAborted(codex_protocol::protocol::TurnAbortedEvent {
+        msg: EventMsg::TurnAborted(crate::chatwidget::test_events::TurnAbortedEvent {
             turn_id: Some("turn-1".to_string()),
             reason: TurnAbortReason::Interrupted,
             completed_at: None,
@@ -1400,7 +1367,7 @@ async fn direct_budget_limited_turn_uses_budget_message_snapshot() {
     });
     chat.handle_codex_event(Event {
         id: "task-1".into(),
-        msg: EventMsg::TurnAborted(codex_protocol::protocol::TurnAbortedEvent {
+        msg: EventMsg::TurnAborted(crate::chatwidget::test_events::TurnAbortedEvent {
             turn_id: Some("turn-1".to_string()),
             reason: TurnAbortReason::BudgetLimited,
             completed_at: None,
@@ -1431,7 +1398,7 @@ async fn budget_limited_turn_restores_queued_input_without_submitting() {
     });
     chat.handle_codex_event(Event {
         id: "task-1".into(),
-        msg: EventMsg::TurnAborted(codex_protocol::protocol::TurnAbortedEvent {
+        msg: EventMsg::TurnAborted(crate::chatwidget::test_events::TurnAbortedEvent {
             turn_id: Some("turn-1".to_string()),
             reason: TurnAbortReason::BudgetLimited,
             completed_at: None,
@@ -1469,7 +1436,7 @@ async fn interrupted_turn_pending_steers_message_snapshot() {
 
     chat.handle_codex_event(Event {
         id: "task-1".into(),
-        msg: EventMsg::TurnAborted(codex_protocol::protocol::TurnAbortedEvent {
+        msg: EventMsg::TurnAborted(crate::chatwidget::test_events::TurnAbortedEvent {
             turn_id: Some("turn-1".to_string()),
             reason: TurnAbortReason::Interrupted,
             completed_at: None,
@@ -1567,7 +1534,7 @@ async fn review_ended_keeps_unified_exec_processes() {
 
     chat.handle_codex_event(Event {
         id: "turn-1".into(),
-        msg: EventMsg::TurnAborted(codex_protocol::protocol::TurnAbortedEvent {
+        msg: EventMsg::TurnAborted(crate::chatwidget::test_events::TurnAbortedEvent {
             turn_id: Some("turn-1".to_string()),
             reason: TurnAbortReason::ReviewEnded,
             completed_at: None,
@@ -1612,10 +1579,7 @@ async fn enter_submits_steer_while_review_is_running() {
 
     chat.handle_codex_event(Event {
         id: "review-1".into(),
-        msg: EventMsg::EnteredReviewMode(ReviewRequest {
-            target: ReviewTarget::UncommittedChanges,
-            user_facing_hint: Some("current changes".to_string()),
-        }),
+        msg: EventMsg::EnteredReviewMode("current changes".to_string()),
     });
     let _ = drain_insert_history(&mut rx);
 
@@ -1661,10 +1625,7 @@ async fn review_queues_user_messages_snapshot() {
 
     chat.handle_codex_event(Event {
         id: "review-1".into(),
-        msg: EventMsg::EnteredReviewMode(ReviewRequest {
-            target: ReviewTarget::UncommittedChanges,
-            user_facing_hint: Some("current changes".to_string()),
-        }),
+        msg: EventMsg::EnteredReviewMode("current changes".to_string()),
     });
     let _ = drain_insert_history(&mut rx);
 

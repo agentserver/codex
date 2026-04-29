@@ -1,4 +1,11 @@
 use super::*;
+use codex_app_server_protocol::FileSystemAccessMode;
+use codex_app_server_protocol::FileSystemPath;
+use codex_app_server_protocol::FileSystemSandboxEntry;
+use codex_app_server_protocol::FileSystemSpecialPath;
+use codex_app_server_protocol::PermissionProfile as AppServerPermissionProfile;
+use codex_app_server_protocol::PermissionProfileFileSystemPermissions;
+use codex_app_server_protocol::PermissionProfileNetworkPermissions;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
@@ -7,7 +14,7 @@ async fn submission_preserves_text_elements_and_local_images() {
 
     let conversation_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
-    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+    let configured = crate::chatwidget::test_events::SessionConfiguredEvent {
         session_id: conversation_id,
         forked_from_id: None,
         thread_name: None,
@@ -91,27 +98,28 @@ async fn submission_includes_configured_permission_profile() {
 
     let conversation_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
-    let expected_permission_profile = PermissionProfile::Managed {
-        network: codex_protocol::permissions::NetworkSandboxPolicy::Restricted,
-        file_system: codex_protocol::models::ManagedFileSystemPermissions::Restricted {
+    let expected_permission_profile: PermissionProfile = AppServerPermissionProfile::Managed {
+        network: PermissionProfileNetworkPermissions { enabled: false },
+        file_system: PermissionProfileFileSystemPermissions::Restricted {
             entries: vec![
-                codex_protocol::permissions::FileSystemSandboxEntry {
-                    path: codex_protocol::permissions::FileSystemPath::Special {
-                        value: codex_protocol::permissions::FileSystemSpecialPath::Root,
+                FileSystemSandboxEntry {
+                    path: FileSystemPath::Special {
+                        value: FileSystemSpecialPath::Root,
                     },
-                    access: codex_protocol::permissions::FileSystemAccessMode::Read,
+                    access: FileSystemAccessMode::Read,
                 },
-                codex_protocol::permissions::FileSystemSandboxEntry {
-                    path: codex_protocol::permissions::FileSystemPath::GlobPattern {
+                FileSystemSandboxEntry {
+                    path: FileSystemPath::GlobPattern {
                         pattern: "/home/user/project/secrets/**".to_string(),
                     },
-                    access: codex_protocol::permissions::FileSystemAccessMode::None,
+                    access: FileSystemAccessMode::None,
                 },
             ],
             glob_scan_max_depth: None,
         },
-    };
-    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+    }
+    .into();
+    let configured = crate::chatwidget::test_events::SessionConfiguredEvent {
         session_id: conversation_id,
         forked_from_id: None,
         thread_name: None,
@@ -148,7 +156,7 @@ async fn submission_includes_configured_permission_profile() {
         } => permission_profile,
         other => panic!("expected Op::UserTurn, got {other:?}"),
     };
-    assert_eq!(permission_profile, Some(expected_permission_profile));
+    assert_eq!(permission_profile, expected_permission_profile);
 }
 
 #[tokio::test]
@@ -157,11 +165,12 @@ async fn submission_keeps_profile_when_legacy_projection_is_external() {
 
     let conversation_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
-    let expected_permission_profile = PermissionProfile::Managed {
-        network: codex_protocol::permissions::NetworkSandboxPolicy::Restricted,
-        file_system: codex_protocol::models::ManagedFileSystemPermissions::Unrestricted,
-    };
-    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+    let expected_permission_profile: PermissionProfile = AppServerPermissionProfile::Managed {
+        network: PermissionProfileNetworkPermissions { enabled: false },
+        file_system: PermissionProfileFileSystemPermissions::Unrestricted,
+    }
+    .into();
+    let configured = crate::chatwidget::test_events::SessionConfiguredEvent {
         session_id: conversation_id,
         forked_from_id: None,
         thread_name: None,
@@ -195,7 +204,7 @@ async fn submission_keeps_profile_when_legacy_projection_is_external() {
         } => permission_profile,
         other => panic!("expected Op::UserTurn, got {other:?}"),
     };
-    assert_eq!(permission_profile, Some(expected_permission_profile));
+    assert_eq!(permission_profile, expected_permission_profile);
 }
 
 #[tokio::test]
@@ -204,7 +213,7 @@ async fn submission_with_remote_and_local_images_keeps_local_placeholder_numberi
 
     let conversation_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
-    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+    let configured = crate::chatwidget::test_events::SessionConfiguredEvent {
         session_id: conversation_id,
         forked_from_id: None,
         thread_name: None,
@@ -299,7 +308,7 @@ async fn enter_with_only_remote_images_submits_user_turn() {
 
     let conversation_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
-    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+    let configured = crate::chatwidget::test_events::SessionConfiguredEvent {
         session_id: conversation_id,
         forked_from_id: None,
         thread_name: None,
@@ -364,7 +373,7 @@ async fn shift_enter_with_only_remote_images_does_not_submit_user_turn() {
 
     let conversation_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
-    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+    let configured = crate::chatwidget::test_events::SessionConfiguredEvent {
         session_id: conversation_id,
         forked_from_id: None,
         thread_name: None,
@@ -404,7 +413,7 @@ async fn enter_with_only_remote_images_does_not_submit_when_modal_is_active() {
 
     let conversation_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
-    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+    let configured = crate::chatwidget::test_events::SessionConfiguredEvent {
         session_id: conversation_id,
         forked_from_id: None,
         thread_name: None,
@@ -444,7 +453,7 @@ async fn enter_with_only_remote_images_does_not_submit_when_input_disabled() {
 
     let conversation_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
-    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+    let configured = crate::chatwidget::test_events::SessionConfiguredEvent {
         session_id: conversation_id,
         forked_from_id: None,
         thread_name: None,
@@ -487,7 +496,7 @@ async fn submission_prefers_selected_duplicate_skill_path() {
 
     let conversation_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
-    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+    let configured = crate::chatwidget::test_events::SessionConfiguredEvent {
         session_id: conversation_id,
         forked_from_id: None,
         thread_name: None,
@@ -522,7 +531,7 @@ async fn submission_prefers_selected_duplicate_skill_path() {
             dependencies: None,
             policy: None,
             path_to_skills_md: repo_skill_path,
-            scope: SkillScope::Repo,
+            scope: crate::test_support::skill_scope_repo(),
         },
         SkillMetadata {
             name: "figma".to_string(),
@@ -532,7 +541,7 @@ async fn submission_prefers_selected_duplicate_skill_path() {
             dependencies: None,
             policy: None,
             path_to_skills_md: user_skill_path.clone(),
-            scope: SkillScope::User,
+            scope: crate::test_support::skill_scope_user(),
         },
     ]));
 
@@ -731,7 +740,7 @@ async fn interrupted_turn_restore_keeps_active_mode_for_resubmission() {
 
     chat.handle_codex_event(Event {
         id: "interrupt".into(),
-        msg: EventMsg::TurnAborted(codex_protocol::protocol::TurnAbortedEvent {
+        msg: EventMsg::TurnAborted(crate::chatwidget::test_events::TurnAbortedEvent {
             turn_id: Some("turn-1".to_string()),
             reason: TurnAbortReason::Interrupted,
             completed_at: None,
@@ -1178,7 +1187,7 @@ async fn interrupt_restores_queued_messages_into_composer() {
     // Deliver a TurnAborted event with Interrupted reason (as if Esc was pressed).
     chat.handle_codex_event(Event {
         id: "turn-1".into(),
-        msg: EventMsg::TurnAborted(codex_protocol::protocol::TurnAbortedEvent {
+        msg: EventMsg::TurnAborted(crate::chatwidget::test_events::TurnAbortedEvent {
             turn_id: Some("turn-1".to_string()),
             reason: TurnAbortReason::Interrupted,
             completed_at: None,
@@ -1219,7 +1228,7 @@ async fn interrupt_prepends_queued_messages_before_existing_composer_text() {
 
     chat.handle_codex_event(Event {
         id: "turn-1".into(),
-        msg: EventMsg::TurnAborted(codex_protocol::protocol::TurnAbortedEvent {
+        msg: EventMsg::TurnAborted(crate::chatwidget::test_events::TurnAbortedEvent {
             turn_id: Some("turn-1".to_string()),
             reason: TurnAbortReason::Interrupted,
             completed_at: None,

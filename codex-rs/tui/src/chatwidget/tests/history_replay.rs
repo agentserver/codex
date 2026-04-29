@@ -1,11 +1,13 @@
 use super::*;
-use codex_protocol::protocol::FileSystemAccessMode;
-use codex_protocol::protocol::FileSystemPath;
-use codex_protocol::protocol::FileSystemSandboxEntry;
-use codex_protocol::protocol::FileSystemSandboxKind;
-use codex_protocol::protocol::FileSystemSandboxPolicy;
-use codex_protocol::protocol::FileSystemSpecialPath;
-use codex_protocol::protocol::NetworkSandboxPolicy;
+use codex_app_server_protocol::FileSystemAccessMode;
+use codex_app_server_protocol::FileSystemPath;
+use codex_app_server_protocol::FileSystemSandboxEntry;
+use codex_app_server_protocol::FileSystemSpecialPath;
+use codex_app_server_protocol::NetworkAccess;
+use codex_app_server_protocol::PermissionProfile as AppServerPermissionProfile;
+use codex_app_server_protocol::PermissionProfileFileSystemPermissions;
+use codex_app_server_protocol::PermissionProfileNetworkPermissions;
+use codex_app_server_protocol::SandboxPolicy;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
@@ -14,7 +16,7 @@ async fn resumed_initial_messages_render_history() {
 
     let conversation_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
-    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+    let configured = crate::chatwidget::test_events::SessionConfiguredEvent {
         session_id: conversation_id,
         forked_from_id: None,
         thread_name: None,
@@ -127,7 +129,7 @@ async fn replayed_user_message_preserves_text_elements_and_local_images() {
 
     let conversation_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
-    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+    let configured = crate::chatwidget::test_events::SessionConfiguredEvent {
         session_id: conversation_id,
         forked_from_id: None,
         thread_name: None,
@@ -188,7 +190,7 @@ async fn replayed_user_message_preserves_remote_image_urls() {
 
     let conversation_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
-    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+    let configured = crate::chatwidget::test_events::SessionConfiguredEvent {
         session_id: conversation_id,
         forked_from_id: None,
         thread_name: None,
@@ -245,7 +247,7 @@ async fn session_configured_syncs_widget_config_permissions_and_cwd() {
     chat.config
         .permissions
         .approval_policy
-        .set(AskForApproval::OnRequest)
+        .set(AskForApproval::OnRequest.to_core())
         .expect("set approval policy");
     chat.config
         .permissions
@@ -254,29 +256,33 @@ async fn session_configured_syncs_widget_config_permissions_and_cwd() {
     chat.config.cwd = test_path_buf("/home/user/main").abs();
 
     let expected_cwd = test_path_buf("/home/user/sub-agent").abs();
-    let expected_file_system_policy = FileSystemSandboxPolicy::restricted(vec![
-        FileSystemSandboxEntry {
-            path: FileSystemPath::Special {
-                value: FileSystemSpecialPath::Root,
-            },
-            access: FileSystemAccessMode::Read,
+    let expected_app_server_permission_profile = AppServerPermissionProfile::Managed {
+        network: PermissionProfileNetworkPermissions { enabled: false },
+        file_system: PermissionProfileFileSystemPermissions::Restricted {
+            entries: vec![
+                FileSystemSandboxEntry {
+                    path: FileSystemPath::Special {
+                        value: FileSystemSpecialPath::Root,
+                    },
+                    access: FileSystemAccessMode::Read,
+                },
+                FileSystemSandboxEntry {
+                    path: FileSystemPath::GlobPattern {
+                        pattern: "**/.secret".to_string(),
+                    },
+                    access: FileSystemAccessMode::None,
+                },
+            ],
+            glob_scan_max_depth: None,
         },
-        FileSystemSandboxEntry {
-            path: FileSystemPath::GlobPattern {
-                pattern: "**/.secret".to_string(),
-            },
-            access: FileSystemAccessMode::None,
-        },
-    ]);
-    let expected_permission_profile =
-        codex_protocol::models::PermissionProfile::from_runtime_permissions(
-            &expected_file_system_policy,
-            NetworkSandboxPolicy::Restricted,
-        );
-    let expected_sandbox = expected_permission_profile
+    };
+    let expected_permission_profile: PermissionProfile =
+        expected_app_server_permission_profile.clone().into();
+    let expected_core_sandbox = expected_permission_profile
         .to_legacy_sandbox_policy(expected_cwd.as_path())
         .expect("permission profile should project to legacy sandbox policy");
-    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+    let expected_sandbox = SandboxPolicy::from(expected_core_sandbox);
+    let configured = crate::chatwidget::test_events::SessionConfiguredEvent {
         session_id: ThreadId::new(),
         forked_from_id: None,
         thread_name: None,
@@ -285,7 +291,7 @@ async fn session_configured_syncs_widget_config_permissions_and_cwd() {
         service_tier: None,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: ApprovalsReviewer::User,
-        permission_profile: expected_permission_profile.clone(),
+        permission_profile: expected_permission_profile,
         cwd: expected_cwd.clone(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
         history_log_id: 0,
@@ -301,16 +307,14 @@ async fn session_configured_syncs_widget_config_permissions_and_cwd() {
     });
 
     assert_eq!(
-        chat.config_ref().permissions.approval_policy.value(),
+        AskForApproval::from(chat.config_ref().permissions.approval_policy.value()),
         AskForApproval::Never
     );
+    let actual_sandbox = SandboxPolicy::from(chat.config_ref().legacy_sandbox_policy());
+    assert_eq!(&actual_sandbox, &expected_sandbox);
     assert_eq!(
-        &chat.config_ref().legacy_sandbox_policy(),
-        &expected_sandbox
-    );
-    assert_eq!(
-        chat.config_ref().permissions.permission_profile(),
-        expected_permission_profile
+        AppServerPermissionProfile::from(chat.config_ref().permissions.permission_profile()),
+        expected_app_server_permission_profile
     );
     assert_eq!(&chat.config_ref().cwd, &expected_cwd);
 
@@ -328,13 +332,15 @@ async fn session_configured_syncs_widget_config_permissions_and_cwd() {
 async fn session_configured_external_sandbox_keeps_external_runtime_policy() {
     let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
 
-    let expected_permission_profile = PermissionProfile::External {
-        network: NetworkSandboxPolicy::Restricted,
+    let expected_app_server_permission_profile = AppServerPermissionProfile::External {
+        network: PermissionProfileNetworkPermissions { enabled: false },
     };
-    let expected_sandbox = expected_permission_profile
-        .to_legacy_sandbox_policy(test_path_buf("/home/user/external").as_path())
-        .expect("external profile should project to legacy sandbox policy");
-    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+    let expected_permission_profile: PermissionProfile =
+        expected_app_server_permission_profile.clone().into();
+    let expected_sandbox = SandboxPolicy::ExternalSandbox {
+        network_access: NetworkAccess::Restricted,
+    };
+    let configured = crate::chatwidget::test_events::SessionConfiguredEvent {
         session_id: ThreadId::new(),
         forked_from_id: None,
         thread_name: None,
@@ -358,20 +364,11 @@ async fn session_configured_external_sandbox_keeps_external_runtime_policy() {
         msg: EventMsg::SessionConfigured(configured),
     });
 
+    let actual_sandbox = SandboxPolicy::from(chat.config_ref().legacy_sandbox_policy());
+    assert_eq!(&actual_sandbox, &expected_sandbox);
     assert_eq!(
-        &chat.config_ref().legacy_sandbox_policy(),
-        &expected_sandbox
-    );
-    assert_eq!(
-        chat.config_ref()
-            .permissions
-            .file_system_sandbox_policy()
-            .kind,
-        FileSystemSandboxKind::ExternalSandbox,
-    );
-    assert_eq!(
-        chat.config_ref().permissions.network_sandbox_policy(),
-        NetworkSandboxPolicy::Restricted,
+        AppServerPermissionProfile::from(chat.config_ref().permissions.permission_profile()),
+        expected_app_server_permission_profile
     );
 }
 
@@ -383,7 +380,7 @@ async fn replayed_user_message_with_only_remote_images_renders_history_cell() {
 
     let conversation_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
-    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+    let configured = crate::chatwidget::test_events::SessionConfiguredEvent {
         session_id: conversation_id,
         forked_from_id: None,
         thread_name: None,
@@ -436,7 +433,7 @@ async fn replayed_user_message_with_only_local_images_does_not_render_history_ce
 
     let conversation_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
-    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+    let configured = crate::chatwidget::test_events::SessionConfiguredEvent {
         session_id: conversation_id,
         forked_from_id: None,
         thread_name: None,
@@ -625,10 +622,7 @@ async fn thread_snapshot_replay_preserves_agent_message_during_review_mode() {
 
     chat.handle_codex_event_replay(Event {
         id: "review-start".into(),
-        msg: EventMsg::EnteredReviewMode(ReviewRequest {
-            target: ReviewTarget::UncommittedChanges,
-            user_facing_hint: None,
-        }),
+        msg: EventMsg::EnteredReviewMode("current changes".to_string()),
     });
     let _ = drain_insert_history(&mut rx);
 

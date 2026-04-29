@@ -119,7 +119,10 @@ async fn exec_approval_uses_approval_id_when_present() {
         } = app_ev
         {
             assert_eq!(id, "approval-subcommand");
-            assert_matches!(decision, codex_protocol::protocol::ReviewDecision::Approved);
+            assert_matches!(
+                decision,
+                codex_app_server_protocol::CommandExecutionApprovalDecision::Accept
+            );
             found = true;
             break;
         }
@@ -1049,7 +1052,7 @@ async fn bang_shell_enter_while_task_running_submits_run_user_shell_command() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let conversation_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
-    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+    let configured = crate::chatwidget::test_events::SessionConfiguredEvent {
         session_id: conversation_id,
         forked_from_id: None,
         thread_name: None,
@@ -1183,7 +1186,7 @@ async fn approval_modal_exec_snapshot() -> anyhow::Result<()> {
     chat.config
         .permissions
         .approval_policy
-        .set(AskForApproval::OnRequest)?;
+        .set(AskForApproval::OnRequest.to_core())?;
     // Inject an exec approval request to display the approval modal.
     let ev = ExecApprovalRequestEvent {
         call_id: "call-approve-cmd".into(),
@@ -1246,7 +1249,7 @@ async fn approval_modal_exec_without_reason_snapshot() -> anyhow::Result<()> {
     chat.config
         .permissions
         .approval_policy
-        .set(AskForApproval::OnRequest)?;
+        .set(AskForApproval::OnRequest.to_core())?;
 
     let ev = ExecApprovalRequestEvent {
         call_id: "call-approve-cmd-noreason".into(),
@@ -1296,7 +1299,7 @@ async fn approval_modal_exec_multiline_prefix_hides_execpolicy_option_snapshot()
     chat.config
         .permissions
         .approval_policy
-        .set(AskForApproval::OnRequest)?;
+        .set(AskForApproval::OnRequest.to_core())?;
 
     let script = "python - <<'PY'\nprint('hello')\nPY".to_string();
     let command = vec!["bash".into(), "-lc".into(), script];
@@ -1344,7 +1347,7 @@ async fn approval_modal_patch_snapshot() -> anyhow::Result<()> {
     chat.config
         .permissions
         .approval_policy
-        .set(AskForApproval::OnRequest)?;
+        .set(AskForApproval::OnRequest.to_core())?;
 
     // Build a small changeset and a reason/grant_root to exercise the prompt text.
     let mut changes = HashMap::new();
@@ -1391,7 +1394,7 @@ async fn interrupt_preserves_unified_exec_processes() {
 
     chat.handle_codex_event(Event {
         id: "turn-1".into(),
-        msg: EventMsg::TurnAborted(codex_protocol::protocol::TurnAbortedEvent {
+        msg: EventMsg::TurnAborted(crate::chatwidget::test_events::TurnAbortedEvent {
             turn_id: Some("turn-1".to_string()),
             reason: TurnAbortReason::Interrupted,
             completed_at: None,
@@ -1439,7 +1442,7 @@ async fn interrupt_preserves_unified_exec_wait_streak_snapshot() {
 
     chat.handle_codex_event(Event {
         id: "turn-1".into(),
-        msg: EventMsg::TurnAborted(codex_protocol::protocol::TurnAbortedEvent {
+        msg: EventMsg::TurnAborted(crate::chatwidget::test_events::TurnAbortedEvent {
             turn_id: Some("turn-1".to_string()),
             reason: TurnAbortReason::Interrupted,
             completed_at: None,
@@ -1717,7 +1720,10 @@ async fn apply_patch_approval_sends_op_with_call_id() {
         } = app_ev
         {
             assert_eq!(id, "call-999");
-            assert_matches!(decision, codex_protocol::protocol::ReviewDecision::Approved);
+            assert_matches!(
+                decision,
+                codex_app_server_protocol::FileChangeApprovalDecision::Accept
+            );
             found = true;
             break;
         }
@@ -1765,7 +1771,10 @@ async fn apply_patch_full_flow_integration_like() {
     match forwarded {
         Op::PatchApproval { id, decision } => {
             assert_eq!(id, "call-1");
-            assert_matches!(decision, codex_protocol::protocol::ReviewDecision::Approved);
+            assert_matches!(
+                decision,
+                codex_app_server_protocol::FileChangeApprovalDecision::Accept
+            );
         }
         other => panic!("unexpected op forwarded: {other:?}"),
     }
@@ -1811,7 +1820,7 @@ async fn apply_patch_untrusted_shows_approval_modal() -> anyhow::Result<()> {
     chat.config
         .permissions
         .approval_policy
-        .set(AskForApproval::OnRequest)?;
+        .set(AskForApproval::OnRequest.to_core())?;
 
     // Simulate a patch approval request from backend
     let mut changes = HashMap::new();
@@ -1862,7 +1871,7 @@ async fn apply_patch_request_omits_diff_summary_from_modal() -> anyhow::Result<(
     chat.config
         .permissions
         .approval_policy
-        .set(AskForApproval::OnRequest)?;
+        .set(AskForApproval::OnRequest.to_core())?;
 
     // Simulate backend asking to apply a patch adding two lines to README.md
     let mut changes = HashMap::new();

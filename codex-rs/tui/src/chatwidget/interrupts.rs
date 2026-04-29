@@ -1,14 +1,14 @@
 use std::collections::VecDeque;
 
 use crate::app::app_server_requests::ResolvedAppServerRequest;
+use crate::approval_events::ApplyPatchApprovalRequestEvent;
+use crate::approval_events::ExecApprovalRequestEvent;
+use crate::tool_activity::ExecCommandBeginEvent;
+use crate::tool_activity::ExecCommandEndEvent;
+use crate::tool_activity::McpToolCallBeginEvent;
+use crate::tool_activity::McpToolCallEndEvent;
+use crate::tool_activity::PatchApplyEndEvent;
 use codex_protocol::approvals::ElicitationRequestEvent;
-use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
-use codex_protocol::protocol::ExecApprovalRequestEvent;
-use codex_protocol::protocol::ExecCommandBeginEvent;
-use codex_protocol::protocol::ExecCommandEndEvent;
-use codex_protocol::protocol::McpToolCallBeginEvent;
-use codex_protocol::protocol::McpToolCallEndEvent;
-use codex_protocol::protocol::PatchApplyEndEvent;
 use codex_protocol::request_permissions::RequestPermissionsEvent;
 use codex_protocol::request_user_input::RequestUserInputEvent;
 
@@ -148,9 +148,9 @@ impl QueuedInterrupt {
 
 #[cfg(test)]
 mod tests {
-    use codex_protocol::approvals::ExecApprovalRequestEvent;
-    use codex_protocol::protocol::ExecCommandBeginEvent;
-    use codex_protocol::protocol::ExecCommandSource;
+    use crate::approval_events::ExecApprovalRequestEvent;
+    use crate::tool_activity::ExecCommandBeginEvent;
+    use codex_app_server_protocol::CommandExecutionSource as ExecCommandSource;
     use codex_protocol::request_user_input::RequestUserInputEvent;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;

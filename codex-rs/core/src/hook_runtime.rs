@@ -478,6 +478,7 @@ fn hook_run_metric_tags(run: &HookRunSummary) -> [(&'static str, &'static str); 
         HookSource::Mdm => "mdm",
         HookSource::SessionFlags => "session_flags",
         HookSource::Plugin => "plugin",
+        HookSource::CloudRequirements => "cloud_requirements",
         HookSource::LegacyManagedConfigFile => "legacy_managed_config_file",
         HookSource::LegacyManagedConfigMdm => "legacy_managed_config_mdm",
         HookSource::Unknown => "unknown",
@@ -606,6 +607,18 @@ mod tests {
             [
                 ("hook_name", "Stop"),
                 ("source", "project"),
+                ("status", "blocked"),
+            ]
+        );
+
+        let cloud_requirements =
+            sample_hook_run(HookRunStatus::Blocked, HookSource::CloudRequirements);
+
+        assert_eq!(
+            hook_run_metric_tags(&cloud_requirements),
+            [
+                ("hook_name", "Stop"),
+                ("source", "cloud_requirements"),
                 ("status", "blocked"),
             ]
         );

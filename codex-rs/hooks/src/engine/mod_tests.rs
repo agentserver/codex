@@ -283,7 +283,7 @@ fn user_disablement_does_not_filter_managed_layer_hooks() {
                 ConfigLayerSource::User {
                     file: user_config_path,
                 },
-                config_with_hook_state(&managed_key, false),
+                config_with_hook_state(&managed_key, /*enabled*/ false),
             ),
             ConfigLayerEntry::new(
                 ConfigLayerSource::LegacyManagedConfigTomlFromFile {

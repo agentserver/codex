@@ -694,53 +694,22 @@ mod tests {
     }
 
     fn config_with_malformed_state_and_session_start_hook() -> TomlValue {
-        let mut config = TomlValue::Table(Default::default());
-        let TomlValue::Table(config_entries) = &mut config else {
-            unreachable!("config root should be a table");
-        };
-
-        let mut hooks = TomlValue::Table(Default::default());
-        let TomlValue::Table(hook_entries) = &mut hooks else {
-            unreachable!("hooks should be a table");
-        };
-
-        let mut state_entries = TomlValue::Table(Default::default());
-        let TomlValue::Table(state_map) = &mut state_entries else {
-            unreachable!("state should be a table");
-        };
-        let mut hook_state = TomlValue::Table(Default::default());
-        let TomlValue::Table(hook_state_entries) = &mut hook_state else {
-            unreachable!("hook state should be a table");
-        };
-        hook_state_entries.insert(
-            "enabled".to_string(),
-            TomlValue::String("not a bool".to_string()),
-        );
-        state_map.insert("some_key".to_string(), hook_state);
-        hook_entries.insert("state".to_string(), state_entries);
-
-        let mut handler = TomlValue::Table(Default::default());
-        let TomlValue::Table(handler_entries) = &mut handler else {
-            unreachable!("handler should be a table");
-        };
-        handler_entries.insert("type".to_string(), TomlValue::String("command".to_string()));
-        handler_entries.insert(
-            "command".to_string(),
-            TomlValue::String("echo hello".to_string()),
-        );
-
-        let mut matcher_group = TomlValue::Table(Default::default());
-        let TomlValue::Table(group_entries) = &mut matcher_group else {
-            unreachable!("matcher group should be a table");
-        };
-        group_entries.insert("hooks".to_string(), TomlValue::Array(vec![handler]));
-        hook_entries.insert(
-            "SessionStart".to_string(),
-            TomlValue::Array(vec![matcher_group]),
-        );
-
-        config_entries.insert("hooks".to_string(), hooks);
-        config
+        serde_json::from_value(serde_json::json!({
+            "hooks": {
+                "state": {
+                    "some_key": {
+                        "enabled": "not a bool",
+                    },
+                },
+                "SessionStart": [{
+                    "hooks": [{
+                        "type": "command",
+                        "command": "echo hello",
+                    }],
+                }],
+            },
+        }))
+        .expect("config TOML should deserialize")
     }
 
     #[test]

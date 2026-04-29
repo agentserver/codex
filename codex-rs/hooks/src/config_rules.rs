@@ -108,17 +108,17 @@ mod tests {
     #[test]
     fn disabled_hook_keys_from_stack_ignores_malformed_hook_events() {
         let key = "file:/tmp/hooks.json:pre_tool_use:0:0";
-        let mut config = config_with_hook_override(key, Some(/*enabled*/ false));
-        let TomlValue::Table(config_entries) = &mut config else {
-            unreachable!("config root should be a table");
-        };
-        let Some(TomlValue::Table(hook_entries)) = config_entries.get_mut("hooks") else {
-            unreachable!("hooks should be a table");
-        };
-        hook_entries.insert(
-            "SessionStart".to_string(),
-            TomlValue::String("not a matcher list".to_string()),
-        );
+        let config: TomlValue = serde_json::from_value(serde_json::json!({
+            "hooks": {
+                "state": {
+                    (key): {
+                        "enabled": false,
+                    },
+                },
+                "SessionStart": "not a matcher list",
+            },
+        }))
+        .expect("config TOML should deserialize");
         let stack = ConfigLayerStack::new(
             vec![ConfigLayerEntry::new(
                 ConfigLayerSource::User {
@@ -140,25 +140,19 @@ mod tests {
     #[test]
     fn disabled_hook_keys_from_stack_ignores_malformed_state_entries() {
         let key = "file:/tmp/hooks.json:pre_tool_use:0:0";
-        let mut config = config_with_hook_override(key, Some(/*enabled*/ false));
-        let TomlValue::Table(config_entries) = &mut config else {
-            unreachable!("config root should be a table");
-        };
-        let Some(TomlValue::Table(hook_entries)) = config_entries.get_mut("hooks") else {
-            unreachable!("hooks should be a table");
-        };
-        let Some(TomlValue::Table(state_entries)) = hook_entries.get_mut("state") else {
-            unreachable!("state should be a table");
-        };
-        let mut malformed_state = TomlValue::Table(Default::default());
-        let TomlValue::Table(malformed_state_entries) = &mut malformed_state else {
-            unreachable!("malformed state should be a table");
-        };
-        malformed_state_entries.insert(
-            "enabled".to_string(),
-            TomlValue::String("not a bool".to_string()),
-        );
-        state_entries.insert("malformed".to_string(), malformed_state);
+        let config: TomlValue = serde_json::from_value(serde_json::json!({
+            "hooks": {
+                "state": {
+                    (key): {
+                        "enabled": false,
+                    },
+                    "malformed": {
+                        "enabled": "not a bool",
+                    },
+                },
+            },
+        }))
+        .expect("config TOML should deserialize");
         let stack = ConfigLayerStack::new(
             vec![ConfigLayerEntry::new(
                 ConfigLayerSource::User {
@@ -178,28 +172,17 @@ mod tests {
     }
 
     fn config_with_hook_override(key: &str, enabled: Option<bool>) -> TomlValue {
-        let mut config = TomlValue::Table(Default::default());
-        let TomlValue::Table(config_entries) = &mut config else {
-            unreachable!("config root should be a table");
+        let hook_state = match enabled {
+            Some(enabled) => serde_json::json!({ "enabled": enabled }),
+            None => serde_json::json!({}),
         };
-        let mut hooks = TomlValue::Table(Default::default());
-        let TomlValue::Table(hook_entries) = &mut hooks else {
-            unreachable!("hooks should be a table");
-        };
-        let mut state_entries = TomlValue::Table(Default::default());
-        let TomlValue::Table(state_map) = &mut state_entries else {
-            unreachable!("state should be a table");
-        };
-        let mut hook_state = TomlValue::Table(Default::default());
-        let TomlValue::Table(hook_state_entries) = &mut hook_state else {
-            unreachable!("hook state should be a table");
-        };
-        if let Some(enabled) = enabled {
-            hook_state_entries.insert("enabled".to_string(), TomlValue::Boolean(enabled));
-        }
-        state_map.insert(key.to_string(), hook_state);
-        hook_entries.insert("state".to_string(), state_entries);
-        config_entries.insert("hooks".to_string(), hooks);
-        config
+        serde_json::from_value(serde_json::json!({
+            "hooks": {
+                "state": {
+                    (key): hook_state,
+                },
+            },
+        }))
+        .expect("config TOML should deserialize")
     }
 }

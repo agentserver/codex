@@ -19,8 +19,8 @@ CODEX_PROTOCOL_PACKAGE = "codex-protocol"
 CODEX_PROTOCOL_MESSAGE = "references `codex_protocol::protocol`"
 IDENTIFIER = r"(?:r#)?[A-Za-z_][A-Za-z0-9_]*"
 PROTOCOL_IDENTIFIER = r"(?:r#)?protocol"
-TOKEN_SEPARATOR = r"(?:\s|//[^\n]*(?:\n|$)|/\*(?:.|\n)*?\*/)*"
-REQUIRED_TOKEN_SEPARATOR = r"(?:\s|//[^\n]*(?:\n|$)|/\*(?:.|\n)*?\*/)+"
+TOKEN_SEPARATOR = r"\s*"
+REQUIRED_TOKEN_SEPARATOR = r"\s+"
 PATH_PREFIX = rf"(?:(?:{IDENTIFIER}){TOKEN_SEPARATOR}::{TOKEN_SEPARATOR})*"
 FORBIDDEN_SOURCE_RULES = (
     (
@@ -116,7 +116,7 @@ def source_failures() -> list[str]:
     source_texts = [(path, path.read_text()) for path in sorted(TUI_ROOT.glob("**/*.rs"))]
 
     for path, text in source_texts:
-        match_text = comments_as_whitespace(text)
+        match_text = non_code_as_whitespace(text)
         seen_locations = set()
         for message, patterns in FORBIDDEN_SOURCE_RULES:
             for pattern in patterns:
@@ -133,11 +133,106 @@ def source_failures() -> list[str]:
     return failures
 
 
-def comments_as_whitespace(text: str) -> str:
-    def whitespace(match: re.Match[str]) -> str:
-        return "".join("\n" if char == "\n" else " " for char in match.group(0))
+def non_code_as_whitespace(text: str) -> str:
+    chars = list(text)
+    index = 0
+    while index < len(text):
+        if text.startswith("//", index):
+            index = mask_line_comment(chars, index)
+            continue
+        if text.startswith("/*", index):
+            index = mask_block_comment(chars, index)
+            continue
+        raw_string_end_index = raw_string_end(text, index)
+        if raw_string_end_index is not None:
+            mask_range(chars, index, raw_string_end_index)
+            index = raw_string_end_index
+            continue
+        quoted_string_end_index = quoted_string_end(text, index)
+        if quoted_string_end_index is not None:
+            mask_range(chars, index, quoted_string_end_index)
+            index = quoted_string_end_index
+            continue
+        index += 1
+    return "".join(chars)
 
-    return re.sub(r"//[^\n]*(?:\n|$)|/\*(?:.|\n)*?\*/", whitespace, text)
+
+def mask_line_comment(chars: list[str], start: int) -> int:
+    index = start
+    while index < len(chars):
+        original = chars[index]
+        chars[index] = "\n" if original == "\n" else " "
+        index += 1
+        if original == "\n":
+            break
+    return index
+
+
+def mask_block_comment(chars: list[str], start: int) -> int:
+    text = "".join(chars)
+    index = start
+    depth = 0
+    while index < len(chars):
+        if text.startswith("/*", index):
+            depth += 1
+            mask_range(chars, index, index + 2)
+            index += 2
+            continue
+        if text.startswith("*/", index):
+            depth -= 1
+            mask_range(chars, index, index + 2)
+            index += 2
+            if depth == 0:
+                break
+            continue
+        chars[index] = "\n" if chars[index] == "\n" else " "
+        index += 1
+    return index
+
+
+def raw_string_end(text: str, start: int) -> int | None:
+    raw_start = None
+    if text.startswith(("br", "cr"), start):
+        raw_start = start + 1
+    elif text.startswith("r", start):
+        raw_start = start
+    if raw_start is None:
+        return None
+
+    index = raw_start + 1
+    while index < len(text) and text[index] == "#":
+        index += 1
+    if index >= len(text) or text[index] != '"':
+        return None
+
+    closing = '"' + "#" * (index - raw_start - 1)
+    closing_index = text.find(closing, index + 1)
+    if closing_index == -1:
+        return len(text)
+    return closing_index + len(closing)
+
+
+def quoted_string_end(text: str, start: int) -> int | None:
+    quote_start = None
+    if text.startswith(('"', 'b"', 'c"'), start):
+        quote_start = start if text[start] == '"' else start + 1
+    if quote_start is None:
+        return None
+
+    index = quote_start + 1
+    while index < len(text):
+        if text[index] == "\\":
+            index += 2
+            continue
+        if text[index] == '"':
+            return index + 1
+        index += 1
+    return len(text)
+
+
+def mask_range(chars: list[str], start: int, end: int) -> None:
+    for index in range(start, min(end, len(chars))):
+        chars[index] = "\n" if chars[index] == "\n" else " "
 
 
 def workspace_dependencies(manifest: dict) -> dict:

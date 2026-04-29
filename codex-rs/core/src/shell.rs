@@ -197,6 +197,37 @@ fn get_shell_path(
     None
 }
 
+fn get_shell_path_prefer_fallbacks(
+    shell_type: ShellType,
+    provided_path: Option<&PathBuf>,
+    binary_name: &str,
+    fallback_paths: Vec<&str>,
+) -> Option<PathBuf> {
+    if provided_path.and_then(file_exists).is_some() {
+        return provided_path.cloned();
+    }
+
+    let default_shell_path = get_user_shell_path();
+    if let Some(default_shell_path) = default_shell_path
+        && detect_shell_type(&default_shell_path) == Some(shell_type)
+        && file_exists(&default_shell_path).is_some()
+    {
+        return Some(default_shell_path);
+    }
+
+    for path in fallback_paths {
+        if let Some(path) = file_exists(&PathBuf::from(path)) {
+            return Some(path);
+        }
+    }
+
+    if let Ok(path) = which::which(binary_name) {
+        return Some(path);
+    }
+
+    None
+}
+
 fn get_zsh_shell(path: Option<&PathBuf>) -> Option<Shell> {
     let shell_path = get_shell_path(ShellType::Zsh, path, "zsh", vec!["/bin/zsh"]);
 
@@ -228,13 +259,32 @@ fn get_sh_shell(path: Option<&PathBuf>) -> Option<Shell> {
 }
 
 fn get_powershell_shell(path: Option<&PathBuf>) -> Option<Shell> {
-    let shell_path = get_shell_path(
+    let pwsh_fallbacks = if cfg!(windows) {
+        vec![r#"C:\Program Files\PowerShell\7\pwsh.exe"#]
+    } else {
+        vec!["/usr/local/bin/pwsh"]
+    };
+    let powershell_fallbacks = if cfg!(windows) {
+        vec![r#"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"#]
+    } else {
+        vec![]
+    };
+    // Prefer native executables before PATH lookup so WindowsApps shims like
+    // `pwsh.cmd` do not win over the real PowerShell binary.
+    let shell_path = get_shell_path_prefer_fallbacks(
         ShellType::PowerShell,
         path,
         "pwsh",
-        vec!["/usr/local/bin/pwsh"],
+        pwsh_fallbacks,
     )
-    .or_else(|| get_shell_path(ShellType::PowerShell, path, "powershell", vec![]));
+    .or_else(|| {
+        get_shell_path_prefer_fallbacks(
+            ShellType::PowerShell,
+            path,
+            "powershell",
+            powershell_fallbacks,
+        )
+    });
 
     shell_path.map(|shell_path| Shell {
         shell_type: ShellType::PowerShell,

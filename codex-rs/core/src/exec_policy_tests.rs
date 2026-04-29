@@ -997,6 +997,34 @@ fn unmatched_on_request_uses_split_filesystem_policy_for_escalation_prompts() {
     );
 }
 
+#[tokio::test]
+async fn sandbox_writable_safe_command_path_requires_approval_for_escalation() {
+    let command = vec!["/tmp/cat".to_string(), "/dev/null".to_string()];
+    let manager = ExecPolicyManager::default();
+
+    let requirement = manager
+        .create_exec_approval_requirement_for_command(ExecApprovalRequest {
+            command: &command,
+            approval_policy: AskForApproval::OnRequest,
+            permission_profile: permission_profile_from_sandbox_policy(
+                &SandboxPolicy::new_workspace_write_policy(),
+            ),
+            file_system_sandbox_policy: &workspace_write_file_system_sandbox_policy(),
+            sandbox_cwd: Path::new("/tmp"),
+            sandbox_permissions: SandboxPermissions::RequireEscalated,
+            prefix_rule: None,
+        })
+        .await;
+
+    assert_eq!(
+        requirement,
+        ExecApprovalRequirement::NeedsApproval {
+            reason: None,
+            proposed_execpolicy_amendment: None,
+        }
+    );
+}
+
 #[test]
 fn managed_cwd_write_profile_is_not_read_only() {
     let file_system_sandbox_policy = FileSystemSandboxPolicy::restricted(vec![

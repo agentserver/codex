@@ -250,7 +250,16 @@ impl ExecPolicyManager {
         // Keep heredoc prefix parsing for rule evaluation so existing
         // allow/prompt/forbidden rules still apply, but avoid auto-derived
         // amendments when only the heredoc fallback parser matched.
-        let auto_amendment_allowed = !used_complex_parsing;
+        let sandbox_writable_executable_requires_review = commands.iter().any(|cmd| {
+            sandbox_writable_executable_path_requires_review(
+                cmd,
+                file_system_sandbox_policy,
+                sandbox_cwd,
+                sandbox_permissions,
+            )
+        });
+        let auto_amendment_allowed =
+            !used_complex_parsing && !sandbox_writable_executable_requires_review;
         let exec_policy_fallback = |cmd: &[String]| {
             render_decision_for_unmatched_command(
                 approval_policy,
@@ -271,14 +280,18 @@ impl ExecPolicyManager {
             &match_options,
         );
 
-        let requested_amendment = derive_requested_execpolicy_amendment_from_prefix_rule(
-            prefix_rule.as_ref(),
-            &evaluation.matched_rules,
-            exec_policy.as_ref(),
-            &commands,
-            &exec_policy_fallback,
-            &match_options,
-        );
+        let requested_amendment = if auto_amendment_allowed {
+            derive_requested_execpolicy_amendment_from_prefix_rule(
+                prefix_rule.as_ref(),
+                &evaluation.matched_rules,
+                exec_policy.as_ref(),
+                &commands,
+                &exec_policy_fallback,
+                &match_options,
+            )
+        } else {
+            None
+        };
 
         match evaluation.decision {
             Decision::Forbidden => ExecApprovalRequirement::Forbidden {
@@ -590,6 +603,15 @@ pub fn render_decision_for_unmatched_command(
     sandbox_permissions: SandboxPermissions,
     used_complex_parsing: bool,
 ) -> Decision {
+    if sandbox_writable_executable_path_requires_review(
+        command,
+        file_system_sandbox_policy,
+        sandbox_cwd,
+        sandbox_permissions,
+    ) {
+        return Decision::Prompt;
+    }
+
     if is_known_safe_command(command) && !used_complex_parsing {
         return Decision::Allow;
     }
@@ -676,6 +698,33 @@ pub fn render_decision_for_unmatched_command(
             }
         },
     }
+}
+
+fn sandbox_writable_executable_path_requires_review(
+    command: &[String],
+    file_system_sandbox_policy: &FileSystemSandboxPolicy,
+    sandbox_cwd: &Path,
+    sandbox_permissions: SandboxPermissions,
+) -> bool {
+    if !sandbox_permissions.requests_sandbox_override()
+        || !matches!(
+            file_system_sandbox_policy.kind,
+            FileSystemSandboxKind::Restricted
+        )
+        || file_system_sandbox_policy.has_full_disk_write_access()
+    {
+        return false;
+    }
+
+    let Some(program) = command.first() else {
+        return false;
+    };
+    let program_path = Path::new(program);
+    if !program_path.is_absolute() && program_path.components().count() <= 1 {
+        return false;
+    }
+
+    file_system_sandbox_policy.can_write_path_with_cwd(program_path, sandbox_cwd)
 }
 
 fn profile_is_managed_read_only(

@@ -59,11 +59,8 @@ use codex_utils_oss::get_default_model_for_oss_provider;
 use color_eyre::eyre::WrapErr;
 use cwd_prompt::CwdPromptAction;
 use std::fs::OpenOptions;
-use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
-#[cfg(test)]
-use std::pin::Pin;
 use std::sync::Arc;
 pub use token_usage::FinalOutput;
 pub use token_usage::TokenUsage;
@@ -445,17 +442,15 @@ pub(crate) async fn start_app_server_for_picker(
 }
 
 #[cfg(test)]
-pub(crate) fn start_embedded_app_server_for_picker(
+pub(crate) async fn start_embedded_app_server_for_picker(
     config: &Config,
-) -> Pin<Box<dyn Future<Output = color_eyre::Result<AppServerSession>> + '_>> {
-    Box::pin(async move {
-        start_app_server_for_picker(
-            config,
-            &AppServerTarget::Embedded,
-            Arc::new(EnvironmentManager::default_for_tests()),
-        )
-        .await
-    })
+) -> color_eyre::Result<AppServerSession> {
+    start_app_server_for_picker(
+        config,
+        &AppServerTarget::Embedded,
+        Arc::new(EnvironmentManager::default_for_tests()),
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1668,19 +1663,6 @@ mod tests {
     use serial_test::serial;
     use tempfile::TempDir;
 
-    fn run_large_stack_test<T>(body: impl FnOnce() -> T + Send + 'static) -> T
-    where
-        T: Send + 'static,
-    {
-        std::thread::Builder::new()
-            .name("codex-tui-lib-test".to_string())
-            .stack_size(8 * 1024 * 1024)
-            .spawn(body)
-            .expect("spawn large-stack test thread")
-            .join()
-            .expect("large-stack test thread panicked")
-    }
-
     async fn build_config(temp_dir: &TempDir) -> std::io::Result<Config> {
         ConfigBuilder::default()
             .codex_home(temp_dir.path().to_path_buf())
@@ -1970,74 +1952,63 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn lookup_session_target_by_name_uses_backend_title_search() -> color_eyre::Result<()> {
-        run_large_stack_test(|| {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("test runtime")
-                .block_on(async {
-                    let temp_dir = TempDir::new()?;
-                    let config = build_config(&temp_dir).await?;
-                    let thread_id = ThreadId::new();
-                    let rollout_path = temp_dir
-                        .path()
-                        .join("sessions/2025/02/01")
-                        .join(format!("rollout-2025-02-01T10-00-00-{thread_id}.jsonl"));
-                    let rollout_dir = rollout_path.parent().expect("rollout parent");
-                    std::fs::create_dir_all(rollout_dir)?;
-                    std::fs::write(&rollout_path, "")?;
+    #[tokio::test]
+    async fn lookup_session_target_by_name_uses_backend_title_search() -> color_eyre::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let config = build_config(&temp_dir).await?;
+        let thread_id = ThreadId::new();
+        let rollout_path = temp_dir
+            .path()
+            .join("sessions/2025/02/01")
+            .join(format!("rollout-2025-02-01T10-00-00-{thread_id}.jsonl"));
+        let rollout_dir = rollout_path.parent().expect("rollout parent");
+        std::fs::create_dir_all(rollout_dir)?;
+        std::fs::write(&rollout_path, "")?;
 
-                    let state_runtime = codex_state::StateRuntime::init(
-                        config.codex_home.to_path_buf(),
-                        config.model_provider_id.clone(),
-                    )
-                    .await
-                    .map_err(std::io::Error::other)?;
-                    state_runtime
-                        .mark_backfill_complete(/*last_watermark*/ None)
-                        .await
-                        .map_err(std::io::Error::other)?;
+        let state_runtime = codex_state::StateRuntime::init(
+            config.codex_home.to_path_buf(),
+            config.model_provider_id.clone(),
+        )
+        .await
+        .map_err(std::io::Error::other)?;
+        state_runtime
+            .mark_backfill_complete(/*last_watermark*/ None)
+            .await
+            .map_err(std::io::Error::other)?;
 
-                    let session_cwd = temp_dir.path().join("project");
-                    std::fs::create_dir_all(&session_cwd)?;
-                    let created_at = chrono::DateTime::parse_from_rfc3339("2025-02-01T10:00:00Z")
-                        .expect("timestamp should parse")
-                        .with_timezone(&chrono::Utc);
-                    let mut builder = codex_state::ThreadMetadataBuilder::new(
-                        thread_id,
-                        rollout_path.clone(),
-                        created_at,
-                        serde_json::from_value(serde_json::json!("cli"))
-                            .expect("cli session source should deserialize"),
-                    );
-                    builder.cwd = session_cwd;
-                    let mut metadata = builder.build(config.model_provider_id.as_str());
-                    metadata.title = "saved-session".to_string();
-                    metadata.first_user_message = Some("preview text".to_string());
-                    state_runtime
-                        .upsert_thread(&metadata)
-                        .await
-                        .map_err(std::io::Error::other)?;
+        let session_cwd = temp_dir.path().join("project");
+        std::fs::create_dir_all(&session_cwd)?;
+        let created_at = chrono::DateTime::parse_from_rfc3339("2025-02-01T10:00:00Z")
+            .expect("timestamp should parse")
+            .with_timezone(&chrono::Utc);
+        let mut builder = codex_state::ThreadMetadataBuilder::new(
+            thread_id,
+            rollout_path.clone(),
+            created_at,
+            serde_json::from_value(serde_json::json!("cli"))
+                .expect("cli session source should deserialize"),
+        );
+        builder.cwd = session_cwd;
+        let mut metadata = builder.build(config.model_provider_id.as_str());
+        metadata.title = "saved-session".to_string();
+        metadata.first_user_message = Some("preview text".to_string());
+        state_runtime
+            .upsert_thread(&metadata)
+            .await
+            .map_err(std::io::Error::other)?;
 
-                    let mut app_server =
-                        AppServerSession::new(codex_app_server_client::AppServerClient::InProcess(
-                            start_test_embedded_app_server(config).await?,
-                        ));
-                    let target = lookup_session_target_by_name_with_app_server(
-                        &mut app_server,
-                        "saved-session",
-                    )
-                    .await?;
-                    let target = target.expect("name lookup should find the saved thread");
-                    assert_eq!(target.path, Some(rollout_path));
-                    assert_eq!(target.thread_id, thread_id);
+        let mut app_server =
+            AppServerSession::new(codex_app_server_client::AppServerClient::InProcess(
+                start_test_embedded_app_server(config).await?,
+            ));
+        let target =
+            lookup_session_target_by_name_with_app_server(&mut app_server, "saved-session").await?;
+        let target = target.expect("name lookup should find the saved thread");
+        assert_eq!(target.path, Some(rollout_path));
+        assert_eq!(target.thread_id, thread_id);
 
-                    app_server.shutdown().await?;
-                    Ok(())
-                })
-        })
+        app_server.shutdown().await?;
+        Ok(())
     }
 
     #[tokio::test]

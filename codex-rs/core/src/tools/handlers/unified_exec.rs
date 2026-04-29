@@ -313,6 +313,8 @@ impl ToolHandler for UnifiedExecHandler {
                     &command,
                     &exec_cwd,
                     fs.as_ref(),
+                    &environment_id,
+                    environment.is_remote(),
                     context.session.clone(),
                     context.turn.clone(),
                     Some(&tracker),

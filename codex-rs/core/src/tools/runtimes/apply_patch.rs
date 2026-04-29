@@ -53,6 +53,12 @@ pub struct ApplyPatchRequest {
 #[derive(Default)]
 pub struct ApplyPatchRuntime;
 
+#[derive(serde::Serialize, Clone, Debug, Eq, PartialEq, Hash)]
+pub(crate) struct ApplyPatchApprovalKey {
+    environment_id: String,
+    path: AbsolutePathBuf,
+}
+
 impl ApplyPatchRuntime {
     pub fn new() -> Self {
         Self
@@ -116,10 +122,16 @@ impl Sandboxable for ApplyPatchRuntime {
 }
 
 impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
-    type ApprovalKey = AbsolutePathBuf;
+    type ApprovalKey = ApplyPatchApprovalKey;
 
     fn approval_keys(&self, req: &ApplyPatchRequest) -> Vec<Self::ApprovalKey> {
-        req.file_paths.clone()
+        req.file_paths
+            .iter()
+            .map(|path| ApplyPatchApprovalKey {
+                environment_id: req.environment_id.clone(),
+                path: path.clone(),
+            })
+            .collect()
     }
 
     fn start_approval_async<'a>(

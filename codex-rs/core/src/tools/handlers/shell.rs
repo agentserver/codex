@@ -532,6 +532,8 @@ impl ShellHandler {
             &exec_params.command,
             &exec_params.cwd,
             fs.as_ref(),
+            &environment_id,
+            environment.is_remote(),
             session.clone(),
             turn.clone(),
             Some(&tracker),

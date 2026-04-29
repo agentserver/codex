@@ -539,6 +539,40 @@ impl HistoryCell for AgentMarkdownCell {
     }
 }
 
+/// Transient preview of the mutable final markdown block in an agent stream.
+#[derive(Debug)]
+pub(crate) struct StreamingAgentTailCell {
+    lines: Vec<Line<'static>>,
+    is_first_line: bool,
+}
+
+impl StreamingAgentTailCell {
+    pub(crate) fn new(lines: Vec<Line<'static>>, is_first_line: bool) -> Self {
+        Self {
+            lines,
+            is_first_line,
+        }
+    }
+}
+
+impl HistoryCell for StreamingAgentTailCell {
+    fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
+        prefix_lines(
+            self.lines.clone(),
+            if self.is_first_line {
+                "• ".dim()
+            } else {
+                "  ".into()
+            },
+            "  ".into(),
+        )
+    }
+
+    fn is_stream_continuation(&self) -> bool {
+        !self.is_first_line
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct PlainHistoryCell {
     lines: Vec<Line<'static>>,

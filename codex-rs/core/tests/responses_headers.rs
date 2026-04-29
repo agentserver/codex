@@ -111,15 +111,17 @@ async fn responses_stream_includes_subagent_header_on_review() {
     );
     let mut client_session = client.new_session();
 
-    let mut prompt = Prompt::default();
-    prompt.input = vec![ResponseItem::Message {
-        id: None,
-        role: "user".into(),
-        content: vec![ContentItem::InputText {
-            text: "hello".into(),
+    let prompt = Prompt {
+        input: vec![ResponseItem::Message {
+            id: None,
+            role: "user".into(),
+            content: vec![ContentItem::InputText {
+                text: "hello".into(),
+            }],
+            phase: None,
         }],
-        phase: None,
-    }];
+        ..Prompt::default()
+    };
 
     let mut stream = client_session
         .stream(
@@ -237,15 +239,17 @@ async fn responses_stream_includes_subagent_header_on_other() {
     );
     let mut client_session = client.new_session();
 
-    let mut prompt = Prompt::default();
-    prompt.input = vec![ResponseItem::Message {
-        id: None,
-        role: "user".into(),
-        content: vec![ContentItem::InputText {
-            text: "hello".into(),
+    let prompt = Prompt {
+        input: vec![ResponseItem::Message {
+            id: None,
+            role: "user".into(),
+            content: vec![ContentItem::InputText {
+                text: "hello".into(),
+            }],
+            phase: None,
         }],
-        phase: None,
-    }];
+        ..Prompt::default()
+    };
 
     let mut stream = client_session
         .stream(
@@ -352,15 +356,17 @@ async fn responses_respects_model_info_overrides_from_config() {
     );
     let mut client_session = client.new_session();
 
-    let mut prompt = Prompt::default();
-    prompt.input = vec![ResponseItem::Message {
-        id: None,
-        role: "user".into(),
-        content: vec![ContentItem::InputText {
-            text: "hello".into(),
+    let prompt = Prompt {
+        input: vec![ResponseItem::Message {
+            id: None,
+            role: "user".into(),
+            content: vec![ContentItem::InputText {
+                text: "hello".into(),
+            }],
+            phase: None,
         }],
-        phase: None,
-    }];
+        ..Prompt::default()
+    };
 
     let mut stream = client_session
         .stream(

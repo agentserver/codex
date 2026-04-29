@@ -285,25 +285,27 @@ mod job {
         let (rollout_items, _, _) = RolloutRecorder::load_rollout_items(rollout_path).await?;
         let rollout_contents = serialize_filtered_rollout_response_items(&rollout_items)?;
 
-        let mut prompt = Prompt::default();
-        prompt.input = vec![ResponseItem::Message {
-            id: None,
-            role: "user".to_string(),
-            content: vec![ContentItem::InputText {
-                text: build_stage_one_input_message(
-                    &stage_one_context.model_info,
-                    rollout_path,
-                    rollout_cwd,
-                    &rollout_contents,
-                )?,
+        let prompt = Prompt {
+            input: vec![ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: build_stage_one_input_message(
+                        &stage_one_context.model_info,
+                        rollout_path,
+                        rollout_cwd,
+                        &rollout_contents,
+                    )?,
+                }],
+                phase: None,
             }],
-            phase: None,
-        }];
-        prompt.base_instructions = BaseInstructions {
-            text: crate::stage_one::PROMPT.to_string(),
+            base_instructions: BaseInstructions {
+                text: crate::stage_one::PROMPT.to_string(),
+            },
+            output_schema: Some(output_schema()),
+            output_schema_strict: true,
+            ..Prompt::default()
         };
-        prompt.output_schema = Some(output_schema());
-        prompt.output_schema_strict = true;
 
         let (result, token_usage) = context
             .stream_stage_one_prompt(config, &prompt, stage_one_context)

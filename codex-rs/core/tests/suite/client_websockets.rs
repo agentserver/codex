@@ -1744,9 +1744,10 @@ fn assistant_message_item(id: &str, text: &str) -> ResponseItem {
 }
 
 fn prompt_with_input(input: Vec<ResponseItem>) -> Prompt {
-    let mut prompt = Prompt::default();
-    prompt.input = input;
-    prompt
+    Prompt {
+        input,
+        ..Prompt::default()
+    }
 }
 
 fn prompt_with_input_and_instructions(input: Vec<ResponseItem>, instructions: &str) -> Prompt {

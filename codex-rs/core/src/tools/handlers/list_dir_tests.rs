@@ -12,11 +12,23 @@ use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::ReadDenyMatcher;
+use core_test_support::PathExt;
 use pretty_assertions::assert_eq;
+use serde_json::json;
 use std::ffi::OsString;
 use std::io;
+use std::sync::Arc;
 use std::sync::Mutex;
 use tempfile::tempdir;
+use tokio::sync::Mutex as AsyncMutex;
+
+use crate::session::tests::make_session_and_context;
+use crate::session::turn_context::TurnEnvironment;
+use crate::tools::context::FunctionToolOutput;
+use crate::tools::context::ToolCallSource;
+use crate::tools::context::ToolInvocation;
+use crate::tools::context::ToolPayload;
+use crate::turn_diff_tracker::TurnDiffTracker;
 
 async fn list_dir_slice(
     path: &Path,
@@ -36,6 +48,43 @@ async fn list_dir_slice(
         /*read_deny_matcher*/ None,
     )
     .await
+}
+
+async fn invoke_list_dir_with_turn(
+    arguments: serde_json::Value,
+    session: crate::session::session::Session,
+    turn: crate::session::turn_context::TurnContext,
+) -> Result<String, FunctionCallError> {
+    let invocation = ToolInvocation {
+        session: session.into(),
+        turn: turn.into(),
+        cancellation_token: tokio_util::sync::CancellationToken::new(),
+        tracker: Arc::new(AsyncMutex::new(TurnDiffTracker::new())),
+        call_id: "call-list-dir".to_string(),
+        tool_name: codex_tools::ToolName::plain("list_dir"),
+        source: ToolCallSource::Direct,
+        payload: ToolPayload::Function {
+            arguments: arguments.to_string(),
+        },
+    };
+
+    ListDirHandler
+        .handle(invocation)
+        .await
+        .map(FunctionToolOutput::into_text)
+}
+
+fn add_secondary_environment(
+    turn: &mut crate::session::turn_context::TurnContext,
+    environment_id: &str,
+    cwd: AbsolutePathBuf,
+) {
+    let primary_environment = turn.primary_environment().expect("primary env");
+    turn.environments.push(TurnEnvironment {
+        environment_id: environment_id.to_string(),
+        environment: primary_environment.environment.clone(),
+        cwd,
+    });
 }
 
 #[derive(Default)]
@@ -308,6 +357,108 @@ async fn provided_environment_filesystem_paginates_after_pruning_denied_entries(
     assert_eq!(
         *fs.inspected_paths.lock().expect("lock inspected paths"),
         Vec::<AbsolutePathBuf>::new()
+    );
+}
+
+#[tokio::test]
+async fn handler_resolves_relative_paths_under_primary_environment_cwd() {
+    let temp = tempdir().expect("create tempdir");
+    let nested = temp.path().join("nested");
+    tokio::fs::create_dir(&nested)
+        .await
+        .expect("create nested dir");
+    tokio::fs::write(nested.join("entry.txt"), b"content")
+        .await
+        .expect("write entry");
+    let (session, mut turn) = make_session_and_context().await;
+    turn.cwd = temp.path().abs();
+    turn.environments[0].cwd = temp.path().abs();
+
+    let output = invoke_list_dir_with_turn(
+        json!({
+            "dir_path": "nested",
+            "depth": 1,
+        }),
+        session,
+        turn,
+    )
+    .await
+    .expect("list relative path");
+
+    assert_eq!(
+        output,
+        format!(
+            "Absolute path: {}\nentry.txt",
+            temp.path().join("nested").display()
+        )
+    );
+}
+
+#[tokio::test]
+async fn handler_routes_to_explicit_environment_and_uses_env_qualified_display() {
+    let primary_temp = tempdir().expect("create primary tempdir");
+    let secondary_temp = tempdir().expect("create secondary tempdir");
+    let secondary_nested = secondary_temp.path().join("nested");
+    tokio::fs::create_dir(&secondary_nested)
+        .await
+        .expect("create secondary nested dir");
+    tokio::fs::write(secondary_nested.join("secondary.txt"), b"content")
+        .await
+        .expect("write secondary entry");
+    let (session, mut turn) = make_session_and_context().await;
+    turn.cwd = primary_temp.path().abs();
+    turn.environments[0].cwd = primary_temp.path().abs();
+    add_secondary_environment(&mut turn, "secondary", secondary_temp.path().abs());
+
+    let output = invoke_list_dir_with_turn(
+        json!({
+            "dir_path": "nested",
+            "environment_id": "secondary",
+            "depth": 1,
+        }),
+        session,
+        turn,
+    )
+    .await
+    .expect("list secondary environment");
+
+    assert_eq!(
+        output,
+        format!(
+            "Environment path: oai_env://secondary{}\nsecondary.txt",
+            secondary_temp.path().join("nested").display()
+        )
+    );
+}
+
+#[tokio::test]
+async fn handler_rejects_mismatched_explicit_and_path_environment() {
+    let primary_temp = tempdir().expect("create primary tempdir");
+    let secondary_temp = tempdir().expect("create secondary tempdir");
+    let (session, mut turn) = make_session_and_context().await;
+    turn.cwd = primary_temp.path().abs();
+    turn.environments[0].cwd = primary_temp.path().abs();
+    add_secondary_environment(&mut turn, "secondary", secondary_temp.path().abs());
+
+    let err = invoke_list_dir_with_turn(
+        json!({
+            "dir_path": format!(
+                "oai_env://secondary{}",
+                secondary_temp.path().join("nested").display(),
+            ),
+            "environment_id": codex_exec_server::LOCAL_ENVIRONMENT_ID,
+        }),
+        session,
+        turn,
+    )
+    .await
+    .expect_err("mismatched environment");
+
+    assert_eq!(
+        err,
+        FunctionCallError::RespondToModel(
+            "environment_id `local` does not match path environment `secondary`".to_string(),
+        )
     );
 }
 

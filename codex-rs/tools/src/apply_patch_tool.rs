@@ -78,18 +78,61 @@ It is important to remember:
 - File references can only be relative, NEVER ABSOLUTE.
 "#;
 
+const APPLY_PATCH_MULTI_ENV_PATH_DESCRIPTION: &str = "In multi-environment turns, each patch must target exactly one selected environment. Omit environment_id to use the primary environment, pass environment_id to target another selected environment, or use oai_env://<environment_id>/<absolute-path> in patch file headers. If both are present, they must match.";
+const APPLY_PATCH_MULTI_ENV_JSON_PATH_RULE: &str = "File references can be relative to the selected environment's current working directory, absolute within that environment, or env-qualified as oai_env://<environment_id>/<absolute-path>. Each patch must target exactly one environment.";
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ApplyPatchToolOptions {
+    pub has_multiple_environments: bool,
+}
+
+fn apply_patch_json_tool_description(options: ApplyPatchToolOptions) -> String {
+    if options.has_multiple_environments {
+        APPLY_PATCH_JSON_TOOL_DESCRIPTION.replace(
+            "File references can only be relative, NEVER ABSOLUTE.",
+            APPLY_PATCH_MULTI_ENV_JSON_PATH_RULE,
+        )
+    } else {
+        APPLY_PATCH_JSON_TOOL_DESCRIPTION.to_string()
+    }
+}
+
+fn apply_patch_input_description(options: ApplyPatchToolOptions) -> String {
+    if options.has_multiple_environments {
+        format!(
+            "The entire contents of the apply_patch command. {APPLY_PATCH_MULTI_ENV_PATH_DESCRIPTION}"
+        )
+    } else {
+        "The entire contents of the apply_patch command".to_string()
+    }
+}
+
 /// TODO(dylan): deprecate once we get rid of json tool
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApplyPatchToolArgs {
     pub input: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_id: Option<String>,
 }
 
 /// Returns a custom tool that can be used to edit files. Well-suited for GPT-5 models
 /// https://platform.openai.com/docs/guides/function-calling#custom-tools
 pub fn create_apply_patch_freeform_tool() -> ToolSpec {
+    create_apply_patch_freeform_tool_with_options(ApplyPatchToolOptions::default())
+}
+
+pub fn create_apply_patch_freeform_tool_with_options(options: ApplyPatchToolOptions) -> ToolSpec {
+    let mut description =
+        "Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON."
+            .to_string();
+    if options.has_multiple_environments {
+        description.push(' ');
+        description.push_str(APPLY_PATCH_MULTI_ENV_PATH_DESCRIPTION);
+    }
+
     ToolSpec::Freeform(FreeformTool {
         name: "apply_patch".to_string(),
-        description: "Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.".to_string(),
+        description,
         format: FreeformToolFormat {
             r#type: "grammar".to_string(),
             syntax: "lark".to_string(),
@@ -100,16 +143,26 @@ pub fn create_apply_patch_freeform_tool() -> ToolSpec {
 
 /// Returns a json tool that can be used to edit files. Should only be used with gpt-oss models
 pub fn create_apply_patch_json_tool() -> ToolSpec {
-    let properties = BTreeMap::from([(
+    create_apply_patch_json_tool_with_options(ApplyPatchToolOptions::default())
+}
+
+pub fn create_apply_patch_json_tool_with_options(options: ApplyPatchToolOptions) -> ToolSpec {
+    let mut properties = BTreeMap::from([(
         "input".to_string(),
-        JsonSchema::string(Some(
-            "The entire contents of the apply_patch command".to_string(),
-        )),
+        JsonSchema::string(Some(apply_patch_input_description(options))),
     )]);
+    if options.has_multiple_environments {
+        properties.insert(
+            "environment_id".to_string(),
+            JsonSchema::string(Some(
+                "Optional selected environment id. Omit to use the primary environment. If patch file headers use oai_env://<environment_id>/<absolute-path>, this value must match.".to_string(),
+            )),
+        );
+    }
 
     ToolSpec::Function(ResponsesApiTool {
         name: "apply_patch".to_string(),
-        description: APPLY_PATCH_JSON_TOOL_DESCRIPTION.to_string(),
+        description: apply_patch_json_tool_description(options),
         strict: false,
         defer_loading: None,
         parameters: JsonSchema::object(

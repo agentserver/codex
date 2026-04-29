@@ -14,6 +14,7 @@ use crate::original_image_detail::can_request_original_image_detail;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
+use crate::tools::handlers::env_path::resolve_environment_path;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
@@ -28,6 +29,7 @@ const VIEW_IMAGE_UNSUPPORTED_MESSAGE: &str =
 #[derive(Deserialize)]
 struct ViewImageArgs {
     path: String,
+    environment_id: Option<String>,
     detail: Option<String>,
 }
 
@@ -87,17 +89,22 @@ impl ToolHandler for ViewImageHandler {
             }
         };
 
-        let Some(turn_environment) = turn.primary_environment() else {
-            return Err(FunctionCallError::RespondToModel(
-                "view_image is unavailable in this session".to_string(),
-            ));
-        };
+        let resolved_path = resolve_environment_path(
+            turn.as_ref(),
+            args.environment_id.as_deref(),
+            &args.path,
+            "path",
+            "view_image",
+        )?;
+        let turn_environment = resolved_path.environment;
+        let abs_path = resolved_path.path;
         let environment = &turn_environment.environment;
-        let cwd = &turn_environment.cwd;
-        let abs_path = cwd.join(args.path);
-        let sandbox = environment
-            .is_remote()
-            .then(|| turn.file_system_sandbox_context(/*additional_permissions*/ None));
+        let sandbox = environment.is_remote().then(|| {
+            turn.file_system_sandbox_context_for_cwd(
+                &turn_environment.cwd,
+                /*additional_permissions*/ None,
+            )
+        });
 
         let metadata = environment
             .get_filesystem()

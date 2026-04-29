@@ -2,7 +2,6 @@ use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::path::Component;
 use std::path::Path;
-use std::path::PathBuf;
 
 use codex_exec_server::ExecutorFileSystem;
 use codex_exec_server::FileSystemSandboxContext;
@@ -16,6 +15,8 @@ use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
+use crate::tools::handlers::env_path::format_oai_env_uri;
+use crate::tools::handlers::env_path::resolve_environment_path;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
@@ -42,6 +43,7 @@ fn default_depth() -> usize {
 #[derive(Deserialize)]
 struct ListDirArgs {
     dir_path: String,
+    environment_id: Option<String>,
     #[serde(default = "default_offset")]
     offset: usize,
     #[serde(default = "default_limit")]
@@ -73,6 +75,7 @@ impl ToolHandler for ListDirHandler {
 
         let ListDirArgs {
             dir_path,
+            environment_id,
             offset,
             limit,
             depth,
@@ -96,19 +99,15 @@ impl ToolHandler for ListDirHandler {
             ));
         }
 
-        let raw_path = PathBuf::from(&dir_path);
-        if !raw_path.is_absolute() {
-            return Err(FunctionCallError::RespondToModel(
-                "dir_path must be an absolute path".to_string(),
-            ));
-        }
-        let path = AbsolutePathBuf::try_from(raw_path)
-            .map_err(|err| FunctionCallError::RespondToModel(format!("invalid dir_path: {err}")))?;
-        let Some(turn_environment) = turn.primary_environment() else {
-            return Err(FunctionCallError::RespondToModel(
-                "list_dir is unavailable in this session".to_string(),
-            ));
-        };
+        let resolved_path = resolve_environment_path(
+            turn.as_ref(),
+            environment_id.as_deref(),
+            &dir_path,
+            "dir_path",
+            "list_dir",
+        )?;
+        let turn_environment = resolved_path.environment;
+        let path = resolved_path.path;
         let environment = &turn_environment.environment;
         let file_system_sandbox_policy = turn.file_system_sandbox_policy();
         let read_deny_matcher =
@@ -124,9 +123,12 @@ impl ToolHandler for ListDirHandler {
         }
 
         let fs = environment.get_filesystem();
-        let sandbox = environment
-            .is_remote()
-            .then(|| turn.file_system_sandbox_context(None));
+        let sandbox = environment.is_remote().then(|| {
+            turn.file_system_sandbox_context_for_cwd(
+                &turn_environment.cwd,
+                /*additional_permissions*/ None,
+            )
+        });
         let entries = list_dir_slice_with_policy(
             fs.as_ref(),
             sandbox.as_ref(),
@@ -138,9 +140,28 @@ impl ToolHandler for ListDirHandler {
         )
         .await?;
         let mut output = Vec::with_capacity(entries.len() + 1);
-        output.push(format!("Absolute path: {}", path.display()));
+        output.push(display_resolved_dir_path(
+            turn.as_ref(),
+            turn_environment,
+            &path,
+        ));
         output.extend(entries);
         Ok(FunctionToolOutput::from_text(output.join("\n"), Some(true)))
+    }
+}
+
+fn display_resolved_dir_path(
+    turn: &crate::session::turn_context::TurnContext,
+    turn_environment: &crate::session::turn_context::TurnEnvironment,
+    path: &AbsolutePathBuf,
+) -> String {
+    if turn.has_multiple_selected_environments() {
+        format!(
+            "Environment path: {}",
+            format_oai_env_uri(&turn_environment.environment_id, path)
+        )
+    } else {
+        format!("Absolute path: {}", path.display())
     }
 }
 

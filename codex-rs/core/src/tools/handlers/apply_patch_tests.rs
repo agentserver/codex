@@ -15,6 +15,8 @@ use tempfile::TempDir;
 use tokio::sync::Mutex;
 
 use crate::session::tests::make_session_and_context;
+use crate::session::turn_context::TurnContext;
+use crate::session::turn_context::TurnEnvironment;
 use crate::tools::context::ToolInvocation;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::registry::PostToolUsePayload;
@@ -26,6 +28,15 @@ fn sample_patch() -> &'static str {
 *** Add File: hello.txt
 +hello
 *** End Patch"#
+}
+
+fn add_secondary_environment(turn: &mut TurnContext, environment_id: &str, cwd: AbsolutePathBuf) {
+    let primary_environment = turn.primary_environment().expect("primary env");
+    turn.environments.push(TurnEnvironment {
+        environment_id: environment_id.to_string(),
+        environment: primary_environment.environment.clone(),
+        cwd,
+    });
 }
 
 async fn invocation_for_payload(payload: ToolPayload) -> ToolInvocation {
@@ -96,6 +107,119 @@ async fn post_tool_use_payload_uses_patch_input_and_tool_output() {
             tool_input: json!({ "command": patch }),
             tool_response: json!("Success. Updated files."),
         })
+    );
+}
+
+#[tokio::test]
+async fn apply_patch_input_defaults_plain_paths_to_primary_environment() {
+    let (_session, turn) = make_session_and_context().await;
+
+    let resolved =
+        resolve_apply_patch_input(&turn, /*explicit_environment_id*/ None, sample_patch())
+            .expect("resolve patch target");
+
+    assert_eq!(
+        resolved.turn_environment.environment_id,
+        codex_exec_server::LOCAL_ENVIRONMENT_ID
+    );
+    assert_eq!(resolved.patch_input, sample_patch());
+}
+
+#[tokio::test]
+async fn apply_patch_input_rewrites_env_qualified_paths() {
+    let (_session, mut turn) = make_session_and_context().await;
+    let temp = TempDir::new().expect("tmp");
+    let secondary_cwd = temp.path().abs();
+    add_secondary_environment(&mut turn, "secondary", secondary_cwd.clone());
+    let qualified_path = format!(
+        "oai_env://secondary{}",
+        secondary_cwd.join("hello.txt").display()
+    );
+    let patch = format!("*** Begin Patch\n*** Add File: {qualified_path}\n+hello\n*** End Patch");
+
+    let resolved = resolve_apply_patch_input(&turn, /*explicit_environment_id*/ None, &patch)
+        .expect("resolve patch target");
+
+    assert_eq!(resolved.turn_environment.environment_id, "secondary");
+    assert_eq!(
+        resolved.patch_input,
+        format!(
+            "*** Begin Patch\n*** Add File: {}\n+hello\n*** End Patch",
+            secondary_cwd.join("hello.txt").display()
+        )
+    );
+}
+
+#[tokio::test]
+async fn apply_patch_input_rewrites_padded_env_qualified_path_headers() {
+    let (_session, mut turn) = make_session_and_context().await;
+    let temp = TempDir::new().expect("tmp");
+    let secondary_cwd = temp.path().abs();
+    add_secondary_environment(&mut turn, "secondary", secondary_cwd.clone());
+    let patch = format!(
+        "  *** Add File: oai_env://secondary{}  \n+hello\n*** End Patch",
+        secondary_cwd.join("hello.txt").display()
+    );
+
+    let resolved = resolve_apply_patch_input(&turn, /*explicit_environment_id*/ None, &patch)
+        .expect("resolve patch target");
+
+    assert_eq!(resolved.turn_environment.environment_id, "secondary");
+    assert_eq!(
+        resolved.patch_input,
+        format!(
+            "*** Add File: {}\n+hello\n*** End Patch",
+            secondary_cwd.join("hello.txt").display()
+        )
+    );
+}
+
+#[tokio::test]
+async fn apply_patch_input_rejects_mixed_environment_paths() {
+    let (_session, mut turn) = make_session_and_context().await;
+    let temp = TempDir::new().expect("tmp");
+    let secondary_cwd = temp.path().abs();
+    add_secondary_environment(&mut turn, "secondary", secondary_cwd.clone());
+    let primary_cwd = turn.primary_environment().expect("primary env").cwd.clone();
+    let patch = format!(
+        "*** Begin Patch\n*** Add File: oai_env://secondary{}\n+hello\n*** Delete File: oai_env://{}{}\n*** End Patch",
+        secondary_cwd.join("hello.txt").display(),
+        codex_exec_server::LOCAL_ENVIRONMENT_ID,
+        primary_cwd.join("world.txt").display(),
+    );
+
+    let err = resolve_apply_patch_input(&turn, /*explicit_environment_id*/ None, &patch)
+        .expect_err("mixed environments");
+
+    assert_eq!(
+        err,
+        FunctionCallError::RespondToModel(format!(
+            "environment_id `secondary` does not match path environment `{}`",
+            codex_exec_server::LOCAL_ENVIRONMENT_ID
+        ))
+    );
+}
+
+#[tokio::test]
+async fn apply_patch_input_rejects_explicit_environment_mismatch() {
+    let (_session, mut turn) = make_session_and_context().await;
+    let temp = TempDir::new().expect("tmp");
+    let secondary_cwd = temp.path().abs();
+    add_secondary_environment(&mut turn, "secondary", secondary_cwd.clone());
+    let patch = format!(
+        "*** Begin Patch\n*** Add File: oai_env://secondary{}\n+hello\n*** End Patch",
+        secondary_cwd.join("hello.txt").display(),
+    );
+
+    let err =
+        resolve_apply_patch_input(&turn, Some(codex_exec_server::LOCAL_ENVIRONMENT_ID), &patch)
+            .expect_err("mismatched explicit env");
+
+    assert_eq!(
+        err,
+        FunctionCallError::RespondToModel(
+            "environment_id `local` does not match path environment `secondary`".to_string(),
+        )
     );
 }
 

@@ -21,6 +21,8 @@ use crate::tools::context::ToolPayload;
 use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
 use crate::tools::handlers::apply_granted_turn_permissions;
+use crate::tools::handlers::env_path::parse_oai_env_uri;
+use crate::tools::handlers::env_path::resolve_tool_environment;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::orchestrator::ToolOrchestrator;
@@ -38,16 +40,13 @@ use codex_apply_patch::ApplyPatchFileChange;
 use codex_apply_patch::Hunk;
 use codex_apply_patch::parse_patch_streaming;
 use codex_exec_server::ExecutorFileSystem;
-use codex_exec_server::FileSystemSandboxContext;
 use codex_features::Feature;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::FileSystemPermissions;
-use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::PatchApplyUpdatedEvent;
 use codex_sandboxing::policy_transforms::effective_file_system_sandbox_policy;
-use codex_sandboxing::policy_transforms::effective_network_sandbox_policy;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
 use codex_sandboxing::policy_transforms::normalize_additional_permissions;
 use codex_tools::ApplyPatchToolArgs;
@@ -261,6 +260,93 @@ fn apply_patch_payload_command(payload: &ToolPayload) -> Option<String> {
     }
 }
 
+#[derive(Debug)]
+struct ResolvedApplyPatchInput<'a> {
+    turn_environment: &'a crate::session::turn_context::TurnEnvironment,
+    patch_input: String,
+}
+
+fn resolve_apply_patch_input<'a>(
+    turn: &'a TurnContext,
+    explicit_environment_id: Option<&str>,
+    patch_input: &str,
+) -> Result<ResolvedApplyPatchInput<'a>, FunctionCallError> {
+    if matches!(explicit_environment_id, Some("")) {
+        return Err(FunctionCallError::RespondToModel(
+            "environment_id must be non-empty".to_string(),
+        ));
+    }
+
+    let mut selected_environment_id = explicit_environment_id.map(ToOwned::to_owned);
+    let mut normalized_patch_input = String::with_capacity(patch_input.len());
+    for line in patch_input.split_inclusive('\n') {
+        let (line_body, line_ending) = split_line_ending(line);
+        let normalized_line_body =
+            normalize_apply_patch_path_line(line_body, &mut selected_environment_id)?;
+        normalized_patch_input.push_str(&normalized_line_body);
+        normalized_patch_input.push_str(line_ending);
+    }
+
+    let turn_environment =
+        resolve_tool_environment(turn, selected_environment_id.as_deref(), "apply_patch")?;
+    Ok(ResolvedApplyPatchInput {
+        turn_environment,
+        patch_input: normalized_patch_input,
+    })
+}
+
+fn split_line_ending(line: &str) -> (&str, &str) {
+    if let Some(line_body) = line.strip_suffix("\r\n") {
+        (line_body, "\r\n")
+    } else if let Some(line_body) = line.strip_suffix('\n') {
+        (line_body, "\n")
+    } else {
+        (line, "")
+    }
+}
+
+fn normalize_apply_patch_path_line(
+    line_body: &str,
+    selected_environment_id: &mut Option<String>,
+) -> Result<String, FunctionCallError> {
+    let trimmed_line_body = line_body.trim();
+    for marker in [
+        "*** Add File: ",
+        "*** Delete File: ",
+        "*** Update File: ",
+        "*** Move to: ",
+    ] {
+        if let Some(raw_path) = trimmed_line_body.strip_prefix(marker) {
+            return normalize_apply_patch_path(raw_path, selected_environment_id)
+                .map(|normalized_path| format!("{marker}{normalized_path}"));
+        }
+    }
+    Ok(line_body.to_string())
+}
+
+fn normalize_apply_patch_path(
+    raw_path: &str,
+    selected_environment_id: &mut Option<String>,
+) -> Result<String, FunctionCallError> {
+    let Some(qualified_path) = parse_oai_env_uri(raw_path, "patch path")? else {
+        return Ok(raw_path.to_string());
+    };
+
+    match selected_environment_id {
+        Some(selected) if selected != qualified_path.environment_id => {
+            Err(FunctionCallError::RespondToModel(format!(
+                "environment_id `{selected}` does not match path environment `{}`",
+                qualified_path.environment_id
+            )))
+        }
+        Some(_) => Ok(qualified_path.path.display().to_string()),
+        None => {
+            *selected_environment_id = Some(qualified_path.environment_id.to_string());
+            Ok(qualified_path.path.display().to_string())
+        }
+    }
+}
+
 async fn effective_patch_permissions(
     session: &Session,
     turn: &TurnContext,
@@ -294,36 +380,6 @@ async fn effective_patch_permissions(
         effective_additional_permissions,
         file_system_sandbox_policy,
     )
-}
-
-fn file_system_sandbox_context_for_cwd(
-    turn: &TurnContext,
-    cwd: &AbsolutePathBuf,
-    additional_permissions: Option<AdditionalPermissionProfile>,
-) -> FileSystemSandboxContext {
-    let permission_profile = turn.permission_profile();
-    let (base_file_system_sandbox_policy, base_network_sandbox_policy) =
-        permission_profile.to_runtime_permissions();
-    let file_system_sandbox_policy = effective_file_system_sandbox_policy(
-        &base_file_system_sandbox_policy,
-        additional_permissions.as_ref(),
-    );
-    let network_sandbox_policy = effective_network_sandbox_policy(
-        base_network_sandbox_policy,
-        additional_permissions.as_ref(),
-    );
-    let permissions = PermissionProfile::from_runtime_permissions_with_enforcement(
-        permission_profile.enforcement(),
-        &file_system_sandbox_policy,
-        network_sandbox_policy,
-    );
-    FileSystemSandboxContext {
-        permissions,
-        cwd: Some(cwd.clone()),
-        windows_sandbox_level: turn.windows_sandbox_level,
-        windows_sandbox_private_desktop: turn.config.permissions.windows_sandbox_private_desktop,
-        use_legacy_landlock: turn.features.use_legacy_landlock(),
-    }
 }
 
 impl ToolHandler for ApplyPatchHandler {
@@ -383,12 +439,12 @@ impl ToolHandler for ApplyPatchHandler {
             ..
         } = invocation;
 
-        let patch_input = match payload {
+        let (patch_input, explicit_environment_id) = match payload {
             ToolPayload::Function { arguments } => {
                 let args: ApplyPatchToolArgs = parse_arguments(&arguments)?;
-                args.input
+                (args.input, args.environment_id)
             }
-            ToolPayload::Custom { input } => input,
+            ToolPayload::Custom { input } => (input, None),
             _ => {
                 return Err(FunctionCallError::RespondToModel(
                     "apply_patch handler received unsupported payload".to_string(),
@@ -398,21 +454,21 @@ impl ToolHandler for ApplyPatchHandler {
 
         // Re-parse and verify the patch so we can compute changes and approval.
         // Avoid building temporary ExecParams/command vectors; derive directly from inputs.
-        let Some(turn_environment) = turn.primary_environment() else {
-            return Err(FunctionCallError::RespondToModel(
-                "apply_patch is unavailable in this session".to_string(),
-            ));
-        };
+        let resolved_apply_patch = resolve_apply_patch_input(
+            turn.as_ref(),
+            explicit_environment_id.as_deref(),
+            &patch_input,
+        )?;
+        let turn_environment = resolved_apply_patch.turn_environment;
         let environment = &turn_environment.environment;
         let cwd = &turn_environment.cwd;
-        let command = vec!["apply_patch".to_string(), patch_input.clone()];
+        let command = vec![
+            "apply_patch".to_string(),
+            resolved_apply_patch.patch_input.clone(),
+        ];
         let fs = environment.get_filesystem();
         let sandbox = environment.is_remote().then(|| {
-            file_system_sandbox_context_for_cwd(
-                turn.as_ref(),
-                cwd,
-                /*additional_permissions*/ None,
-            )
+            turn.file_system_sandbox_context_for_cwd(cwd, /*additional_permissions*/ None)
         });
         match codex_apply_patch::maybe_parse_apply_patch_verified(
             &command,
@@ -446,6 +502,7 @@ impl ToolHandler for ApplyPatchHandler {
 
                         let req = ApplyPatchRequest {
                             action: apply.action,
+                            environment_id: turn_environment.environment_id.clone(),
                             file_paths,
                             changes,
                             exec_approval_requirement: apply.exec_approval_requirement,
@@ -508,33 +565,31 @@ impl ToolHandler for ApplyPatchHandler {
 pub(crate) async fn intercept_apply_patch(
     command: &[String],
     cwd: &AbsolutePathBuf,
-    fs: &dyn ExecutorFileSystem,
+    _fs: &dyn ExecutorFileSystem,
     session: Arc<Session>,
     turn: Arc<TurnContext>,
     tracker: Option<&SharedTurnDiffTracker>,
     call_id: &str,
     tool_name: &str,
 ) -> Result<Option<FunctionToolOutput>, FunctionCallError> {
-    let has_attached_environment = turn.has_attached_environment();
-    let sandbox = turn.primary_environment().and_then(|turn_environment| {
+    let turn_environment = turn.primary_environment();
+    let environment_fs =
+        turn_environment.map(|turn_environment| turn_environment.environment.get_filesystem());
+    let fs = environment_fs.as_deref().unwrap_or(_fs);
+    let sandbox = turn_environment.and_then(|turn_environment| {
         turn_environment.environment.is_remote().then(|| {
-            file_system_sandbox_context_for_cwd(
-                turn.as_ref(),
-                cwd,
-                /*additional_permissions*/ None,
-            )
+            turn.file_system_sandbox_context_for_cwd(cwd, /*additional_permissions*/ None)
         })
     });
     match codex_apply_patch::maybe_parse_apply_patch_verified(command, cwd, fs, sandbox.as_ref())
         .await
     {
         codex_apply_patch::MaybeApplyPatchVerified::Body(changes) => {
-            if !has_attached_environment {
+            let Some(turn_environment) = turn_environment else {
                 return Err(FunctionCallError::RespondToModel(
                     "apply_patch is unavailable in this session".to_string(),
                 ));
-            }
-
+            };
             session
                 .record_model_warning(
                     format!(
@@ -565,6 +620,7 @@ pub(crate) async fn intercept_apply_patch(
 
                     let req = ApplyPatchRequest {
                         action: apply.action,
+                        environment_id: turn_environment.environment_id.clone(),
                         file_paths: approval_keys,
                         changes,
                         exec_approval_requirement: apply.exec_approval_requirement,

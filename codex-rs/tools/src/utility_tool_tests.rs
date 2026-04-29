@@ -48,6 +48,26 @@ fn list_dir_tool_matches_expected_spec() {
 }
 
 #[test]
+fn list_dir_tool_includes_environment_id_for_multi_env() {
+    let ToolSpec::Function(ResponsesApiTool { parameters, .. }) =
+        create_list_dir_tool_with_options(ListDirToolOptions {
+            has_multiple_environments: true,
+        })
+    else {
+        panic!("expected function tool");
+    };
+
+    let properties = parameters.properties.expect("properties");
+    assert!(properties.contains_key("environment_id"));
+    assert!(
+        properties
+            .get("dir_path")
+            .and_then(|schema| schema.description.as_deref())
+            .is_some_and(|description| description.contains("oai_env://"))
+    );
+}
+
+#[test]
 fn test_sync_tool_matches_expected_spec() {
     assert_eq!(
         create_test_sync_tool(),

@@ -42,6 +42,7 @@ use std::time::Instant;
 #[derive(Debug)]
 pub struct ApplyPatchRequest {
     pub action: ApplyPatchAction,
+    pub environment_id: String,
     pub file_paths: Vec<AbsolutePathBuf>,
     pub changes: std::collections::HashMap<PathBuf, FileChange>,
     pub exec_approval_requirement: ExecApprovalRequirement,
@@ -211,9 +212,15 @@ impl ToolRuntime<ApplyPatchRequest, ExecToolCallOutput> for ApplyPatchRuntime {
         attempt: &SandboxAttempt<'_>,
         ctx: &ToolCtx,
     ) -> Result<ExecToolCallOutput, ToolError> {
-        let turn_environment = ctx.turn.primary_environment().ok_or_else(|| {
-            ToolError::Rejected("apply_patch is unavailable in this session".to_string())
-        })?;
+        let turn_environment =
+            ctx.turn
+                .environment_by_id(&req.environment_id)
+                .ok_or_else(|| {
+                    ToolError::Rejected(format!(
+                        "unknown turn environment id `{}`",
+                        req.environment_id
+                    ))
+                })?;
         let environment = &turn_environment.environment;
         let started_at = Instant::now();
         let fs = environment.get_filesystem();

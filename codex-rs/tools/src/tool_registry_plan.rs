@@ -1,4 +1,6 @@
+use crate::ApplyPatchToolOptions;
 use crate::CommandToolOptions;
+use crate::ListDirToolOptions;
 use crate::REQUEST_USER_INPUT_TOOL_NAME;
 use crate::ResponsesApiNamespace;
 use crate::ResponsesApiNamespaceTool;
@@ -21,8 +23,8 @@ use crate::coalesce_loadable_tool_specs;
 use crate::collect_code_mode_exec_prompt_tool_definitions;
 use crate::collect_tool_search_source_infos;
 use crate::collect_tool_suggest_entries;
-use crate::create_apply_patch_freeform_tool;
-use crate::create_apply_patch_json_tool;
+use crate::create_apply_patch_freeform_tool_with_options;
+use crate::create_apply_patch_json_tool_with_options;
 use crate::create_close_agent_tool_v1;
 use crate::create_close_agent_tool_v2;
 use crate::create_code_mode_tool;
@@ -33,7 +35,7 @@ use crate::create_followup_task_tool;
 use crate::create_get_goal_tool;
 use crate::create_image_generation_tool;
 use crate::create_list_agents_tool;
-use crate::create_list_dir_tool;
+use crate::create_list_dir_tool_with_options;
 use crate::create_list_mcp_resource_templates_tool;
 use crate::create_list_mcp_resources_tool;
 use crate::create_local_shell_tool;
@@ -71,6 +73,13 @@ use crate::tool_registry_plan_types::agent_type_description;
 use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_protocol::openai_models::ConfigShellToolType;
 use std::collections::BTreeMap;
+
+#[cfg(test)]
+use crate::create_apply_patch_freeform_tool;
+#[cfg(test)]
+use crate::create_apply_patch_json_tool;
+#[cfg(test)]
+use crate::create_list_dir_tool;
 
 pub fn build_tool_registry_plan(
     config: &ToolsConfig,
@@ -351,14 +360,18 @@ pub fn build_tool_registry_plan(
         match apply_patch_tool_type {
             ApplyPatchToolType::Freeform => {
                 plan.push_spec(
-                    create_apply_patch_freeform_tool(),
+                    create_apply_patch_freeform_tool_with_options(ApplyPatchToolOptions {
+                        has_multiple_environments: config.has_multiple_environments,
+                    }),
                     /*supports_parallel_tool_calls*/ false,
                     config.code_mode_enabled,
                 );
             }
             ApplyPatchToolType::Function => {
                 plan.push_spec(
-                    create_apply_patch_json_tool(),
+                    create_apply_patch_json_tool_with_options(ApplyPatchToolOptions {
+                        has_multiple_environments: config.has_multiple_environments,
+                    }),
                     /*supports_parallel_tool_calls*/ false,
                     config.code_mode_enabled,
                 );
@@ -374,7 +387,9 @@ pub fn build_tool_registry_plan(
             .any(|tool| tool == "list_dir")
     {
         plan.push_spec(
-            create_list_dir_tool(),
+            create_list_dir_tool_with_options(ListDirToolOptions {
+                has_multiple_environments: config.has_multiple_environments,
+            }),
             /*supports_parallel_tool_calls*/ true,
             config.code_mode_enabled,
         );
@@ -418,6 +433,7 @@ pub fn build_tool_registry_plan(
         plan.push_spec(
             create_view_image_tool(ViewImageToolOptions {
                 can_request_original_image_detail: config.can_request_original_image_detail,
+                has_multiple_environments: config.has_multiple_environments,
             }),
             /*supports_parallel_tool_calls*/ true,
             config.code_mode_enabled,

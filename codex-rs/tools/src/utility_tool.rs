@@ -3,11 +3,25 @@ use crate::ResponsesApiTool;
 use crate::ToolSpec;
 use std::collections::BTreeMap;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ListDirToolOptions {
+    pub has_multiple_environments: bool,
+}
+
 pub fn create_list_dir_tool() -> ToolSpec {
-    let properties = BTreeMap::from([
+    create_list_dir_tool_with_options(ListDirToolOptions::default())
+}
+
+pub fn create_list_dir_tool_with_options(options: ListDirToolOptions) -> ToolSpec {
+    let dir_path_description = if options.has_multiple_environments {
+        "Path to the directory to list. Plain relative paths resolve against the selected environment's current working directory, and env-qualified paths use oai_env://<environment_id>/<absolute-path>."
+    } else {
+        "Absolute path to the directory to list."
+    };
+    let mut properties = BTreeMap::from([
         (
             "dir_path".to_string(),
-            JsonSchema::string(Some("Absolute path to the directory to list.".to_string())),
+            JsonSchema::string(Some(dir_path_description.to_string())),
         ),
         (
             "offset".to_string(),
@@ -26,6 +40,14 @@ pub fn create_list_dir_tool() -> ToolSpec {
             )),
         ),
     ]);
+    if options.has_multiple_environments {
+        properties.insert(
+            "environment_id".to_string(),
+            JsonSchema::string(Some(
+                "Optional selected environment id. Omit to use the primary environment. If dir_path uses oai_env://<environment_id>/<absolute-path>, this value must match.".to_string(),
+            )),
+        );
+    }
 
     ToolSpec::Function(ResponsesApiTool {
         name: "list_dir".to_string(),

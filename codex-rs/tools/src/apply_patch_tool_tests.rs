@@ -44,3 +44,34 @@ fn create_apply_patch_json_tool_matches_expected_spec() {
         })
     );
 }
+
+#[test]
+fn create_apply_patch_json_tool_includes_environment_id_for_multi_env() {
+    let ToolSpec::Function(ResponsesApiTool {
+        description,
+        parameters,
+        ..
+    }) = create_apply_patch_json_tool_with_options(ApplyPatchToolOptions {
+        has_multiple_environments: true,
+    })
+    else {
+        panic!("expected function tool");
+    };
+
+    let properties = parameters.properties.expect("properties");
+    assert!(properties.contains_key("environment_id"));
+    assert!(description.contains("oai_env://<environment_id>/<absolute-path>"));
+}
+
+#[test]
+fn create_apply_patch_freeform_tool_mentions_env_paths_for_multi_env() {
+    let ToolSpec::Freeform(FreeformTool { description, .. }) =
+        create_apply_patch_freeform_tool_with_options(ApplyPatchToolOptions {
+            has_multiple_environments: true,
+        })
+    else {
+        panic!("expected freeform tool");
+    };
+
+    assert!(description.contains("oai_env://<environment_id>/<absolute-path>"));
+}

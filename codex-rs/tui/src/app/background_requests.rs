@@ -240,14 +240,34 @@ impl App {
         key: String,
         enabled: bool,
     ) {
+        if let Some(queued_enabled) = self.pending_hook_enabled_writes.get_mut(&key) {
+            *queued_enabled = Some(enabled);
+            return;
+        }
+
+        self.pending_hook_enabled_writes.insert(key.clone(), None);
+        self.spawn_hook_enabled_write(app_server, key, enabled);
+    }
+
+    pub(super) fn spawn_hook_enabled_write(
+        &mut self,
+        app_server: &AppServerSession,
+        key: String,
+        enabled: bool,
+    ) {
         let request_handle = app_server.request_handle();
         let app_event_tx = self.app_event_tx.clone();
         tokio::spawn(async move {
+            let key_for_event = key.clone();
             let result = write_hook_enabled(request_handle, key, enabled)
                 .await
                 .map(|_| ())
                 .map_err(|err| format!("Failed to update hook config: {err}"));
-            app_event_tx.send(AppEvent::HookEnabledSet { result });
+            app_event_tx.send(AppEvent::HookEnabledSet {
+                key: key_for_event,
+                enabled,
+                result,
+            });
         });
     }
 

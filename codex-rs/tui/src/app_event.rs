@@ -699,6 +699,8 @@ pub(crate) enum AppEvent {
 
     /// Result of persisting hook enabled state.
     HookEnabledSet {
+        key: String,
+        enabled: bool,
         result: Result<(), String>,
     },
 

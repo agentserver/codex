@@ -2420,6 +2420,7 @@ impl CodexMessageProcessor {
             personality,
             ephemeral,
             session_start_source,
+            execution_environment: _execution_environment,
             environments,
             persist_extended_history,
         } = params;
@@ -4249,6 +4250,7 @@ impl CodexMessageProcessor {
             developer_instructions,
             personality,
             exclude_turns,
+            execution_environment: _execution_environment,
             persist_extended_history,
         } = params;
         let include_turns = !exclude_turns;
@@ -4811,6 +4813,7 @@ impl CodexMessageProcessor {
             developer_instructions,
             ephemeral,
             exclude_turns,
+            execution_environment: _execution_environment,
             persist_extended_history,
         } = params;
         let include_turns = !exclude_turns;
@@ -10218,6 +10221,7 @@ mod tests {
             developer_instructions: None,
             personality: None,
             exclude_turns: false,
+            execution_environment: None,
             persist_extended_history: false,
         };
         let config_snapshot = ThreadConfigSnapshot {

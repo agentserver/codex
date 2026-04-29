@@ -115,6 +115,7 @@ pub(crate) struct ThreadInitializedEventParams {
     pub(crate) initialization_mode: ThreadInitializationMode,
     pub(crate) subagent_source: Option<String>,
     pub(crate) parent_thread_id: Option<String>,
+    pub(crate) execution_environment: Option<TurnExecutionEnvironment>,
     pub(crate) created_at: u64,
 }
 
@@ -520,6 +521,7 @@ pub(crate) struct CodexTurnSteerEventParams {
     pub(crate) thread_source: Option<String>,
     pub(crate) subagent_source: Option<String>,
     pub(crate) parent_thread_id: Option<String>,
+    pub(crate) execution_environment: Option<TurnExecutionEnvironment>,
     pub(crate) num_input_images: usize,
     pub(crate) result: TurnSteerResult,
     pub(crate) rejection_reason: Option<TurnSteerRejectionReason>,
@@ -724,6 +726,7 @@ pub(crate) fn subagent_thread_started_event_request(
         parent_thread_id: input
             .parent_thread_id
             .or_else(|| subagent_parent_thread_id(&input.subagent_source)),
+        execution_environment: None,
         created_at: input.created_at,
     };
     ThreadInitializedEvent {

@@ -459,6 +459,12 @@
         "environmentId"
       ],
       "type": "object"
+    },
+    "TurnExecutionEnvironment": {
+      "enum": [
+        "remote"
+      ],
+      "type": "string"
     }
   },
   "properties": {

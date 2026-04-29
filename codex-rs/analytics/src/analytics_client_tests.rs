@@ -72,6 +72,7 @@ use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::SessionSource as AppServerSessionSource;
 use codex_app_server_protocol::Thread;
 use codex_app_server_protocol::ThreadResumeResponse;
+use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::ThreadStatus as AppServerThreadStatus;
 use codex_app_server_protocol::Turn;
@@ -499,6 +500,40 @@ async fn ingest_initialize(reducer: &mut AnalyticsReducer, out: &mut Vec<TrackEv
         .await;
 }
 
+async fn ingest_thread_start_with_execution_environment(
+    reducer: &mut AnalyticsReducer,
+    out: &mut Vec<TrackEventRequest>,
+    execution_environment: Option<TurnExecutionEnvironment>,
+) {
+    reducer
+        .ingest(
+            AnalyticsFact::ClientRequest {
+                connection_id: 7,
+                request_id: RequestId::Integer(1),
+                request: Box::new(ClientRequest::ThreadStart {
+                    request_id: RequestId::Integer(1),
+                    params: ThreadStartParams {
+                        execution_environment,
+                        ..Default::default()
+                    },
+                }),
+            },
+            out,
+        )
+        .await;
+    reducer
+        .ingest(
+            AnalyticsFact::ClientResponse {
+                connection_id: 7,
+                response: Box::new(sample_thread_start_response(
+                    "thread-2", /*ephemeral*/ false, "gpt-5",
+                )),
+            },
+            out,
+        )
+        .await;
+}
+
 async fn ingest_turn_prerequisites(
     reducer: &mut AnalyticsReducer,
     out: &mut Vec<TrackEventRequest>,
@@ -843,6 +878,7 @@ fn thread_initialized_event_serializes_expected_shape() {
             initialization_mode: ThreadInitializationMode::New,
             subagent_source: None,
             parent_thread_id: None,
+            execution_environment: Some(TurnExecutionEnvironment::Remote),
             created_at: 1,
         },
     });
@@ -874,6 +910,7 @@ fn thread_initialized_event_serializes_expected_shape() {
                 "initialization_mode": "new",
                 "subagent_source": null,
                 "parent_thread_id": null,
+                "execution_environment": "remote",
                 "created_at": 1
             }
         })
@@ -976,6 +1013,27 @@ async fn initialize_caches_client_and_thread_lifecycle_publishes_once_initialize
     assert_eq!(
         payload[0]["event_params"]["runtime"]["runtime_arch"],
         "x86_64"
+    );
+}
+
+#[tokio::test]
+async fn thread_start_execution_environment_flows_to_thread_initialized_event() {
+    let mut reducer = AnalyticsReducer::default();
+    let mut out = Vec::new();
+
+    ingest_initialize(&mut reducer, &mut out).await;
+    ingest_thread_start_with_execution_environment(
+        &mut reducer,
+        &mut out,
+        Some(TurnExecutionEnvironment::Remote),
+    )
+    .await;
+
+    let payload = serde_json::to_value(&out[0]).expect("serialize thread event");
+    assert_eq!(payload["event_type"], json!("codex_thread_initialized"));
+    assert_eq!(
+        payload["event_params"]["execution_environment"],
+        json!("remote")
     );
 }
 
@@ -2237,6 +2295,102 @@ async fn turn_start_execution_environment_flows_to_turn_event() {
     let payload = serde_json::to_value(&out[0]).expect("serialize turn event");
     assert_eq!(
         payload["event_params"]["execution_environment"],
+        json!("remote")
+    );
+}
+
+#[tokio::test]
+async fn thread_execution_environment_flows_to_turn_and_steer_events() {
+    let mut reducer = AnalyticsReducer::default();
+    let mut out = Vec::new();
+
+    ingest_initialize(&mut reducer, &mut out).await;
+    ingest_thread_start_with_execution_environment(
+        &mut reducer,
+        &mut out,
+        Some(TurnExecutionEnvironment::Remote),
+    )
+    .await;
+    out.clear();
+
+    reducer
+        .ingest(
+            AnalyticsFact::ClientRequest {
+                connection_id: 7,
+                request_id: RequestId::Integer(3),
+                request: Box::new(sample_turn_start_request("thread-2", /*request_id*/ 3)),
+            },
+            &mut out,
+        )
+        .await;
+    reducer
+        .ingest(
+            AnalyticsFact::ClientResponse {
+                connection_id: 7,
+                response: Box::new(sample_turn_start_response("turn-2", /*request_id*/ 3)),
+            },
+            &mut out,
+        )
+        .await;
+    reducer
+        .ingest(
+            AnalyticsFact::Custom(CustomAnalyticsFact::TurnResolvedConfig(Box::new(
+                sample_turn_resolved_config("turn-2"),
+            ))),
+            &mut out,
+        )
+        .await;
+    reducer
+        .ingest(
+            AnalyticsFact::ClientRequest {
+                connection_id: 7,
+                request_id: RequestId::Integer(4),
+                request: Box::new(sample_turn_steer_request(
+                    "thread-2", "turn-2", /*request_id*/ 4,
+                )),
+            },
+            &mut out,
+        )
+        .await;
+    reducer
+        .ingest(
+            AnalyticsFact::ClientResponse {
+                connection_id: 7,
+                response: Box::new(sample_turn_steer_response("turn-2", /*request_id*/ 4)),
+            },
+            &mut out,
+        )
+        .await;
+    reducer
+        .ingest(
+            AnalyticsFact::Notification(Box::new(sample_turn_completed_notification(
+                "thread-2",
+                "turn-2",
+                AppServerTurnStatus::Completed,
+                /*codex_error_info*/ None,
+            ))),
+            &mut out,
+        )
+        .await;
+
+    let turn_steer_event = out
+        .iter()
+        .find(|event| matches!(event, TrackEventRequest::TurnSteer(_)))
+        .expect("turn steer event should be emitted");
+    let turn_steer_payload =
+        serde_json::to_value(turn_steer_event).expect("serialize turn steer event");
+    assert_eq!(
+        turn_steer_payload["event_params"]["execution_environment"],
+        json!("remote")
+    );
+
+    let turn_event = out
+        .iter()
+        .find(|event| matches!(event, TrackEventRequest::TurnEvent(_)))
+        .expect("turn event should be emitted");
+    let turn_payload = serde_json::to_value(turn_event).expect("serialize turn event");
+    assert_eq!(
+        turn_payload["event_params"]["execution_environment"],
         json!("remote")
     );
 }

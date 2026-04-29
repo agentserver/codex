@@ -90,12 +90,14 @@ struct ThreadMetadataState {
     initialization_mode: ThreadInitializationMode,
     subagent_source: Option<String>,
     parent_thread_id: Option<String>,
+    execution_environment: Option<TurnExecutionEnvironment>,
 }
 
 impl ThreadMetadataState {
     fn from_thread_metadata(
         session_source: &SessionSource,
         initialization_mode: ThreadInitializationMode,
+        execution_environment: Option<TurnExecutionEnvironment>,
     ) -> Self {
         let (subagent_source, parent_thread_id) = match session_source {
             SessionSource::SubAgent(subagent_source) => (
@@ -115,13 +117,19 @@ impl ThreadMetadataState {
             initialization_mode,
             subagent_source,
             parent_thread_id,
+            execution_environment,
         }
     }
 }
 
 enum RequestState {
+    ThreadInitialized(PendingThreadInitializedState),
     TurnStart(PendingTurnStartState),
     TurnSteer(PendingTurnSteerState),
+}
+
+struct PendingThreadInitializedState {
+    execution_environment: Option<TurnExecutionEnvironment>,
 }
 
 struct PendingTurnStartState {
@@ -323,6 +331,30 @@ impl AnalyticsReducer {
         request: ClientRequest,
     ) {
         match request {
+            ClientRequest::ThreadStart { params, .. } => {
+                self.requests.insert(
+                    (connection_id, request_id),
+                    RequestState::ThreadInitialized(PendingThreadInitializedState {
+                        execution_environment: params.execution_environment,
+                    }),
+                );
+            }
+            ClientRequest::ThreadResume { params, .. } => {
+                self.requests.insert(
+                    (connection_id, request_id),
+                    RequestState::ThreadInitialized(PendingThreadInitializedState {
+                        execution_environment: params.execution_environment,
+                    }),
+                );
+            }
+            ClientRequest::ThreadFork { params, .. } => {
+                self.requests.insert(
+                    (connection_id, request_id),
+                    RequestState::ThreadInitialized(PendingThreadInitializedState {
+                        execution_environment: params.execution_environment,
+                    }),
+                );
+            }
             ClientRequest::TurnStart { params, .. } => {
                 self.requests.insert(
                     (connection_id, request_id),
@@ -505,30 +537,48 @@ impl AnalyticsReducer {
         out: &mut Vec<TrackEventRequest>,
     ) {
         match response {
-            ClientResponse::ThreadStart { response, .. } => {
+            ClientResponse::ThreadStart {
+                request_id,
+                response,
+            } => {
+                let execution_environment =
+                    self.thread_initialized_execution_environment(connection_id, request_id);
                 self.emit_thread_initialized(
                     connection_id,
                     response.thread,
                     response.model,
                     ThreadInitializationMode::New,
+                    execution_environment,
                     out,
                 );
             }
-            ClientResponse::ThreadResume { response, .. } => {
+            ClientResponse::ThreadResume {
+                request_id,
+                response,
+            } => {
+                let execution_environment =
+                    self.thread_initialized_execution_environment(connection_id, request_id);
                 self.emit_thread_initialized(
                     connection_id,
                     response.thread,
                     response.model,
                     ThreadInitializationMode::Resumed,
+                    execution_environment,
                     out,
                 );
             }
-            ClientResponse::ThreadFork { response, .. } => {
+            ClientResponse::ThreadFork {
+                request_id,
+                response,
+            } => {
+                let execution_environment =
+                    self.thread_initialized_execution_environment(connection_id, request_id);
                 self.emit_thread_initialized(
                     connection_id,
                     response.thread,
                     response.model,
                     ThreadInitializationMode::Forked,
+                    execution_environment,
                     out,
                 );
             }
@@ -590,6 +640,7 @@ impl AnalyticsReducer {
         out: &mut Vec<TrackEventRequest>,
     ) {
         match request {
+            RequestState::ThreadInitialized(_) => {}
             RequestState::TurnStart(_) => {}
             RequestState::TurnSteer(pending_request) => {
                 self.ingest_turn_steer_error_response(
@@ -686,6 +737,7 @@ impl AnalyticsReducer {
         thread: codex_app_server_protocol::Thread,
         model: String,
         initialization_mode: ThreadInitializationMode,
+        execution_environment: Option<TurnExecutionEnvironment>,
         out: &mut Vec<TrackEventRequest>,
     ) {
         let thread_source: SessionSource = thread.source.into();
@@ -693,8 +745,11 @@ impl AnalyticsReducer {
         let Some(connection_state) = self.connections.get(&connection_id) else {
             return;
         };
-        let thread_metadata =
-            ThreadMetadataState::from_thread_metadata(&thread_source, initialization_mode);
+        let thread_metadata = ThreadMetadataState::from_thread_metadata(
+            &thread_source,
+            initialization_mode,
+            execution_environment,
+        );
         self.thread_connections
             .insert(thread_id.clone(), connection_id);
         self.thread_metadata
@@ -712,10 +767,24 @@ impl AnalyticsReducer {
                     initialization_mode,
                     subagent_source: thread_metadata.subagent_source,
                     parent_thread_id: thread_metadata.parent_thread_id,
+                    execution_environment,
                     created_at: u64::try_from(thread.created_at).unwrap_or_default(),
                 },
             },
         ));
+    }
+
+    fn thread_initialized_execution_environment(
+        &mut self,
+        connection_id: u64,
+        request_id: RequestId,
+    ) -> Option<TurnExecutionEnvironment> {
+        match self.requests.remove(&(connection_id, request_id)) {
+            Some(RequestState::ThreadInitialized(pending_request)) => {
+                pending_request.execution_environment
+            }
+            _ => None,
+        }
     }
 
     fn ingest_compaction(&mut self, input: CodexCompactionEvent, out: &mut Vec<TrackEventRequest>) {
@@ -817,6 +886,9 @@ impl AnalyticsReducer {
                 thread_source: thread_metadata.thread_source.map(str::to_string),
                 subagent_source: thread_metadata.subagent_source.clone(),
                 parent_thread_id: thread_metadata.parent_thread_id.clone(),
+                execution_environment: pending_request
+                    .execution_environment
+                    .or(thread_metadata.execution_environment),
                 num_input_images: pending_request.num_input_images,
                 result,
                 rejection_reason,
@@ -931,7 +1003,9 @@ fn codex_turn_event_params(
         initialization_mode: thread_metadata.initialization_mode,
         subagent_source: thread_metadata.subagent_source.clone(),
         parent_thread_id: thread_metadata.parent_thread_id.clone(),
-        execution_environment: turn_state.execution_environment,
+        execution_environment: turn_state
+            .execution_environment
+            .or(thread_metadata.execution_environment),
         model: Some(model),
         model_provider,
         sandbox_policy: Some(sandbox_policy_mode(

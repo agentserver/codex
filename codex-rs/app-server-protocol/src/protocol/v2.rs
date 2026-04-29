@@ -3478,6 +3478,10 @@ pub struct ThreadStartParams {
     pub ephemeral: Option<bool>,
     #[ts(optional = nullable)]
     pub session_start_source: Option<ThreadStartSource>,
+    /// Optional thread-scoped execution environment.
+    #[experimental("thread/start.executionEnvironment")]
+    #[ts(optional = nullable)]
+    pub execution_environment: Option<TurnExecutionEnvironment>,
     /// Optional sticky environments for this thread.
     ///
     /// Omitted selects the default environment when environment access is
@@ -3623,6 +3627,10 @@ pub struct ThreadResumeParams {
     /// `thread/turns/list` immediately after resuming.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exclude_turns: bool,
+    /// Optional thread-scoped execution environment.
+    #[experimental("thread/resume.executionEnvironment")]
+    #[ts(optional = nullable)]
+    pub execution_environment: Option<TurnExecutionEnvironment>,
     /// If true, persist additional rollout EventMsg variants required to
     /// reconstruct a richer thread history on subsequent resume/fork/read.
     #[experimental("thread/resume.persistFullHistory")]
@@ -3720,6 +3728,10 @@ pub struct ThreadForkParams {
     /// `thread/turns/list` immediately after forking.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exclude_turns: bool,
+    /// Optional thread-scoped execution environment.
+    #[experimental("thread/fork.executionEnvironment")]
+    #[ts(optional = nullable)]
+    pub execution_environment: Option<TurnExecutionEnvironment>,
     /// If true, persist additional rollout EventMsg variants required to
     /// reconstruct a richer thread history on subsequent resume/fork/read.
     #[experimental("thread/fork.persistFullHistory")]

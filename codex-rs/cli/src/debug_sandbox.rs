@@ -289,6 +289,7 @@ impl SandboxRuntimeConfig {
         })
     }
 
+    #[cfg(target_os = "macos")]
     fn file_system_sandbox_policy(&self) -> codex_protocol::permissions::FileSystemSandboxPolicy {
         self.permission_profile.file_system_sandbox_policy()
     }

@@ -27,8 +27,14 @@ FORBIDDEN_SOURCE_RULES = (
         "references `codex_protocol::protocol`",
         (
             re.compile(r"\bcodex_protocol\s*::\s*protocol\b"),
-            re.compile(r"\bcodex_protocol\s*::\s*\{[^}\n]*\bprotocol\b"),
+            re.compile(r"\bcodex_protocol\s*::\s*\{[^}]*\bprotocol\b"),
         ),
+    ),
+)
+CODEX_PROTOCOL_ALIAS_PATTERNS = (
+    re.compile(r"\buse\s+codex_protocol\s+as\s+([A-Za-z_][A-Za-z0-9_]*)\s*;"),
+    re.compile(
+        r"\bextern\s+crate\s+codex_protocol\s+as\s+([A-Za-z_][A-Za-z0-9_]*)\s*;"
     ),
 )
 
@@ -88,11 +94,43 @@ def source_failures() -> list[str]:
     failures = []
     for path in sorted(TUI_ROOT.glob("**/*.rs")):
         text = path.read_text()
-        for line_number, line in enumerate(text.splitlines(), start=1):
-            for message, patterns in FORBIDDEN_SOURCE_RULES:
-                if any(pattern.search(line) for pattern in patterns):
-                    failures.append(f"{relative_path(path)}:{line_number} {message}")
+        seen_locations = set()
+        for message, patterns in FORBIDDEN_SOURCE_RULES:
+            for pattern in patterns:
+                for match in pattern.finditer(text):
+                    failures.append(source_failure(path, text, match.start(), message))
+                    seen_locations.add((match.start(), message))
+
+        for alias_match in alias_matches(text):
+            alias = re.escape(alias_match.group(1))
+            patterns = (
+                re.compile(rf"\b{alias}\s*::\s*protocol\b"),
+                re.compile(rf"\b{alias}\s*::\s*\{{[^}}]*\bprotocol\b"),
+            )
+            for pattern in patterns:
+                for match in pattern.finditer(text):
+                    key = (match.start(), "references `codex_protocol::protocol`")
+                    if key in seen_locations:
+                        continue
+                    failures.append(
+                        source_failure(
+                            path, text, match.start(), "references `codex_protocol::protocol`"
+                        )
+                    )
+                    seen_locations.add(key)
     return failures
+
+
+def alias_matches(text: str) -> list[re.Match[str]]:
+    matches = []
+    for pattern in CODEX_PROTOCOL_ALIAS_PATTERNS:
+        matches.extend(pattern.finditer(text))
+    return matches
+
+
+def source_failure(path: Path, text: str, offset: int, message: str) -> str:
+    line_number = text.count("\n", 0, offset) + 1
+    return f"{relative_path(path)}:{line_number} {message}"
 
 
 def relative_path(path: Path) -> str:

@@ -2753,7 +2753,14 @@ pub(crate) fn new_view_image_tool_call(
 
     let mut lines: Vec<Line<'static>> = vec![vec!["• ".dim(), "Viewed Image".bold()].into()];
     if let Some(environment_id) = environment_id.filter(|id| *id != "local") {
-        lines.push(vec!["  ├ ".dim(), "Environment: ".dim(), environment_id.dim()].into());
+        lines.push(
+            vec![
+                "  ├ ".dim(),
+                "Environment: ".dim(),
+                Span::from(environment_id.to_string()).dim(),
+            ]
+            .into(),
+        );
         lines.push(vec!["  └ ".dim(), display_path.dim()].into());
     } else {
         lines.push(vec!["  └ ".dim(), display_path.dim()].into());

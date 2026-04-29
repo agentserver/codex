@@ -642,6 +642,11 @@ client_request_definitions! {
         serialization: None,
         response: v2::ModelListResponse,
     },
+    ModelProviderCapabilitiesRead => "modelProvider/capabilities/read" {
+        params: v2::ModelProviderCapabilitiesReadParams,
+        serialization: None,
+        response: v2::ModelProviderCapabilitiesReadResponse,
+    },
     ExperimentalFeatureList => "experimentalFeature/list" {
         params: v2::ExperimentalFeatureListParams,
         serialization: global("config"),
@@ -1998,12 +2003,7 @@ mod tests {
                 approval_policy: v2::AskForApproval::OnFailure,
                 approvals_reviewer: v2::ApprovalsReviewer::User,
                 sandbox: v2::SandboxPolicy::DangerFullAccess,
-                permission_profile: Some(
-                    codex_protocol::models::PermissionProfile::from_legacy_sandbox_policy(
-                        &codex_protocol::protocol::SandboxPolicy::DangerFullAccess,
-                    )
-                    .into(),
-                ),
+                active_permission_profile: None,
                 reasoning_effort: None,
             },
         };
@@ -2046,9 +2046,7 @@ mod tests {
                     "sandbox": {
                         "type": "dangerFullAccess"
                     },
-                    "permissionProfile": {
-                        "type": "disabled"
-                    },
+                    "activePermissionProfile": null,
                     "reasoningEffort": null
                 }
             }),
@@ -2237,6 +2235,23 @@ mod tests {
                     "cursor": null,
                     "includeHidden": null
                 }
+            }),
+            serde_json::to_value(&request)?,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn serialize_model_provider_capabilities_read() -> Result<()> {
+        let request = ClientRequest::ModelProviderCapabilitiesRead {
+            request_id: RequestId::Integer(7),
+            params: v2::ModelProviderCapabilitiesReadParams {},
+        };
+        assert_eq!(
+            json!({
+                "method": "modelProvider/capabilities/read",
+                "id": 7,
+                "params": {}
             }),
             serde_json::to_value(&request)?,
         );

@@ -130,6 +130,26 @@
       "title": "AccountUpdatedNotification",
       "type": "object"
     },
+    "ActivePermissionProfile": {
+      "properties": {
+        "extends": {
+          "default": null,
+          "description": "Parent profile identifier once permissions profiles support inheritance. This is currently always `null`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Identifier from `default_permissions`, such as a built-in `:workspace` profile or a user-defined `[permissions.<id>]` profile.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
     "AddCreditsNudgeCreditType": {
       "enum": [
         "credits",
@@ -1970,6 +1990,30 @@
             "params"
           ],
           "title": "Model/listRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "modelProvider/capabilities/read"
+              ],
+              "title": "ModelProvider/capabilities/readRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ModelProviderCapabilitiesReadParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "ModelProvider/capabilities/readRequest",
           "type": "object"
         },
         {
@@ -7689,6 +7733,32 @@
       "title": "ModelListResponse",
       "type": "object"
     },
+    "ModelProviderCapabilitiesReadParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ModelProviderCapabilitiesReadParams",
+      "type": "object"
+    },
+    "ModelProviderCapabilitiesReadResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "imageGeneration": {
+          "type": "boolean"
+        },
+        "namespaceTools": {
+          "type": "boolean"
+        },
+        "webSearch": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "imageGeneration",
+        "namespaceTools",
+        "webSearch"
+      ],
+      "title": "ModelProviderCapabilitiesReadResponse",
+      "type": "object"
+    },
     "ModelRerouteReason": {
       "enum": [
         "highRiskCyberActivity"
@@ -12554,7 +12624,7 @@
               "$ref": "#/definitions/SandboxPolicy"
             }
           ],
-          "description": "Legacy sandbox policy retained for compatibility. New clients should use `permissionProfile` when present as the canonical active permissions view."
+          "description": "Legacy sandbox policy retained for compatibility. New clients should use `activePermissionProfile` when they need stable permissions profile identity."
         },
         "serviceTier": {
           "anyOf": [
@@ -14065,7 +14135,7 @@
               "$ref": "#/definitions/SandboxPolicy"
             }
           ],
-          "description": "Legacy sandbox policy retained for compatibility. New clients should use `permissionProfile` when present as the canonical active permissions view."
+          "description": "Legacy sandbox policy retained for compatibility. New clients should use `activePermissionProfile` when they need stable permissions profile identity."
         },
         "serviceTier": {
           "anyOf": [
@@ -14369,7 +14439,7 @@
               "$ref": "#/definitions/SandboxPolicy"
             }
           ],
-          "description": "Legacy sandbox policy retained for compatibility. New clients should use `permissionProfile` when present as the canonical active permissions view."
+          "description": "Legacy sandbox policy retained for compatibility. New clients should use `activePermissionProfile` when they need stable permissions profile identity."
         },
         "serviceTier": {
           "anyOf": [

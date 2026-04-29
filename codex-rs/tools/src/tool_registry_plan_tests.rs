@@ -1683,7 +1683,7 @@ fn tool_suggest_is_not_registered_without_feature_flag() {
     assert!(
         !tools
             .iter()
-            .any(|tool| tool.name() == TOOL_SUGGEST_TOOL_NAME)
+            .any(|tool| tool.name() == TOOL_SUGGEST_TOOL_NAMESPACE)
     );
 }
 
@@ -1708,7 +1708,7 @@ fn tool_suggest_can_be_registered_without_search_tool() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-    let (tools, _) = build_specs_with_discoverable_tools(
+    let (tools, handlers) = build_specs_with_discoverable_tools(
         &tools_config,
         /*mcp_tools*/ None,
         /*deferred_mcp_tools*/ None,
@@ -1720,14 +1720,17 @@ fn tool_suggest_can_be_registered_without_search_tool() {
         &[],
     );
 
-    assert_contains_tool_names(&tools, &[TOOL_SUGGEST_TOOL_NAME]);
-    let tool_suggest = find_tool(&tools, TOOL_SUGGEST_TOOL_NAME);
-    assert!(tool_suggest.supports_parallel_tool_calls);
+    assert_contains_tool_names(&tools, &[TOOL_SUGGEST_TOOL_NAMESPACE]);
     assert_lacks_tool_name(&tools, TOOL_SEARCH_TOOL_NAME);
 
-    let ToolSpec::Function(ResponsesApiTool { description, .. }) = &tool_suggest.spec else {
-        panic!("expected function tool");
-    };
+    let tool_suggest =
+        find_namespace_function_tool(&tools, TOOL_SUGGEST_TOOL_NAMESPACE, TOOL_SUGGEST_TOOL_NAME);
+    let ResponsesApiTool { description, .. } = tool_suggest;
+    assert!(!find_tool(&tools, TOOL_SUGGEST_TOOL_NAMESPACE).supports_parallel_tool_calls);
+    assert!(handlers.contains(&ToolHandlerSpec {
+        name: ToolName::namespaced(TOOL_SUGGEST_TOOL_NAMESPACE, TOOL_SUGGEST_TOOL_NAME),
+        kind: ToolHandlerKind::ToolSuggest,
+    }));
     assert!(description.contains(
         "Use this tool only to ask the user to install one known plugin or connector from the list below. The list contains known candidates that are not currently installed."
     ));
@@ -1785,19 +1788,17 @@ fn tool_suggest_description_lists_discoverable_tools() {
         &[],
     );
     assert!(handlers.contains(&ToolHandlerSpec {
-        name: ToolName::plain(TOOL_SUGGEST_TOOL_NAME),
+        name: ToolName::namespaced(TOOL_SUGGEST_TOOL_NAMESPACE, TOOL_SUGGEST_TOOL_NAME),
         kind: ToolHandlerKind::ToolSuggest,
     }));
 
-    let tool_suggest = find_tool(&tools, TOOL_SUGGEST_TOOL_NAME);
-    let ToolSpec::Function(ResponsesApiTool {
+    let tool_suggest =
+        find_namespace_function_tool(&tools, TOOL_SUGGEST_TOOL_NAMESPACE, TOOL_SUGGEST_TOOL_NAME);
+    let ResponsesApiTool {
         description,
         parameters,
         ..
-    }) = &tool_suggest.spec
-    else {
-        panic!("expected function tool");
-    };
+    } = tool_suggest;
     assert!(description.contains(
         "Use this tool only to ask the user to install one known plugin or connector from the list below. The list contains known candidates that are not currently installed."
     ));
@@ -1830,7 +1831,7 @@ fn tool_suggest_description_lists_discoverable_tools() {
         "Do not use tool suggestion if the needed tool is already available, found through `tool_search`, or callable after discovery."
     ));
     assert!(description.contains(
-        "If `tool_search` is available, call `tool_search` before calling `tool_suggest`."
+        "If `tool_search` is available, call `tool_search` before calling `tool_suggest_tool`."
     ));
     assert!(!description.contains("targeted lookup"));
     assert!(!description.contains("broad or speculative searches"));

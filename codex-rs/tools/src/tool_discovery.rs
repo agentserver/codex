@@ -15,7 +15,8 @@ use std::collections::BTreeMap;
 const TUI_CLIENT_NAME: &str = "codex-tui";
 pub const TOOL_SEARCH_TOOL_NAME: &str = "tool_search";
 pub const TOOL_SEARCH_DEFAULT_LIMIT: usize = 8;
-pub const TOOL_SUGGEST_TOOL_NAME: &str = "tool_suggest";
+pub const TOOL_SUGGEST_TOOL_NAMESPACE: &str = "tool_suggest";
+pub const TOOL_SUGGEST_TOOL_NAME: &str = "tool_suggest_tool";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolSearchSourceInfo {
@@ -302,22 +303,26 @@ pub fn create_tool_suggest_tool(discoverable_tools: &[ToolSuggestEntry]) -> Tool
         "# Tool suggestion discovery\n\nUse this tool only to ask the user to install one known plugin or connector from the list below. The list contains known candidates that are not currently installed.\n\nUse this ONLY when all of the following are true:\n- The user explicitly wants a specific plugin or connector that is not already available in the current context or active `tools` list.\n- `{TOOL_SEARCH_TOOL_NAME}` is not available, or it has already been called and did not find or make the requested tool callable.\n- The tool is one of the known installable plugins or connectors listed below. Only ask to install tools from this list.\n\nDo not use tool suggestion for adjacent capabilities, broad recommendations, or tools that merely seem useful. The user's intent must clearly match one listed tool.\n\nKnown plugins/connectors available to install:\n{discoverable_tools}\n\nWorkflow:\n\n1. Check the current context and active `tools` list first. If `{TOOL_SEARCH_TOOL_NAME}` is available, call `{TOOL_SEARCH_TOOL_NAME}` before calling `{TOOL_SUGGEST_TOOL_NAME}`. Do not use tool suggestion if the needed tool is already available, found through `{TOOL_SEARCH_TOOL_NAME}`, or callable after discovery.\n2. Match the user's explicit request against the known plugin/connector list above. Only proceed when one listed plugin or connector exactly fits.\n3. If we found both connectors and plugins to suggest, use plugins first, only use connectors if the corresponding plugin is installed but the connector is not.\n4. If one tool clearly fits, call `{TOOL_SUGGEST_TOOL_NAME}` with:\n   - `tool_type`: `connector` or `plugin`\n   - `action_type`: `install`\n   - `tool_id`: exact id from the known plugin/connector list above\n   - `suggest_reason`: concise one-line user-facing reason this tool can help with the current request\n5. After the suggestion flow completes:\n   - if the user finished the install flow, continue by searching again or using the newly available tool\n   - if the user did not finish, continue without that tool, and don't suggest that tool again unless the user explicitly asks for it.\n\nIMPORTANT: DO NOT call this tool in parallel with other tools."
     );
 
-    ToolSpec::Function(ResponsesApiTool {
-        name: TOOL_SUGGEST_TOOL_NAME.to_string(),
-        description,
-        strict: false,
-        defer_loading: None,
-        parameters: JsonSchema::object(
-            properties,
-            Some(vec![
-                "tool_type".to_string(),
-                "action_type".to_string(),
-                "tool_id".to_string(),
-                "suggest_reason".to_string(),
-            ]),
-            Some(false.into()),
-        ),
-        output_schema: None,
+    ToolSpec::Namespace(ResponsesApiNamespace {
+        name: TOOL_SUGGEST_TOOL_NAMESPACE.to_string(),
+        description: default_namespace_description(TOOL_SUGGEST_TOOL_NAMESPACE),
+        tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+            name: TOOL_SUGGEST_TOOL_NAME.to_string(),
+            description,
+            strict: false,
+            defer_loading: None,
+            parameters: JsonSchema::object(
+                properties,
+                Some(vec![
+                    "tool_type".to_string(),
+                    "action_type".to_string(),
+                    "tool_id".to_string(),
+                    "suggest_reason".to_string(),
+                ]),
+                Some(false.into()),
+            ),
+            output_schema: None,
+        })],
     })
 }
 

@@ -10,19 +10,21 @@ use codex_login::CodexAuth;
 use codex_models_manager::bundled_models_response;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
+use codex_tools::TOOL_SEARCH_TOOL_NAME;
+use codex_tools::TOOL_SUGGEST_TOOL_NAME;
+use codex_tools::TOOL_SUGGEST_TOOL_NAMESPACE;
 use core_test_support::apps_test_server::AppsTestServer;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_response_created;
 use core_test_support::responses::mount_sse_once;
+use core_test_support::responses::namespace_child_tool;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::test_codex;
 use serde_json::Value;
 
-const TOOL_SEARCH_TOOL_NAME: &str = "tool_search";
-const TOOL_SUGGEST_TOOL_NAME: &str = "tool_suggest";
 const DISCOVERABLE_GMAIL_ID: &str = "connector_68df038e0ba48191908c8434991bbac2";
 
 fn tool_names(body: &Value) -> Vec<String> {
@@ -40,22 +42,6 @@ fn tool_names(body: &Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-fn function_tool_description(body: &Value, name: &str) -> Option<String> {
-    body.get("tools")
-        .and_then(Value::as_array)
-        .and_then(|tools| {
-            tools.iter().find_map(|tool| {
-                if tool.get("name").and_then(Value::as_str) == Some(name) {
-                    tool.get("description")
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                } else {
-                    None
-                }
-            })
-        })
 }
 
 fn configure_apps_without_search_tool(config: &mut Config, apps_base_url: &str) {
@@ -125,12 +111,15 @@ async fn tool_suggest_is_available_without_search_tool_after_discovery_attempts(
         "tools list should not include {TOOL_SEARCH_TOOL_NAME}: {tools:?}"
     );
     assert!(
-        tools.iter().any(|name| name == TOOL_SUGGEST_TOOL_NAME),
-        "tools list should include {TOOL_SUGGEST_TOOL_NAME}: {tools:?}"
+        tools.iter().any(|name| name == TOOL_SUGGEST_TOOL_NAMESPACE),
+        "tools list should include {TOOL_SUGGEST_TOOL_NAMESPACE}: {tools:?}"
     );
 
     let description =
-        function_tool_description(&body, TOOL_SUGGEST_TOOL_NAME).expect("description");
+        namespace_child_tool(&body, TOOL_SUGGEST_TOOL_NAMESPACE, TOOL_SUGGEST_TOOL_NAME)
+            .and_then(|tool| tool.get("description"))
+            .and_then(Value::as_str)
+            .expect("description");
     assert!(description.contains(
         "Use this tool only to ask the user to install one known plugin or connector from the list below"
     ));

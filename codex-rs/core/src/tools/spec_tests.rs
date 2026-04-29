@@ -25,7 +25,7 @@ use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ResponsesApiTool;
 use codex_tools::ShellCommandBackendConfig;
 use codex_tools::TOOL_SEARCH_TOOL_NAME;
-use codex_tools::TOOL_SUGGEST_TOOL_NAME;
+use codex_tools::TOOL_SUGGEST_TOOL_NAMESPACE;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use codex_tools::ToolsConfig;
@@ -856,7 +856,7 @@ async fn tool_suggest_requires_apps_and_plugins_features() {
         assert!(
             !tools
                 .iter()
-                .any(|tool| tool.name() == TOOL_SUGGEST_TOOL_NAME),
+                .any(|tool| tool.name() == TOOL_SUGGEST_TOOL_NAMESPACE),
             "tool_suggest should be absent when {disabled_feature:?} is disabled"
         );
     }

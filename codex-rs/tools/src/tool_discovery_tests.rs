@@ -62,10 +62,10 @@ fn create_tool_suggest_tool_uses_plugin_summary_fallback() {
         "- GitHub (id: `github`, type: plugin, action: install): skills; MCP servers: github-mcp; app connectors: github-app\n",
         "- Slack (id: `slack@openai-curated`, type: connector, action: install): No description provided.\n\n",
         "Workflow:\n\n",
-        "1. Check the current context and active `tools` list first. If `tool_search` is available, call `tool_search` before calling `tool_suggest`. Do not use tool suggestion if the needed tool is already available, found through `tool_search`, or callable after discovery.\n",
+        "1. Check the current context and active `tools` list first. If `tool_search` is available, call `tool_search` before calling `tool_suggest_tool`. Do not use tool suggestion if the needed tool is already available, found through `tool_search`, or callable after discovery.\n",
         "2. Match the user's explicit request against the known plugin/connector list above. Only proceed when one listed plugin or connector exactly fits.\n",
         "3. If we found both connectors and plugins to suggest, use plugins first, only use connectors if the corresponding plugin is installed but the connector is not.\n",
-        "4. If one tool clearly fits, call `tool_suggest` with:\n",
+        "4. If one tool clearly fits, call `tool_suggest_tool` with:\n",
         "   - `tool_type`: `connector` or `plugin`\n",
         "   - `action_type`: `install`\n",
         "   - `tool_id`: exact id from the known plugin/connector list above\n",
@@ -97,47 +97,51 @@ fn create_tool_suggest_tool_uses_plugin_summary_fallback() {
                 app_connector_ids: vec!["github-app".to_string()],
             },
         ]),
-        ToolSpec::Function(ResponsesApiTool {
-            name: "tool_suggest".to_string(),
-            description: expected_description.to_string(),
-            strict: false,
-            defer_loading: None,
-            parameters: JsonSchema::object(BTreeMap::from([
-                    (
-                        "action_type".to_string(),
-                        JsonSchema::string(Some(
-                                "Suggested action for the tool. Use \"install\"."
-                                    .to_string(),
-                            ),),
-                    ),
-                    (
-                        "suggest_reason".to_string(),
-                        JsonSchema::string(Some(
-                                "Concise one-line user-facing reason why this tool can help with the current request."
-                                    .to_string(),
-                            ),),
-                    ),
-                    (
-                        "tool_id".to_string(),
-                        JsonSchema::string(Some(
-                                "Connector or plugin id to suggest."
-                                    .to_string(),
-                            ),),
-                    ),
-                    (
+        ToolSpec::Namespace(ResponsesApiNamespace {
+            name: TOOL_SUGGEST_TOOL_NAMESPACE.to_string(),
+            description: "Tools in the tool_suggest namespace.".to_string(),
+            tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+                name: TOOL_SUGGEST_TOOL_NAME.to_string(),
+                description: expected_description.to_string(),
+                strict: false,
+                defer_loading: None,
+                parameters: JsonSchema::object(BTreeMap::from([
+                        (
+                            "action_type".to_string(),
+                            JsonSchema::string(Some(
+                                    "Suggested action for the tool. Use \"install\"."
+                                        .to_string(),
+                                ),),
+                        ),
+                        (
+                            "suggest_reason".to_string(),
+                            JsonSchema::string(Some(
+                                    "Concise one-line user-facing reason why this tool can help with the current request."
+                                        .to_string(),
+                                ),),
+                        ),
+                        (
+                            "tool_id".to_string(),
+                            JsonSchema::string(Some(
+                                    "Connector or plugin id to suggest."
+                                        .to_string(),
+                                ),),
+                        ),
+                        (
+                            "tool_type".to_string(),
+                            JsonSchema::string(Some(
+                                    "Type of discoverable tool to suggest. Use \"connector\" or \"plugin\"."
+                                        .to_string(),
+                                ),),
+                        ),
+                    ]), Some(vec![
                         "tool_type".to_string(),
-                        JsonSchema::string(Some(
-                                "Type of discoverable tool to suggest. Use \"connector\" or \"plugin\"."
-                                    .to_string(),
-                            ),),
-                    ),
-                ]), Some(vec![
-                    "tool_type".to_string(),
-                    "action_type".to_string(),
-                    "tool_id".to_string(),
-                    "suggest_reason".to_string(),
-                ]), Some(false.into())),
-            output_schema: None,
+                        "action_type".to_string(),
+                        "tool_id".to_string(),
+                        "suggest_reason".to_string(),
+                    ]), Some(false.into())),
+                output_schema: None,
+            })],
         })
     );
 }

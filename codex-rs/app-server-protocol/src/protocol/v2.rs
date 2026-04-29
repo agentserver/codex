@@ -1093,6 +1093,15 @@ pub enum ExternalAgentConfigMigrationItemType {
     #[serde(rename = "MCP_SERVER_CONFIG")]
     #[ts(rename = "MCP_SERVER_CONFIG")]
     McpServerConfig,
+    #[serde(rename = "SUBAGENTS")]
+    #[ts(rename = "SUBAGENTS")]
+    Subagents,
+    #[serde(rename = "HOOKS")]
+    #[ts(rename = "HOOKS")]
+    Hooks,
+    #[serde(rename = "COMMANDS")]
+    #[ts(rename = "COMMANDS")]
+    Commands,
     #[serde(rename = "SESSIONS")]
     #[ts(rename = "SESSIONS")]
     Sessions,
@@ -1122,11 +1131,47 @@ pub struct SessionMigration {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
+pub struct McpServerMigration {
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct HookMigration {
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct SubagentMigration {
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct CommandMigration {
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
 pub struct MigrationDetails {
     #[serde(default)]
     pub plugins: Vec<PluginsMigration>,
     #[serde(default)]
     pub sessions: Vec<SessionMigration>,
+    #[serde(default)]
+    pub mcp_servers: Vec<McpServerMigration>,
+    #[serde(default)]
+    pub hooks: Vec<HookMigration>,
+    #[serde(default)]
+    pub subagents: Vec<SubagentMigration>,
+    #[serde(default)]
+    pub commands: Vec<CommandMigration>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -7911,7 +7956,7 @@ mod tests {
                         marketplace_name: "team-marketplace".to_string(),
                         plugin_names: vec!["asana".to_string()],
                     }],
-                    sessions: Vec::new(),
+                    ..Default::default()
                 }),
             }
         );
@@ -7948,7 +7993,7 @@ mod tests {
                             marketplace_name: "team-marketplace".to_string(),
                             plugin_names: vec!["asana".to_string()],
                         }],
-                        sessions: Vec::new(),
+                        ..Default::default()
                     }),
                 }],
             }

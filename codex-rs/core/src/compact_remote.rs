@@ -273,8 +273,11 @@ fn compact_summary_from_history(items: &[ResponseItem]) -> String {
         .iter()
         .rev()
         .find_map(|item| match item {
-            ResponseItem::Message { content, .. } => content_items_to_text(content)
-                .map(|summary| strip_summary_prefix(&summary).to_string()),
+            ResponseItem::Message { content, .. } => {
+                let summary = content_items_to_text(content)?;
+                crate::compact::is_summary_message(&summary)
+                    .then(|| strip_summary_prefix(&summary).to_string())
+            }
             _ => None,
         })
         .unwrap_or_default()
@@ -345,6 +348,32 @@ mod tests {
         let summary = compact_summary_from_history(&items);
 
         assert_eq!("", summary);
+    }
+
+    #[test]
+    fn compact_summary_from_history_ignores_regular_messages() {
+        let items = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: format!("{}\nplain compact summary", crate::compact::SUMMARY_PREFIX),
+                }],
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "A regular assistant note after compaction.".to_string(),
+                }],
+                phase: None,
+            },
+        ];
+
+        let summary = compact_summary_from_history(&items);
+
+        assert_eq!("plain compact summary", summary);
     }
 }
 

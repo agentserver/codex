@@ -316,6 +316,11 @@ fn wsl_clipboard_copy(_text: &str) -> Result<(), String> {
 /// paste buffer, and forward the contents to the outer terminal clipboard when
 /// possible without relying on DCS passthrough.
 fn tmux_clipboard_copy(text: &str) -> Result<(), String> {
+    tmux_clipboard_copy_ready(
+        || tmux_command_output(["show-options", "-gv", "set-clipboard"]),
+        || tmux_command_output(["info"]),
+    )?;
+
     let mut child = std::process::Command::new("tmux")
         .args(["load-buffer", "-w", "-"])
         .stdin(std::process::Stdio::piped())
@@ -344,6 +349,43 @@ fn tmux_clipboard_copy(text: &str) -> Result<(), String> {
 
     if output.status.success() {
         Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            let status = output.status;
+            Err(format!("tmux exited with status {status}"))
+        } else {
+            Err(format!("tmux failed: {stderr}"))
+        }
+    }
+}
+
+/// Verify that tmux is configured to forward clipboard writes to the outer terminal.
+fn tmux_clipboard_copy_ready(
+    set_clipboard_fn: impl FnOnce() -> Result<String, String>,
+    tmux_info_fn: impl FnOnce() -> Result<String, String>,
+) -> Result<(), String> {
+    let set_clipboard = set_clipboard_fn()?;
+    if set_clipboard.trim() == "off" {
+        return Err("tmux clipboard forwarding is disabled".to_string());
+    }
+
+    let tmux_info = tmux_info_fn()?;
+    if tmux_info.lines().any(|line| line.contains("Ms: [missing]")) {
+        return Err("tmux clipboard forwarding is unavailable: missing Ms capability".to_string());
+    }
+
+    Ok(())
+}
+
+fn tmux_command_output<const N: usize>(args: [&str; N]) -> Result<String, String> {
+    let output = std::process::Command::new("tmux")
+        .args(args)
+        .output()
+        .map_err(|e| format!("failed to spawn tmux: {e}"))?;
+
+    if output.status.success() {
+        String::from_utf8(output.stdout).map_err(|e| format!("tmux output was not UTF-8: {e}"))
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if stderr.is_empty() {
@@ -467,6 +509,7 @@ mod tests {
     use super::OSC52_MAX_RAW_BYTES;
     use super::copy_to_clipboard_with;
     use super::osc52_sequence;
+    use super::tmux_clipboard_copy_ready;
     use super::write_osc52_to_writer;
 
     fn remote_environment() -> CopyEnvironment {
@@ -704,6 +747,42 @@ mod tests {
         assert_eq!(
             error,
             "terminal clipboard copy failed over SSH: tmux clipboard: tmux unavailable; OSC 52 fallback: osc blocked"
+        );
+    }
+
+    #[test]
+    fn tmux_clipboard_copy_ready_accepts_forwarding_configuration() {
+        let result = tmux_clipboard_copy_ready(
+            || Ok("external\n".to_string()),
+            || Ok("193: Ms: (string) \\033]52;%p1%s;%p2%s\\a\n".to_string()),
+        );
+
+        assert_eq!(result, Ok(()));
+    }
+
+    #[test]
+    fn tmux_clipboard_copy_ready_rejects_disabled_forwarding() {
+        let result = tmux_clipboard_copy_ready(
+            || Ok("off\n".to_string()),
+            || panic!("tmux info should not be queried when forwarding is disabled"),
+        );
+
+        assert_eq!(
+            result,
+            Err("tmux clipboard forwarding is disabled".to_string())
+        );
+    }
+
+    #[test]
+    fn tmux_clipboard_copy_ready_rejects_missing_ms_capability() {
+        let result = tmux_clipboard_copy_ready(
+            || Ok("external\n".to_string()),
+            || Ok("193: Ms: [missing]\n".to_string()),
+        );
+
+        assert_eq!(
+            result,
+            Err("tmux clipboard forwarding is unavailable: missing Ms capability".to_string())
         );
     }
 

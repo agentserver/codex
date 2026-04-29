@@ -10,6 +10,7 @@ use serde_json::Value;
 use crate::compact::content_items_to_text;
 use crate::event_mapping::is_contextual_user_message_content;
 use crate::session::session::Session;
+use crate::state::history as session_history;
 use codex_utils_output_truncation::approx_bytes_for_tokens;
 use codex_utils_output_truncation::approx_token_count;
 use codex_utils_output_truncation::approx_tokens_from_byte_count;
@@ -93,9 +94,10 @@ pub(crate) async fn build_guardian_prompt_items(
     mode: GuardianPromptMode,
 ) -> serde_json::Result<GuardianPromptItems> {
     let history = session.clone_history().await;
-    let transcript_entries = collect_guardian_transcript_entries(history.raw_items());
+    let history_items = session_history::raw_items(&history);
+    let transcript_entries = collect_guardian_transcript_entries(&history_items);
     let transcript_cursor = GuardianTranscriptCursor {
-        parent_history_version: history.history_version(),
+        parent_history_version: session.history_version().await,
         transcript_entry_count: transcript_entries.len(),
     };
     let planned_action_json = format_guardian_action_pretty(&request)?;

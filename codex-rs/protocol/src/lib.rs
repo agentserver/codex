@@ -12,6 +12,7 @@ pub mod dynamic_tools;
 pub mod error;
 pub mod exec_output;
 pub mod items;
+pub mod journal;
 pub mod mcp;
 pub mod memory_citation;
 pub mod message_history;

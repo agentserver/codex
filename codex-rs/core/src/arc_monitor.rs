@@ -9,6 +9,7 @@ use crate::compact::content_items_to_text;
 use crate::event_mapping::is_contextual_user_message_content;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
+use crate::state::history as session_history;
 use codex_login::default_client::build_reqwest_client;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::ResponseItem;
@@ -224,7 +225,8 @@ async fn build_arc_monitor_request(
     protection_client_callsite: &'static str,
 ) -> ArcMonitorRequest {
     let history = sess.clone_history().await;
-    let mut messages = build_arc_monitor_messages(history.raw_items());
+    let history_items = session_history::raw_items(&history);
+    let mut messages = build_arc_monitor_messages(&history_items);
     if messages.is_empty() {
         messages.push(build_arc_monitor_message(
             "user",

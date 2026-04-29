@@ -7,6 +7,7 @@
 mod error;
 #[cfg(debug_assertions)]
 mod in_memory;
+mod journal_writer;
 mod live_thread;
 mod local;
 mod remote;
@@ -19,6 +20,7 @@ pub use error::ThreadStoreResult;
 pub use in_memory::InMemoryThreadStore;
 #[cfg(debug_assertions)]
 pub use in_memory::InMemoryThreadStoreCalls;
+pub use journal_writer::JournalWriter;
 pub use live_thread::LiveThread;
 pub use live_thread::LiveThreadInitGuard;
 pub use local::LocalThreadStore;

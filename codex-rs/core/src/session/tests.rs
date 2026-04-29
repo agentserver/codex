@@ -9,6 +9,7 @@ use crate::function_tool::FunctionCallError;
 use crate::shell::default_user_shell;
 use crate::skills::SkillRenderSideEffects;
 use crate::skills::render::SkillMetadataBudget;
+use crate::state::history as session_history;
 use crate::test_support::models_manager_with_provider;
 use crate::tools::format_exec_output_str;
 use codex_config::ConfigLayerStack;
@@ -20,6 +21,7 @@ use codex_config::RequirementSource;
 use codex_config::Sourced;
 use codex_config::loader::project_trust_key;
 use codex_config::types::ToolSuggestDisabledTool;
+use codex_journal::Journal;
 
 use codex_features::Feature;
 use codex_features::Features;
@@ -78,6 +80,63 @@ use codex_execpolicy::Policy;
 use codex_network_proxy::NetworkProxyConfig;
 use codex_otel::MetricsClient;
 use codex_otel::MetricsConfig;
+
+trait JournalTestExt {
+    fn raw_items(&self) -> Vec<ResponseItem>;
+    fn for_prompt(
+        &self,
+        input_modalities: &[codex_protocol::openai_models::InputModality],
+    ) -> Vec<ResponseItem>;
+    fn estimate_token_count(&self, turn_context: &TurnContext) -> Option<i64>;
+    fn estimate_token_count_with_base_instructions(
+        &self,
+        base_instructions: &BaseInstructions,
+    ) -> Option<i64>;
+    fn record_items<I>(
+        &mut self,
+        items: I,
+        policy: codex_utils_output_truncation::TruncationPolicy,
+    ) where
+        I: IntoIterator,
+        I::Item: std::ops::Deref<Target = ResponseItem>;
+    fn replace(&mut self, items: Vec<ResponseItem>);
+}
+
+impl JournalTestExt for Journal {
+    fn raw_items(&self) -> Vec<ResponseItem> {
+        session_history::raw_items(self)
+    }
+
+    fn for_prompt(
+        &self,
+        input_modalities: &[codex_protocol::openai_models::InputModality],
+    ) -> Vec<ResponseItem> {
+        session_history::for_prompt(self, input_modalities)
+    }
+
+    fn estimate_token_count(&self, turn_context: &TurnContext) -> Option<i64> {
+        session_history::estimate_token_count(self, turn_context)
+    }
+
+    fn estimate_token_count_with_base_instructions(
+        &self,
+        base_instructions: &BaseInstructions,
+    ) -> Option<i64> {
+        session_history::estimate_token_count_with_base_instructions(self, base_instructions)
+    }
+
+    fn record_items<I>(&mut self, items: I, policy: codex_utils_output_truncation::TruncationPolicy)
+    where
+        I: IntoIterator,
+        I::Item: std::ops::Deref<Target = ResponseItem>,
+    {
+        session_history::record_items(self, items, policy);
+    }
+
+    fn replace(&mut self, items: Vec<ResponseItem>) {
+        session_history::replace_history(self, items);
+    }
+}
 use codex_otel::THREAD_SKILLS_DESCRIPTION_TRUNCATED_CHARS_METRIC;
 use codex_otel::THREAD_SKILLS_ENABLED_TOTAL_METRIC;
 use codex_otel::THREAD_SKILLS_KEPT_TOTAL_METRIC;
@@ -7629,7 +7688,7 @@ async fn sample_rollout(
     _turn_context: &TurnContext,
 ) -> (Vec<RolloutItem>, Vec<ResponseItem>) {
     let mut rollout_items = Vec::new();
-    let mut live_history = ContextManager::new();
+    let mut live_history = Journal::new();
 
     // Use the same turn_context source as record_initial_history so model_info (and thus
     // personality_spec) matches reconstruction.

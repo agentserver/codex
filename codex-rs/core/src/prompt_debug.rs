@@ -18,6 +18,7 @@ use crate::config::Config;
 use crate::session::session::Session;
 use crate::session::turn::build_prompt;
 use crate::session::turn::built_tools;
+use crate::state::history as session_history;
 use crate::thread_manager::ThreadManager;
 
 /// Build the model-visible `input` list for a single debug turn.
@@ -73,10 +74,9 @@ pub(crate) async fn build_prompt_input_from_session(
             .await;
     }
 
-    let prompt_input = sess
-        .clone_history()
-        .await
-        .for_prompt(&turn_context.model_info.input_modalities);
+    let history = sess.clone_history().await;
+    let prompt_input =
+        session_history::for_prompt(&history, &turn_context.model_info.input_modalities);
     let router = built_tools(
         sess,
         turn_context.as_ref(),

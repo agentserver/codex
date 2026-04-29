@@ -559,7 +559,7 @@ pub struct Config {
     /// Additional filenames to try when looking for project-level docs.
     pub project_doc_fallback_filenames: Vec<String>,
 
-    /// Token budget applied when storing tool/function outputs in the context manager.
+    /// Token budget applied when storing tool/function outputs in thread history.
     pub tool_output_token_limit: Option<usize>,
 
     /// Maximum number of agent threads that can be open concurrently.

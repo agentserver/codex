@@ -4,7 +4,7 @@ use codex_protocol::ThreadId;
 pub type ThreadStoreResult<T> = Result<T, ThreadStoreError>;
 
 /// Error type shared by thread-store implementations.
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ThreadStoreError {
     /// The requested thread does not exist in this store.
     #[error("thread {thread_id} not found")]

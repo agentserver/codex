@@ -3885,7 +3885,7 @@
       "type": "boolean"
     },
     "tool_output_token_limit": {
-      "description": "Token budget applied when storing tool/function outputs in the context manager.",
+      "description": "Token budget applied when storing tool/function outputs in thread history.",
       "format": "uint",
       "minimum": 0.0,
       "type": "integer"

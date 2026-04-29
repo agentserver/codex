@@ -7,8 +7,10 @@ use crate::config::Config;
 use crate::config::ConfigBuilder;
 use crate::context::ContextualUserFragment;
 use crate::context::SubagentNotification;
+use crate::state::history as session_history;
 use assert_matches::assert_matches;
 use codex_features::Feature;
+use codex_journal::Journal;
 use codex_login::CodexAuth;
 use codex_protocol::AgentPath;
 use codex_protocol::config_types::ModeKind;
@@ -33,6 +35,16 @@ use tokio::time::Duration;
 use tokio::time::sleep;
 use tokio::time::timeout;
 use toml::Value as TomlValue;
+
+trait JournalTestExt {
+    fn raw_items(&self) -> Vec<ResponseItem>;
+}
+
+impl JournalTestExt for Journal {
+    fn raw_items(&self) -> Vec<ResponseItem> {
+        session_history::raw_items(self)
+    }
+}
 
 async fn test_config_with_cli_overrides(
     cli_overrides: Vec<(String, TomlValue)>,
@@ -796,8 +808,9 @@ async fn spawn_agent_fork_flushes_parent_rollout_before_loading_history() {
         .await
         .expect("child thread should be registered");
     let history = child_thread.codex.session.clone_history().await;
+    let history_items = history.raw_items();
     assert!(
-        history_contains_text(history.raw_items(), "unflushed final answer"),
+        history_contains_text(&history_items, "unflushed final answer"),
         "forked child history should include unflushed assistant final answers after flushing the parent rollout"
     );
 
@@ -906,21 +919,22 @@ async fn spawn_agent_fork_last_n_turns_keeps_only_recent_turns() {
         .await
         .expect("child thread should be registered");
     let history = child_thread.codex.session.clone_history().await;
+    let history_items = history.raw_items();
 
     assert!(
-        !history_contains_text(history.raw_items(), "old parent context"),
+        !history_contains_text(&history_items, "old parent context"),
         "forked child history should drop parent context outside the requested last-N turn window"
     );
     assert!(
-        !history_contains_text(history.raw_items(), "queued message"),
+        !history_contains_text(&history_items, "queued message"),
         "forked child history should drop queued inter-agent messages outside the requested last-N turn window"
     );
     assert!(
-        !history_contains_text(history.raw_items(), "triggered context"),
+        !history_contains_text(&history_items, "triggered context"),
         "forked child history should filter assistant inter-agent messages even when they fall inside the requested last-N turn window"
     );
     assert!(
-        history_contains_text(history.raw_items(), "current parent task"),
+        history_contains_text(&history_items, "current parent task"),
         "forked child history should keep the parent user message from the requested last-N turn window"
     );
 

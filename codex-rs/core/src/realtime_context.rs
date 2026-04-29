@@ -1,6 +1,7 @@
 use crate::compact::content_items_to_text;
 use crate::event_mapping::is_contextual_user_message_content;
 use crate::session::session::Session;
+use crate::state::history as session_history;
 use chrono::Utc;
 use codex_exec_server::LOCAL_FS;
 use codex_git_utils::resolve_root_git_project_for_trust;
@@ -62,7 +63,8 @@ pub(crate) async fn build_realtime_startup_context(
     let config = sess.get_config().await;
     let cwd = config.cwd.clone();
     let history = sess.clone_history().await;
-    let current_thread_section = build_current_thread_section(history.raw_items());
+    let history_items = session_history::raw_items(&history);
+    let current_thread_section = build_current_thread_section(&history_items);
     let recent_threads = load_recent_threads(sess).await;
     let recent_work_section = build_recent_work_section(&cwd, &recent_threads).await;
     let workspace_section = build_workspace_section_with_user_root(&cwd, home_dir()).await;

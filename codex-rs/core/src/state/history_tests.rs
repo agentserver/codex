@@ -1,6 +1,9 @@
 use super::*;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use codex_journal::Journal;
+use codex_journal::history::ORIGINAL_IMAGE_MAX_PATCHES;
+use codex_journal::history::RESIZED_IMAGE_BYTES_ESTIMATE;
 use codex_protocol::AgentPath;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::models::BaseInstructions;
@@ -20,8 +23,11 @@ use codex_protocol::openai_models::default_input_modalities;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::SandboxPolicy;
+use codex_protocol::protocol::TokenUsage;
+use codex_protocol::protocol::TokenUsageInfo;
 use codex_protocol::protocol::TurnContextItem;
 use codex_utils_output_truncation::TruncationPolicy;
+use codex_utils_output_truncation::approx_bytes_for_tokens;
 use codex_utils_output_truncation::truncate_text;
 use image::ImageBuffer;
 use image::ImageFormat;
@@ -33,6 +39,98 @@ use std::path::PathBuf;
 
 const EXEC_FORMAT_MAX_BYTES: usize = 10_000;
 const EXEC_FORMAT_MAX_TOKENS: usize = 2_500;
+
+#[derive(Clone, Default)]
+struct TestHistory {
+    journal: Journal,
+    token_info: Option<TokenUsageInfo>,
+    reference_context_item: Option<TurnContextItem>,
+}
+
+impl TestHistory {
+    fn new() -> Self {
+        Self {
+            journal: Journal::new(),
+            token_info: TokenUsageInfo::new_or_append(
+                &None, &None, /*model_context_window*/ None,
+            ),
+            reference_context_item: None,
+        }
+    }
+
+    fn record_items<I>(&mut self, items: I, policy: TruncationPolicy)
+    where
+        I: IntoIterator,
+        I::Item: std::ops::Deref<Target = ResponseItem>,
+    {
+        super::record_items(&mut self.journal, items, policy);
+    }
+
+    fn raw_items(&self) -> Vec<ResponseItem> {
+        super::raw_items(&self.journal)
+    }
+
+    fn for_prompt(&self, input_modalities: &[InputModality]) -> Vec<ResponseItem> {
+        super::for_prompt(&self.journal, input_modalities)
+    }
+
+    fn estimate_token_count_with_base_instructions(
+        &self,
+        base_instructions: &BaseInstructions,
+    ) -> Option<i64> {
+        super::estimate_token_count_with_base_instructions(&self.journal, base_instructions)
+    }
+
+    fn remove_first_item(&mut self) {
+        super::remove_first_item(&mut self.journal);
+    }
+
+    fn remove_last_item(&mut self) -> bool {
+        super::remove_last_item(&mut self.journal)
+    }
+
+    fn replace_last_turn_images(&mut self, placeholder: &str) -> bool {
+        super::replace_last_turn_images(&mut self.journal, placeholder)
+    }
+
+    fn drop_last_n_user_turns(&mut self, num_turns: u32) {
+        super::drop_last_n_user_turns(
+            &mut self.journal,
+            &mut self.reference_context_item,
+            num_turns,
+        );
+    }
+
+    fn update_token_info(&mut self, usage: &TokenUsage, model_context_window: Option<i64>) {
+        super::update_token_info(&mut self.token_info, usage, model_context_window);
+    }
+
+    fn get_total_token_usage(&self, server_reasoning_included: bool) -> i64 {
+        super::get_total_token_usage(&self.journal, &self.token_info, server_reasoning_included)
+    }
+
+    fn set_reference_context_item(&mut self, item: Option<TurnContextItem>) {
+        self.reference_context_item = item;
+    }
+
+    fn reference_context_item(&self) -> Option<TurnContextItem> {
+        self.reference_context_item.clone()
+    }
+
+    fn normalize_history(&mut self, input_modalities: &[InputModality]) {
+        let mut items = self.raw_items();
+        super::normalize_history(&mut items, input_modalities);
+        super::replace_history(&mut self.journal, items);
+    }
+
+    fn get_non_last_reasoning_items_tokens(&self) -> i64 {
+        super::get_non_last_reasoning_items_tokens(&self.raw_items())
+    }
+
+    fn items_after_last_model_generated_item(&self) -> Vec<ResponseItem> {
+        super::items_after_last_model_generated_item(&self.raw_items()).to_vec()
+    }
+}
 
 fn assistant_msg(text: &str) -> ResponseItem {
     ResponseItem::Message {
@@ -63,8 +161,8 @@ fn inter_agent_assistant_msg(text: &str) -> ResponseItem {
     }
 }
 
-fn create_history_with_items(items: Vec<ResponseItem>) -> ContextManager {
-    let mut h = ContextManager::new();
+fn create_history_with_items(items: Vec<ResponseItem>) -> TestHistory {
+    let mut h = TestHistory::new();
     // Use a generous but fixed token budget; tests only rely on truncation
     // behavior, not on a specific model's token limit.
     h.record_items(items.iter(), TruncationPolicy::Tokens(10_000));
@@ -185,7 +283,7 @@ fn approx_token_count_for_text(text: &str) -> i64 {
 
 #[test]
 fn filters_non_api_messages() {
-    let mut h = ContextManager::default();
+    let mut h = TestHistory::default();
     let policy = TruncationPolicy::Tokens(10_000);
     // System message is not API messages; Other is ignored.
     let system = ResponseItem::Message {
@@ -327,7 +425,7 @@ fn drop_last_n_user_turns_treats_inter_agent_assistant_messages_as_instruction_t
 
     history.drop_last_n_user_turns(/*num_turns*/ 1);
 
-    assert_eq!(history.raw_items(), &vec![first_turn, first_reply]);
+    assert_eq!(history.raw_items(), vec![first_turn, first_reply]);
 }
 
 #[test]
@@ -1014,7 +1112,7 @@ fn normalization_retains_local_shell_outputs() {
 
 #[test]
 fn record_items_truncates_function_call_output_content() {
-    let mut history = ContextManager::new();
+    let mut history = TestHistory::new();
     // Any reasonably small token budget works; the test only cares that
     // truncation happens and the marker is present.
     let policy = TruncationPolicy::Tokens(1_000);
@@ -1030,8 +1128,9 @@ fn record_items_truncates_function_call_output_content() {
 
     history.record_items([&item], policy);
 
-    assert_eq!(history.items.len(), 1);
-    match &history.items[0] {
+    let history_items = history.raw_items();
+    assert_eq!(history_items.len(), 1);
+    match &history_items[0] {
         ResponseItem::FunctionCallOutput { output, .. } => {
             let content = output.text_content().unwrap_or_default();
             assert_ne!(content, long_output);
@@ -1050,7 +1149,7 @@ fn record_items_truncates_function_call_output_content() {
 
 #[test]
 fn record_items_truncates_custom_tool_call_output_content() {
-    let mut history = ContextManager::new();
+    let mut history = TestHistory::new();
     let policy = TruncationPolicy::Tokens(1_000);
     let line = "custom output that is very long\n";
     let long_output = line.repeat(2_500);
@@ -1062,8 +1161,9 @@ fn record_items_truncates_custom_tool_call_output_content() {
 
     history.record_items([&item], policy);
 
-    assert_eq!(history.items.len(), 1);
-    match &history.items[0] {
+    let history_items = history.raw_items();
+    assert_eq!(history_items.len(), 1);
+    match &history_items[0] {
         ResponseItem::CustomToolCallOutput { output, .. } => {
             let output = output.text_content().unwrap_or_default();
             assert_ne!(output, long_output);
@@ -1082,7 +1182,7 @@ fn record_items_truncates_custom_tool_call_output_content() {
 
 #[test]
 fn record_items_respects_custom_token_limit() {
-    let mut history = ContextManager::new();
+    let mut history = TestHistory::new();
     let policy = TruncationPolicy::Tokens(10);
     let long_output = "tokenized content repeated many times ".repeat(200);
     let item = ResponseItem::FunctionCallOutput {
@@ -1095,7 +1195,8 @@ fn record_items_respects_custom_token_limit() {
 
     history.record_items([&item], policy);
 
-    let stored = match &history.items[0] {
+    let history_items = history.raw_items();
+    let stored = match &history_items[0] {
         ResponseItem::FunctionCallOutput { output, .. } => output,
         other => panic!("unexpected history item: {other:?}"),
     };

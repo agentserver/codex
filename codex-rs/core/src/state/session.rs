@@ -1,15 +1,17 @@
 //! Session-wide mutable state.
 
+use codex_journal::Journal;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::ResponseItem;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use crate::context_manager::ContextManager;
 use crate::session::PreviousTurnSettings;
 use crate::session::session::SessionConfiguration;
 use crate::session_startup_prewarm::SessionStartupPrewarmHandle;
+use crate::state::history as session_history;
+use crate::state::history::TotalTokenUsageBreakdown;
 use codex_protocol::protocol::RateLimitSnapshot;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::TokenUsageInfo;
@@ -19,7 +21,10 @@ use codex_utils_output_truncation::TruncationPolicy;
 /// Persistent, session-scoped state previously stored directly on `Session`.
 pub(crate) struct SessionState {
     pub(crate) session_configuration: SessionConfiguration,
-    pub(crate) history: ContextManager,
+    journal: Journal,
+    history_version: u64,
+    token_info: Option<TokenUsageInfo>,
+    reference_context_item: Option<TurnContextItem>,
     pub(crate) latest_rate_limits: Option<RateLimitSnapshot>,
     pub(crate) server_reasoning_included: bool,
     pub(crate) dependency_env: HashMap<String, String>,
@@ -39,10 +44,14 @@ pub(crate) struct SessionState {
 impl SessionState {
     /// Create a new session state mirroring previous `State::default()` semantics.
     pub(crate) fn new(session_configuration: SessionConfiguration) -> Self {
-        let history = ContextManager::new();
         Self {
             session_configuration,
-            history,
+            journal: Journal::new(),
+            history_version: 0,
+            token_info: TokenUsageInfo::new_or_append(
+                &None, &None, /*model_context_window*/ None,
+            ),
+            reference_context_item: None,
             latest_rate_limits: None,
             server_reasoning_included: false,
             dependency_env: HashMap::new(),
@@ -62,7 +71,7 @@ impl SessionState {
         I: IntoIterator,
         I::Item: std::ops::Deref<Target = ResponseItem>,
     {
-        self.history.record_items(items, policy);
+        session_history::record_items(&mut self.journal, items, policy);
     }
 
     pub(crate) fn previous_turn_settings(&self) -> Option<PreviousTurnSettings> {
@@ -85,8 +94,8 @@ impl SessionState {
         is_first_turn
     }
 
-    pub(crate) fn clone_history(&self) -> ContextManager {
-        self.history.clone()
+    pub(crate) fn clone_history(&self) -> Journal {
+        self.journal.clone()
     }
 
     pub(crate) fn replace_history(
@@ -94,21 +103,21 @@ impl SessionState {
         items: Vec<ResponseItem>,
         reference_context_item: Option<TurnContextItem>,
     ) {
-        self.history.replace(items);
-        self.history
-            .set_reference_context_item(reference_context_item);
+        session_history::replace_history(&mut self.journal, items);
+        self.history_version = self.history_version.saturating_add(1);
+        self.reference_context_item = reference_context_item;
     }
 
     pub(crate) fn set_token_info(&mut self, info: Option<TokenUsageInfo>) {
-        self.history.set_token_info(info);
+        self.token_info = info;
     }
 
     pub(crate) fn set_reference_context_item(&mut self, item: Option<TurnContextItem>) {
-        self.history.set_reference_context_item(item);
+        self.reference_context_item = item;
     }
 
     pub(crate) fn reference_context_item(&self) -> Option<TurnContextItem> {
-        self.history.reference_context_item()
+        self.reference_context_item.clone()
     }
 
     // Token/rate limit helpers
@@ -117,11 +126,11 @@ impl SessionState {
         usage: &TokenUsage,
         model_context_window: Option<i64>,
     ) {
-        self.history.update_token_info(usage, model_context_window);
+        session_history::update_token_info(&mut self.token_info, usage, model_context_window);
     }
 
     pub(crate) fn token_info(&self) -> Option<TokenUsageInfo> {
-        self.history.token_info()
+        self.token_info.clone()
     }
 
     pub(crate) fn set_rate_limits(&mut self, snapshot: RateLimitSnapshot) {
@@ -138,12 +147,38 @@ impl SessionState {
     }
 
     pub(crate) fn set_token_usage_full(&mut self, context_window: i64) {
-        self.history.set_token_usage_full(context_window);
+        session_history::set_token_usage_full(&mut self.token_info, context_window);
     }
 
     pub(crate) fn get_total_token_usage(&self, server_reasoning_included: bool) -> i64 {
-        self.history
-            .get_total_token_usage(server_reasoning_included)
+        session_history::get_total_token_usage(
+            &self.journal,
+            &self.token_info,
+            server_reasoning_included,
+        )
+    }
+
+    pub(crate) fn get_total_token_usage_breakdown(&self) -> TotalTokenUsageBreakdown {
+        session_history::get_total_token_usage_breakdown(&self.journal, &self.token_info)
+    }
+
+    pub(crate) fn estimate_token_count(
+        &self,
+        turn_context: &crate::session::turn_context::TurnContext,
+    ) -> Option<i64> {
+        session_history::estimate_token_count(&self.journal, turn_context)
+    }
+
+    pub(crate) fn history_version(&self) -> u64 {
+        self.history_version
+    }
+
+    pub(crate) fn replace_last_turn_images(&mut self, placeholder: &str) -> bool {
+        let replaced = session_history::replace_last_turn_images(&mut self.journal, placeholder);
+        if replaced {
+            self.history_version = self.history_version.saturating_add(1);
+        }
+        replaced
     }
 
     pub(crate) fn set_server_reasoning_included(&mut self, included: bool) {

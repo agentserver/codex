@@ -98,6 +98,7 @@ members = [
     "terminal-detection",
     "test-binary-support",
     "thread-store",
+    "journal",
     "uds",
     "codex-experimental-api-macros",
     "plugin",
@@ -190,6 +191,7 @@ codex-stdio-to-uds = { path = "stdio-to-uds" }
 codex-terminal-detection = { path = "terminal-detection" }
 codex-test-binary-support = { path = "test-binary-support" }
 codex-thread-store = { path = "thread-store" }
+codex-journal = { path = "journal" }
 codex-tools = { path = "tools" }
 codex-tui = { path = "tui" }
 codex-uds = { path = "uds" }

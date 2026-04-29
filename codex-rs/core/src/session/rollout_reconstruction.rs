@@ -1,5 +1,7 @@
 use super::*;
 use crate::context_manager::is_user_turn_boundary;
+use crate::state::history as session_history;
+use codex_journal::Journal;
 
 // Return value of `Session::reconstruct_history_from_rollout`, bundling the rebuilt history with
 // the resume/fork hydration metadata derived from the same replay.
@@ -231,10 +233,11 @@ impl Session {
             );
         }
 
-        let mut history = ContextManager::new();
+        let mut history = Journal::new();
+        let mut rebuilt_history_reference_context_item = None;
         let mut saw_legacy_compaction_without_replacement_history = false;
         if let Some(base_replacement_history) = base_replacement_history {
-            history.replace(base_replacement_history.to_vec());
+            session_history::replace_history(&mut history, base_replacement_history.to_vec());
         }
         // Materialize exact history semantics from the replay-derived suffix. The eventual lazy
         // design should keep this same replay shape, but drive it from a resumable reverse source
@@ -242,7 +245,8 @@ impl Session {
         for item in rollout_suffix {
             match item {
                 RolloutItem::ResponseItem(response_item) => {
-                    history.record_items(
+                    session_history::record_items(
+                        &mut history,
                         std::iter::once(response_item),
                         turn_context.truncation_policy,
                     );
@@ -251,7 +255,7 @@ impl Session {
                     if let Some(replacement_history) = &compacted.replacement_history {
                         // This should actually never happen, because the reverse loop above (to build rollout_suffix)
                         // should stop before any compaction that has Some replacement_history
-                        history.replace(replacement_history.clone());
+                        session_history::replace_history(&mut history, replacement_history.clone());
                     } else {
                         saw_legacy_compaction_without_replacement_history = true;
                         // Legacy rollouts without `replacement_history` should rebuild the
@@ -262,17 +266,22 @@ impl Session {
                         // prompt shape.
                         // TODO(ccunningham): if we drop support for None replacement_history compaction items,
                         // we can get rid of this second loop entirely and just build `history` directly in the first loop.
-                        let user_messages = collect_user_messages(history.raw_items());
+                        let history_items = session_history::raw_items(&history);
+                        let user_messages = collect_user_messages(history_items.as_slice());
                         let rebuilt = compact::build_compacted_history(
                             Vec::new(),
                             &user_messages,
                             &compacted.message,
                         );
-                        history.replace(rebuilt);
+                        session_history::replace_history(&mut history, rebuilt);
                     }
                 }
                 RolloutItem::EventMsg(EventMsg::ThreadRolledBack(rollback)) => {
-                    history.drop_last_n_user_turns(rollback.num_turns);
+                    session_history::drop_last_n_user_turns(
+                        &mut history,
+                        &mut rebuilt_history_reference_context_item,
+                        rollback.num_turns,
+                    );
                 }
                 RolloutItem::EventMsg(_)
                 | RolloutItem::TurnContext(_)
@@ -293,7 +302,7 @@ impl Session {
         };
 
         RolloutReconstruction {
-            history: history.raw_items().to_vec(),
+            history: session_history::raw_items(&history),
             previous_turn_settings,
             reference_context_item,
         }

@@ -6,17 +6,18 @@ use crate::compact::CompactionAnalyticsAttempt;
 use crate::compact::InitialContextInjection;
 use crate::compact::compaction_status_from_result;
 use crate::compact::insert_initial_context_before_last_real_user_or_summary;
-use crate::context_manager::ContextManager;
-use crate::context_manager::TotalTokenUsageBreakdown;
 use crate::context_manager::estimate_response_item_model_visible_bytes;
 use crate::context_manager::is_codex_generated_item;
 use crate::session::session::Session;
 use crate::session::turn::built_tools;
 use crate::session::turn_context::TurnContext;
+use crate::state::TotalTokenUsageBreakdown;
+use crate::state::history as session_history;
 use codex_analytics::CompactionImplementation;
 use codex_analytics::CompactionPhase;
 use codex_analytics::CompactionReason;
 use codex_analytics::CompactionTrigger;
+use codex_journal::Journal;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::items::ContextCompactionItem;
@@ -144,8 +145,9 @@ async fn run_remote_compact_task_inner_impl(
     // This is the history selected for remote compaction, after any trimming required to fit the
     // compact endpoint. The checkpoint below records it separately from the next sampling request,
     // whose prompt will repeat current developer/context prefix items.
-    let trace_input_history = history.raw_items().to_vec();
-    let prompt_input = history.for_prompt(&turn_context.model_info.input_modalities);
+    let trace_input_history = session_history::raw_items(&history);
+    let prompt_input =
+        session_history::for_prompt(&history, &turn_context.model_info.input_modalities);
     let tool_router = built_tools(
         sess.as_ref(),
         turn_context.as_ref(),
@@ -325,7 +327,7 @@ fn log_remote_compact_failure(
 }
 
 fn trim_function_call_history_to_fit_context_window(
-    history: &mut ContextManager,
+    history: &mut Journal,
     turn_context: &TurnContext,
     base_instructions: &BaseInstructions,
 ) -> usize {
@@ -334,17 +336,17 @@ fn trim_function_call_history_to_fit_context_window(
         return deleted_items;
     };
 
-    while history
-        .estimate_token_count_with_base_instructions(base_instructions)
+    while session_history::estimate_token_count_with_base_instructions(history, base_instructions)
         .is_some_and(|estimated_tokens| estimated_tokens > context_window)
     {
-        let Some(last_item) = history.raw_items().last() else {
+        let history_items = session_history::raw_items(history);
+        let Some(last_item) = history_items.last() else {
             break;
         };
         if !is_codex_generated_item(last_item) {
             break;
         }
-        if !history.remove_last_item() {
+        if !session_history::remove_last_item(history) {
             break;
         }
         deleted_items += 1;

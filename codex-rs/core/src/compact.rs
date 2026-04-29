@@ -9,6 +9,7 @@ use crate::session::PreviousTurnSettings;
 use crate::session::session::Session;
 use crate::session::turn::get_last_assistant_message_from_turn;
 use crate::session::turn_context::TurnContext;
+use crate::state::history as session_history;
 use crate::util::backoff;
 use codex_analytics::CodexCompactionEvent;
 use codex_analytics::CompactionImplementation;
@@ -160,7 +161,8 @@ async fn run_compact_task_inner_impl(
     let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
 
     let mut history = sess.clone_history().await;
-    history.record_items(
+    session_history::record_items(
+        &mut history,
         &[initial_input_for_turn.into()],
         turn_context.truncation_policy,
     );
@@ -176,9 +178,8 @@ async fn run_compact_task_inner_impl(
 
     loop {
         // Clone is required because of the loop
-        let turn_input = history
-            .clone()
-            .for_prompt(&turn_context.model_info.input_modalities);
+        let turn_input =
+            session_history::for_prompt(&history, &turn_context.model_info.input_modalities);
         let turn_input_len = turn_input.len();
         let prompt = Prompt {
             input: turn_input,
@@ -218,7 +219,7 @@ async fn run_compact_task_inner_impl(
                     error!(
                         "Context window exceeded while compacting; removing oldest history item. Error: {e}"
                     );
-                    history.remove_first_item();
+                    session_history::remove_first_item(&mut history);
                     truncated_count += 1;
                     retries = 0;
                     continue;
@@ -250,10 +251,11 @@ async fn run_compact_task_inner_impl(
     }
 
     let history_snapshot = sess.clone_history().await;
-    let history_items = history_snapshot.raw_items();
-    let summary_suffix = get_last_assistant_message_from_turn(history_items).unwrap_or_default();
+    let history_items = session_history::raw_items(&history_snapshot);
+    let summary_suffix =
+        get_last_assistant_message_from_turn(history_items.as_slice()).unwrap_or_default();
     let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
-    let user_messages = collect_user_messages(history_items);
+    let user_messages = collect_user_messages(history_items.as_slice());
 
     let mut new_history = build_compacted_history(Vec::new(), &user_messages, &summary_text);
 

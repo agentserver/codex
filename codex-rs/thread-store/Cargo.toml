@@ -22,11 +22,12 @@ codex-git-utils = { workspace = true }
 codex-protocol = { workspace = true }
 codex-rollout = { workspace = true }
 codex-state = { workspace = true }
+codex-journal = { workspace = true }
 prost = "0.14.3"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util", "rt", "sync"] }
 tonic = { workspace = true }
 tonic-prost = { workspace = true }
 tracing = { workspace = true }

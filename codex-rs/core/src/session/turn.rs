@@ -42,6 +42,7 @@ use crate::resolve_skill_dependencies_for_turn;
 use crate::session::PreviousTurnSettings;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
+use crate::state::history as session_history;
 use crate::stream_events_utils::HandleOutputCtx;
 use crate::stream_events_utils::handle_non_tool_response_item;
 use crate::stream_events_utils::handle_output_item_done;
@@ -428,9 +429,8 @@ pub(crate) async fn run_turn(
 
         // Construct the input that we will send to the model.
         let sampling_request_input: Vec<ResponseItem> = {
-            sess.clone_history()
-                .await
-                .for_prompt(&turn_context.model_info.input_modalities)
+            let history = sess.clone_history().await;
+            session_history::for_prompt(&history, &turn_context.model_info.input_modalities)
         };
 
         let sampling_request_input_messages = sampling_request_input
@@ -629,7 +629,7 @@ pub(crate) async fn run_turn(
                     error_or_panic(
                         "Invalid image detected; sanitizing tool output to prevent poisoning",
                     );
-                    if state.history.replace_last_turn_images("Invalid image") {
+                    if state.replace_last_turn_images("Invalid image") {
                         continue;
                     }
                 }
@@ -1005,9 +1005,8 @@ async fn run_sampling_request(
         let prompt_input = if let Some(input) = initial_input.take() {
             input
         } else {
-            sess.clone_history()
-                .await
-                .for_prompt(&turn_context.model_info.input_modalities)
+            let history = sess.clone_history().await;
+            session_history::for_prompt(&history, &turn_context.model_info.input_modalities)
         };
         let prompt = build_prompt(
             prompt_input,

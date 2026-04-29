@@ -171,8 +171,7 @@ use crate::config::Constrained;
 use crate::config::ConstraintResult;
 use crate::config::StartedNetworkProxy;
 use crate::config::resolve_web_search_mode_for_turn;
-use crate::context_manager::ContextManager;
-use crate::context_manager::TotalTokenUsageBreakdown;
+use crate::state::TotalTokenUsageBreakdown;
 use crate::thread_rollout_truncation::initial_history_has_prior_user_turns;
 use codex_config::CONFIG_TOML_FILE;
 use codex_config::types::McpServerConfig;
@@ -1084,7 +1083,7 @@ impl Session {
 
     pub(crate) async fn get_total_token_usage_breakdown(&self) -> TotalTokenUsageBreakdown {
         let state = self.state.lock().await;
-        state.history.get_total_token_usage_breakdown()
+        state.get_total_token_usage_breakdown()
     }
 
     pub(crate) async fn total_token_usage(&self) -> Option<TokenUsage> {
@@ -1108,7 +1107,7 @@ impl Session {
         turn_context: &TurnContext,
     ) -> Option<i64> {
         let state = self.state.lock().await;
-        state.history.estimate_token_count(turn_context)
+        state.estimate_token_count(turn_context)
     }
 
     pub(crate) async fn get_base_instructions(&self) -> BaseInstructions {
@@ -1430,14 +1429,15 @@ impl Session {
         };
         let shell = self.user_shell();
         let exec_policy = self.services.exec_policy.current();
-        crate::context_manager::updates::build_settings_update_items(
+        let entries = crate::context_manager::updates::build_settings_update_entries(
             reference_context_item,
             previous_turn_settings.as_ref(),
             current_context,
             shell.as_ref(),
             exec_policy.as_ref(),
             self.features.enabled(Feature::Personality),
-        )
+        );
+        crate::context_manager::updates::render_context_entries(entries)
     }
 
     /// Persist the event to rollout and send it to clients.
@@ -2499,16 +2499,24 @@ impl Session {
         }
     }
 
-    #[expect(
-        clippy::await_holding_invalid_type,
-        reason = "MCP app context rendering reads through the session-owned manager guard"
-    )]
     pub(crate) async fn build_initial_context(
         &self,
         turn_context: &TurnContext,
     ) -> Vec<ResponseItem> {
-        let mut developer_sections = Vec::<String>::with_capacity(8);
-        let mut contextual_user_sections = Vec::<String>::with_capacity(2);
+        crate::context_manager::updates::render_context_entries(
+            self.build_initial_context_entries(turn_context).await,
+        )
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "MCP app context rendering reads through the session-owned manager guard"
+    )]
+    async fn build_initial_context_entries(
+        &self,
+        turn_context: &TurnContext,
+    ) -> Vec<codex_journal::JournalEntry> {
+        let mut entries = Vec::<codex_journal::JournalEntry>::with_capacity(12);
         let shell = self.user_shell();
         let (
             reference_context_item,
@@ -2531,26 +2539,36 @@ impl Session {
                 previous_turn_settings.as_ref(),
                 turn_context,
             )
+            && let Some(entry) = crate::context_manager::updates::developer_context_entry(
+                "model_switch",
+                10,
+                model_switch_message,
+            )
         {
-            developer_sections.push(model_switch_message);
+            entries.push(entry);
         }
         if turn_context.config.include_permissions_instructions {
-            developer_sections.push(
-                PermissionsInstructions::from_permission_profile(
-                    &turn_context.permission_profile,
-                    turn_context.approval_policy.value(),
-                    turn_context.config.approvals_reviewer,
-                    self.services.exec_policy.current().as_ref(),
-                    &turn_context.cwd,
-                    turn_context
-                        .features
-                        .enabled(Feature::ExecPermissionApprovals),
-                    turn_context
-                        .features
-                        .enabled(Feature::RequestPermissionsTool),
-                )
-                .render(),
-            );
+            let permissions_instructions = PermissionsInstructions::from_permission_profile(
+                &turn_context.permission_profile,
+                turn_context.approval_policy.value(),
+                turn_context.config.approvals_reviewer,
+                self.services.exec_policy.current().as_ref(),
+                &turn_context.cwd,
+                turn_context
+                    .features
+                    .enabled(Feature::ExecPermissionApprovals),
+                turn_context
+                    .features
+                    .enabled(Feature::RequestPermissionsTool),
+            )
+            .render();
+            if let Some(entry) = crate::context_manager::updates::developer_context_entry(
+                "permissions",
+                20,
+                permissions_instructions,
+            ) {
+                entries.push(entry);
+            }
         }
         let separate_guardian_developer_message =
             crate::guardian::is_guardian_reviewer_source(&session_source);
@@ -2559,29 +2577,48 @@ impl Session {
         if !separate_guardian_developer_message
             && let Some(developer_instructions) = turn_context.developer_instructions.as_deref()
             && !developer_instructions.is_empty()
+            && let Some(entry) = crate::context_manager::updates::developer_context_entry(
+                "developer_instructions",
+                30,
+                developer_instructions.to_string(),
+            )
         {
-            developer_sections.push(developer_instructions.to_string());
+            entries.push(entry);
         }
         // Add developer instructions for memories.
         if turn_context.features.enabled(Feature::MemoryTool)
             && turn_context.config.memories.use_memories
             && let Some(memory_prompt) =
                 build_memory_tool_developer_instructions(&turn_context.config.codex_home).await
+            && let Some(entry) = crate::context_manager::updates::developer_context_entry(
+                "memory_tool",
+                40,
+                memory_prompt,
+            )
         {
-            developer_sections.push(memory_prompt);
+            entries.push(entry);
         }
         // Add developer instructions from collaboration_mode if they exist and are non-empty
         if let Some(collab_instructions) =
             CollaborationModeInstructions::from_collaboration_mode(&collaboration_mode)
+            && let Some(entry) = crate::context_manager::updates::developer_context_entry(
+                "collaboration_mode",
+                50,
+                collab_instructions.render(),
+            )
         {
-            developer_sections.push(collab_instructions.render());
+            entries.push(entry);
         }
         if let Some(realtime_update) = crate::context_manager::updates::build_initial_realtime_item(
             reference_context_item.as_ref(),
             previous_turn_settings.as_ref(),
             turn_context,
+        ) && let Some(entry) = crate::context_manager::updates::developer_context_entry(
+            "realtime",
+            60,
+            realtime_update,
         ) {
-            developer_sections.push(realtime_update);
+            entries.push(entry);
         }
         if self.features.enabled(Feature::Personality)
             && let Some(personality) = turn_context.personality
@@ -2595,9 +2632,13 @@ impl Session {
                         &model_info,
                         personality,
                     )
+                && let Some(entry) = crate::context_manager::updates::developer_context_entry(
+                    "personality",
+                    70,
+                    PersonalitySpecInstructions::new(personality_message).render(),
+                )
             {
-                developer_sections
-                    .push(PersonalitySpecInstructions::new(personality_message).render());
+                entries.push(entry);
             }
         }
         if turn_context.config.include_apps_instructions && turn_context.apps_enabled() {
@@ -2610,8 +2651,13 @@ impl Session {
                 .await;
             if let Some(apps_instructions) =
                 AppsInstructions::from_connectors(&accessible_and_enabled_connectors)
+                && let Some(entry) = crate::context_manager::updates::developer_context_entry(
+                    "apps",
+                    80,
+                    apps_instructions.render(),
+                )
             {
-                developer_sections.push(apps_instructions.render());
+                entries.push(entry);
             }
         }
         if turn_context.config.include_skill_instructions {
@@ -2634,7 +2680,13 @@ impl Session {
                     })
                     .await;
                 }
-                developer_sections.push(skills_instructions.render());
+                if let Some(entry) = crate::context_manager::updates::developer_context_entry(
+                    "skills",
+                    90,
+                    skills_instructions.render(),
+                ) {
+                    entries.push(entry);
+                }
             }
         }
         let loaded_plugins = self
@@ -2644,24 +2696,38 @@ impl Session {
             .await;
         if let Some(plugin_instructions) =
             AvailablePluginsInstructions::from_plugins(loaded_plugins.capability_summaries())
+            && let Some(entry) = crate::context_manager::updates::developer_context_entry(
+                "plugins",
+                100,
+                plugin_instructions.render(),
+            )
         {
-            developer_sections.push(plugin_instructions.render());
+            entries.push(entry);
         }
         if turn_context.features.enabled(Feature::CodexGitCommit)
             && let Some(commit_message_instruction) = commit_message_trailer_instruction(
                 turn_context.config.commit_attribution.as_deref(),
             )
+            && let Some(entry) = crate::context_manager::updates::developer_context_entry(
+                "commit_message_trailer",
+                110,
+                commit_message_instruction,
+            )
         {
-            developer_sections.push(commit_message_instruction);
+            entries.push(entry);
         }
-        if let Some(user_instructions) = turn_context.user_instructions.as_deref() {
-            contextual_user_sections.push(
+        if let Some(user_instructions) = turn_context.user_instructions.as_deref()
+            && let Some(entry) = crate::context_manager::updates::contextual_user_context_entry(
+                "user_instructions",
+                130,
                 UserInstructions {
                     text: user_instructions.to_string(),
                     directory: turn_context.cwd.to_string_lossy().into_owned(),
                 }
                 .render(),
-            );
+            )
+        {
+            entries.push(entry);
         }
         if turn_context.config.include_environment_context {
             let subagents = self
@@ -2669,48 +2735,43 @@ impl Session {
                 .agent_control
                 .format_environment_context_subagents(self.conversation_id)
                 .await;
-            contextual_user_sections.push(
+            if let Some(entry) = crate::context_manager::updates::contextual_user_context_entry(
+                "environment",
+                140,
                 crate::context::EnvironmentContext::from_turn_context(turn_context, shell.as_ref())
                     .with_subagents(subagents)
                     .render(),
-            );
+            ) {
+                entries.push(entry);
+            }
         }
 
         let multi_agent_v2_usage_hint_text =
             multi_agents::usage_hint_text(turn_context, &session_source);
 
-        let mut items = Vec::with_capacity(4);
-        if let Some(developer_message) =
-            crate::context_manager::updates::build_developer_update_item(developer_sections)
-        {
-            items.push(developer_message);
-        }
         if let Some(usage_hint_text) = multi_agent_v2_usage_hint_text
-            && let Some(usage_hint_message) =
-                crate::context_manager::updates::build_developer_update_item(vec![
-                    usage_hint_text.to_string(),
-                ])
+            && let Some(entry) = crate::context_manager::updates::usage_hint_context_entry(
+                "multi_agent_v2",
+                120,
+                usage_hint_text.to_string(),
+            )
         {
-            items.push(usage_hint_message);
-        }
-        if let Some(contextual_user_message) =
-            crate::context_manager::updates::build_contextual_user_message(contextual_user_sections)
-        {
-            items.push(contextual_user_message);
+            entries.push(entry);
         }
         // Emit the guardian policy prompt as a separate developer item so the guardian
         // subagent sees a distinct, easy-to-audit instruction block.
         if separate_guardian_developer_message
             && let Some(developer_instructions) = turn_context.developer_instructions.as_deref()
             && !developer_instructions.is_empty()
-            && let Some(guardian_developer_message) =
-                crate::context_manager::updates::build_developer_update_item(vec![
-                    developer_instructions.to_string(),
-                ])
+            && let Some(entry) = crate::context_manager::updates::guardian_context_entry(
+                "developer_instructions",
+                150,
+                developer_instructions.to_string(),
+            )
         {
-            items.push(guardian_developer_message);
+            entries.push(entry);
         }
-        items
+        entries
     }
 
     pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) {
@@ -2721,9 +2782,14 @@ impl Session {
         }
     }
 
-    pub(crate) async fn clone_history(&self) -> ContextManager {
+    pub(crate) async fn clone_history(&self) -> codex_journal::Journal {
         let state = self.state.lock().await;
         state.clone_history()
+    }
+
+    pub(crate) async fn history_version(&self) -> u64 {
+        let state = self.state.lock().await;
+        state.history_version()
     }
 
     pub(crate) async fn reference_context_item(&self) -> Option<TurnContextItem> {
@@ -2792,7 +2858,10 @@ impl Session {
         let history = self.clone_history().await;
         let base_instructions = self.get_base_instructions().await;
         let Some(estimated_total_tokens) =
-            history.estimate_token_count_with_base_instructions(&base_instructions)
+            crate::state::history::estimate_token_count_with_base_instructions(
+                &history,
+                &base_instructions,
+            )
         else {
             return;
         };

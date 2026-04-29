@@ -19,6 +19,7 @@ use crate::realtime_context::truncate_realtime_text_to_token_budget;
 use crate::realtime_conversation::REALTIME_USER_TEXT_PREFIX;
 use crate::realtime_conversation::prefix_realtime_v2_text;
 use crate::session::spawn_review_thread;
+use crate::state::history as session_history;
 use codex_config::CloudRequirementsLoader;
 use codex_config::LoaderOverrides;
 use codex_config::loader::load_config_layers_state;
@@ -891,8 +892,8 @@ pub async fn shutdown(sess: &Arc<Session>, sub_id: String) -> bool {
     sess.guardian_review_session.shutdown().await;
     info!("Shutting down Codex instance");
     let history = sess.clone_history().await;
-    let turn_count = history
-        .raw_items()
+    let history_items = session_history::raw_items(&history);
+    let turn_count = history_items
         .iter()
         .filter(|item| is_user_turn_boundary(item))
         .count();

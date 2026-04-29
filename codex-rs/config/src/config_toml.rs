@@ -207,7 +207,7 @@ pub struct ConfigToml {
     /// Ordered list of fallback filenames to look for when AGENTS.md is missing.
     pub project_doc_fallback_filenames: Option<Vec<String>>,
 
-    /// Token budget applied when storing tool/function outputs in the context manager.
+    /// Token budget applied when storing tool/function outputs in thread history.
     pub tool_output_token_limit: Option<usize>,
 
     /// Maximum poll window for background terminal output (`write_stdin`), in milliseconds.

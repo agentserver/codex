@@ -46,8 +46,7 @@ use crate::app::app_server_requests::ResolvedAppServerRequest;
 use crate::app_command::AppCommand;
 use crate::app_event::HistoryLookupResponse;
 use crate::app_event::RealtimeAudioDeviceKind;
-use crate::app_server_approval_conversions::file_update_changes_to_core;
-use crate::app_server_approval_conversions::network_approval_context_to_core;
+use crate::app_server_approval_conversions::file_update_changes_to_display;
 use crate::approval_events::ApplyPatchApprovalRequestEvent;
 use crate::approval_events::ExecApprovalRequestEvent;
 #[cfg(not(target_os = "linux"))]
@@ -126,6 +125,7 @@ use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::SkillMetadata as ProtocolSkillMetadata;
 use codex_app_server_protocol::SkillsListResponse;
+use codex_app_server_protocol::TextElement as AppServerTextElement;
 use codex_app_server_protocol::ThreadGoal as AppThreadGoal;
 use codex_app_server_protocol::ThreadGoalStatus as AppThreadGoalStatus;
 use codex_app_server_protocol::ThreadItem;
@@ -135,6 +135,7 @@ use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnCompletedNotification;
 use codex_app_server_protocol::TurnPlanStepStatus;
 use codex_app_server_protocol::TurnStatus;
+use codex_app_server_protocol::UserInput;
 use codex_chatgpt::connectors;
 use codex_config::ConfigLayerStackOrdering;
 use codex_config::types::ApprovalsReviewer;
@@ -169,7 +170,6 @@ use codex_protocol::config_types::Settings;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
-use codex_protocol::items::UserMessageItem;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::local_image_label_text;
 use codex_protocol::parse_command::ParsedCommand;
@@ -180,7 +180,6 @@ use codex_protocol::request_user_input::RequestUserInputEvent;
 use codex_protocol::request_user_input::RequestUserInputQuestionOption;
 use codex_protocol::user_input::ByteRange;
 use codex_protocol::user_input::TextElement;
-use codex_protocol::user_input::UserInput;
 use codex_terminal_detection::Multiplexer;
 use codex_terminal_detection::TerminalInfo;
 use codex_terminal_detection::TerminalName;
@@ -361,8 +360,7 @@ use self::status_surfaces::CachedProjectRootName;
 use self::status_surfaces::TerminalTitleStatusKind;
 mod user_messages;
 use self::user_messages::PendingSteerCompareKey;
-use self::user_messages::RenderedUserMessageEvent;
-use self::user_messages::UserMessageEvent;
+use self::user_messages::UserMessageDisplay;
 use crate::streaming::chunking::AdaptiveChunkingPolicy;
 use crate::streaming::commit_tick::CommitTickScope;
 use crate::streaming::commit_tick::run_commit_tick;
@@ -1007,7 +1005,7 @@ pub(crate) struct ChatWidget {
     goal_status_active_turn_started_at: Option<Instant>,
     external_editor_state: ExternalEditorState,
     realtime_conversation: RealtimeConversationUiState,
-    last_rendered_user_message_event: Option<RenderedUserMessageEvent>,
+    last_rendered_user_message_display: Option<UserMessageDisplay>,
     last_non_retry_error: Option<(String, String)>,
 }
 
@@ -1230,6 +1228,10 @@ fn append_text_with_rebased_elements(
     }));
 }
 
+fn app_server_text_elements(elements: &[TextElement]) -> Vec<AppServerTextElement> {
+    elements.iter().cloned().map(Into::into).collect()
+}
+
 fn build_placeholder_mapping(
     local_images: Vec<LocalImageAttachment>,
     next_label: &mut usize,
@@ -1442,14 +1444,14 @@ fn user_message_preview_text(
     }
 }
 
-fn user_message_event_for_display(
+fn user_message_display_for_history(
     message: UserMessage,
     history_record: &UserMessageHistoryRecord,
-) -> UserMessageEvent {
+) -> UserMessageDisplay {
     let message = user_message_for_restore(message, history_record);
-    UserMessageEvent {
+    UserMessageDisplay {
         message: message.text,
-        images: Some(message.remote_image_urls),
+        remote_image_urls: message.remote_image_urls,
         local_images: message
             .local_images
             .into_iter()
@@ -1637,58 +1639,13 @@ fn exec_approval_request_from_params(
             .unwrap_or_default(),
         cwd: params.cwd.unwrap_or_else(|| fallback_cwd.clone()),
         reason: params.reason,
-        network_approval_context: params
-            .network_approval_context
-            .map(network_approval_context_to_core),
-        additional_permissions: params.additional_permissions.map(Into::into),
+        network_approval_context: params.network_approval_context,
+        additional_permissions: params.additional_permissions,
         turn_id: params.turn_id,
         approval_id: params.approval_id,
-        proposed_execpolicy_amendment: params
-            .proposed_execpolicy_amendment
-            .map(codex_app_server_protocol::ExecPolicyAmendment::into_core),
-        proposed_network_policy_amendments: params.proposed_network_policy_amendments.map(
-            |amendments| {
-                amendments
-                    .into_iter()
-                    .map(codex_app_server_protocol::NetworkPolicyAmendment::into_core)
-                    .collect()
-            },
-        ),
-        available_decisions: params.available_decisions.map(|decisions| {
-            decisions
-                .into_iter()
-                .map(|decision| match decision {
-                    codex_app_server_protocol::CommandExecutionApprovalDecision::Accept => {
-                        crate::approval_display::ReviewDecision::Approved
-                    }
-                    codex_app_server_protocol::CommandExecutionApprovalDecision::AcceptForSession => {
-                        crate::approval_display::ReviewDecision::ApprovedForSession
-                    }
-                    codex_app_server_protocol::CommandExecutionApprovalDecision::AcceptWithExecpolicyAmendment {
-                        execpolicy_amendment,
-                    } => crate::approval_display::ReviewDecision::ApprovedExecpolicyAmendment {
-                        proposed_execpolicy_amendment: execpolicy_amendment.into_core(),
-                    },
-                    codex_app_server_protocol::CommandExecutionApprovalDecision::ApplyNetworkPolicyAmendment {
-                        network_policy_amendment,
-                    } => crate::approval_display::ReviewDecision::NetworkPolicyAmendment {
-                        network_policy_amendment: network_policy_amendment.into_core(),
-                    },
-                    codex_app_server_protocol::CommandExecutionApprovalDecision::Decline => {
-                        crate::approval_display::ReviewDecision::Denied
-                    }
-                    codex_app_server_protocol::CommandExecutionApprovalDecision::Cancel => {
-                        crate::approval_display::ReviewDecision::Abort
-                    }
-                })
-                .collect()
-        }),
-        parsed_cmd: params
-            .command_actions
-            .unwrap_or_default()
-            .into_iter()
-            .map(codex_app_server_protocol::CommandAction::into_core)
-            .collect(),
+        proposed_execpolicy_amendment: params.proposed_execpolicy_amendment,
+        proposed_network_policy_amendments: params.proposed_network_policy_amendments,
+        available_decisions: params.available_decisions,
     }
 }
 
@@ -3629,7 +3586,7 @@ impl ChatWidget {
             let cell = if let Some(command) = guardian_command(&ev.action) {
                 history_cell::new_approval_decision_cell(
                     command,
-                    crate::approval_display::ReviewDecision::Approved,
+                    crate::history_cell::ReviewDecision::Approved,
                     history_cell::ApprovalDecisionActor::Guardian,
                 )
             } else if let Some(summary) = guardian_action_summary(&ev.action) {
@@ -3649,7 +3606,7 @@ impl ChatWidget {
             let cell = if let Some(command) = guardian_command(&ev.action) {
                 history_cell::new_approval_decision_cell(
                     command,
-                    crate::approval_display::ReviewDecision::TimedOut,
+                    crate::history_cell::ReviewDecision::TimedOut,
                     history_cell::ApprovalDecisionActor::Guardian,
                 )
             } else {
@@ -3693,7 +3650,7 @@ impl ChatWidget {
         let cell = if let Some(command) = guardian_command(&ev.action) {
             history_cell::new_approval_decision_cell(
                 command,
-                crate::approval_display::ReviewDecision::Denied,
+                crate::history_cell::ReviewDecision::Denied,
                 history_cell::ApprovalDecisionActor::Guardian,
             )
         } else {
@@ -4522,11 +4479,7 @@ impl ChatWidget {
             .unwrap_or_else(|_| ev.command.join(" "));
         self.notify(Notification::ExecApprovalRequested { command });
 
-        let available_decisions = ev
-            .effective_available_decisions()
-            .into_iter()
-            .map(Into::into)
-            .collect();
+        let available_decisions = ev.effective_available_decisions();
         let request = ApprovalRequest::Exec {
             thread_id: self.thread_id.unwrap_or_default(),
             thread_label: None,
@@ -4535,7 +4488,7 @@ impl ChatWidget {
             reason: ev.reason,
             available_decisions,
             network_approval_context: ev.network_approval_context,
-            additional_permissions: ev.additional_permissions.map(Into::into),
+            additional_permissions: ev.additional_permissions,
         };
         self.bottom_pane
             .push_approval_request(request, &self.config.features);
@@ -4960,7 +4913,7 @@ impl ChatWidget {
             goal_status_active_turn_started_at: None,
             external_editor_state: ExternalEditorState::Closed,
             realtime_conversation: RealtimeConversationUiState::default(),
-            last_rendered_user_message_event: None,
+            last_rendered_user_message_display: None,
             last_non_retry_error: None,
         };
 
@@ -5601,7 +5554,7 @@ impl ChatWidget {
 
         for image_url in &remote_image_urls {
             items.push(UserInput::Image {
-                image_url: image_url.clone(),
+                url: image_url.clone(),
             });
         }
 
@@ -5614,7 +5567,7 @@ impl ChatWidget {
         if !text.is_empty() {
             items.push(UserInput::Text {
                 text: text.clone(),
-                text_elements: text_elements.clone(),
+                text_elements: app_server_text_elements(&text_elements),
             });
         }
 
@@ -5847,8 +5800,8 @@ impl ChatWidget {
                     .into_iter()
                     .map(|img| img.path)
                     .collect::<Vec<_>>();
-                self.last_rendered_user_message_event =
-                    Some(Self::rendered_user_message_event_from_parts(
+                self.last_rendered_user_message_display =
+                    Some(Self::user_message_display_from_parts(
                         text.clone(),
                         text_elements.clone(),
                         local_image_paths.clone(),
@@ -5862,8 +5815,8 @@ impl ChatWidget {
                 ));
                 self.record_visible_user_turn_for_copy();
             } else if !remote_image_urls.is_empty() {
-                self.last_rendered_user_message_event =
-                    Some(Self::rendered_user_message_event_from_parts(
+                self.last_rendered_user_message_display =
+                    Some(Self::user_message_display_from_parts(
                         String::new(),
                         Vec::new(),
                         Vec::new(),
@@ -5977,15 +5930,8 @@ impl ChatWidget {
         let from_replay = render_source.is_replay();
         let replay_kind = render_source.replay_kind();
         match item {
-            ThreadItem::UserMessage { id, content } => {
-                let user_message = UserMessageItem {
-                    id,
-                    content: content
-                        .into_iter()
-                        .map(codex_app_server_protocol::UserInput::into_core)
-                        .collect(),
-                };
-                self.on_committed_user_message(&user_message, from_replay);
+            ThreadItem::UserMessage { content, .. } => {
+                self.on_committed_user_message(&content, from_replay);
             }
             ThreadItem::AgentMessage {
                 id,
@@ -6118,7 +6064,7 @@ impl ChatWidget {
                             status,
                             codex_app_server_protocol::PatchApplyStatus::Failed
                         ),
-                        changes: file_update_changes_to_core(changes),
+                        changes: file_update_changes_to_display(changes),
                         status: match status {
                             codex_app_server_protocol::PatchApplyStatus::Completed => {
                                 codex_app_server_protocol::PatchApplyStatus::Completed
@@ -6647,7 +6593,7 @@ impl ChatWidget {
                     call_id: id,
                     turn_id: notification.turn_id,
                     auto_approved: false,
-                    changes: file_update_changes_to_core(changes),
+                    changes: file_update_changes_to_display(changes),
                 });
             }
             ThreadItem::McpToolCall {
@@ -6812,24 +6758,16 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn on_committed_user_message(&mut self, item: &UserMessageItem, from_replay: bool) {
-        let rendered_event = Self::rendered_user_message_event_from_inputs(&item.content);
-        let event = UserMessageEvent {
-            message: rendered_event.message,
-            images: (!rendered_event.remote_image_urls.is_empty())
-                .then_some(rendered_event.remote_image_urls),
-            local_images: rendered_event.local_images,
-            text_elements: rendered_event.text_elements,
-        };
+    fn on_committed_user_message(&mut self, items: &[UserInput], from_replay: bool) {
+        let display = Self::user_message_display_from_inputs(items);
         if from_replay {
             if !self.is_review_mode {
-                self.on_user_message_event(event);
+                self.on_user_message_display(display);
             }
             return;
         }
 
-        let rendered = Self::rendered_user_message_event_from_event(&event);
-        let compare_key = Self::pending_steer_compare_key_from_item(item);
+        let compare_key = Self::pending_steer_compare_key_from_items(items);
         if self
             .pending_steers
             .front()
@@ -6837,36 +6775,34 @@ impl ChatWidget {
         {
             if let Some(pending) = self.pending_steers.pop_front() {
                 self.refresh_pending_input_preview();
-                let pending_event =
-                    user_message_event_for_display(pending.user_message, &pending.history_record);
-                self.on_user_message_event(pending_event);
-            } else if self.last_rendered_user_message_event.as_ref() != Some(&rendered) {
+                let pending_display =
+                    user_message_display_for_history(pending.user_message, &pending.history_record);
+                self.on_user_message_display(pending_display);
+            } else if self.last_rendered_user_message_display.as_ref() != Some(&display) {
                 tracing::warn!(
                     "pending steer matched compare key but queue was empty when rendering committed user message"
                 );
-                self.on_user_message_event(event);
+                self.on_user_message_display(display);
             }
         } else if !self.is_review_mode
-            && self.last_rendered_user_message_event.as_ref() != Some(&rendered)
+            && self.last_rendered_user_message_display.as_ref() != Some(&display)
         {
-            self.on_user_message_event(event);
+            self.on_user_message_display(display);
         }
     }
 
-    fn on_user_message_event(&mut self, event: UserMessageEvent) {
-        self.last_rendered_user_message_event =
-            Some(Self::rendered_user_message_event_from_event(&event));
-        let remote_image_urls = event.images.unwrap_or_default();
-        if !event.message.trim().is_empty()
-            || !event.text_elements.is_empty()
-            || !remote_image_urls.is_empty()
+    fn on_user_message_display(&mut self, display: UserMessageDisplay) {
+        self.last_rendered_user_message_display = Some(display.clone());
+        if !display.message.trim().is_empty()
+            || !display.text_elements.is_empty()
+            || !display.remote_image_urls.is_empty()
         {
             self.record_visible_user_turn_for_copy();
             self.add_to_history(history_cell::new_user_prompt(
-                event.message,
-                event.text_elements,
-                event.local_images,
-                remote_image_urls,
+                display.message,
+                display.text_elements,
+                display.local_images,
+                display.remote_image_urls,
             ));
         }
 

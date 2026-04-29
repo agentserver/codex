@@ -1108,14 +1108,12 @@ async fn status_widget_and_approval_modal_snapshot() {
             "this is a test reason such as one that would be produced by the model".into(),
         ),
         network_approval_context: None,
-        proposed_execpolicy_amendment: Some(ExecPolicyAmendment::new(vec![
-            "echo".into(),
-            "hello world".into(),
-        ])),
+        proposed_execpolicy_amendment: Some(ExecPolicyAmendment {
+            command: vec!["echo".into(), "hello world".into()],
+        }),
         proposed_network_policy_amendments: None,
         additional_permissions: None,
         available_decisions: None,
-        parsed_cmd: vec![],
     };
     handle_exec_approval_request(&mut chat, "sub-approve-exec", ev);
 

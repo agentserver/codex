@@ -257,7 +257,7 @@ impl App {
                     changes: self
                         .thread_file_change_changes(thread_id, &params.turn_id, &params.item_id)
                         .await
-                        .map(crate::app_server_approval_conversions::file_update_changes_to_core)
+                        .map(crate::app_server_approval_conversions::file_update_changes_to_display)
                         .unwrap_or_default(),
                 }),
             ),

@@ -1,3 +1,8 @@
+//! Convenience sender for app events and common outbound TUI commands.
+//!
+//! This wraps the raw channel so call sites can submit typed `AppCommand`s
+//! without duplicating event construction or session logging behavior.
+
 use std::path::PathBuf;
 
 use crate::app_command::AppCommand;

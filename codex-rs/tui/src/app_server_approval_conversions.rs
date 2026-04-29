@@ -1,36 +1,18 @@
+//! Narrow conversion helpers for approval-related app-server payloads.
+//!
+//! The TUI mostly keeps app-server approval types intact. These helpers cover
+//! the remaining cases where the UI consumes a private file-change display
+//! model or needs to translate a granted permission response for outbound
+//! submission.
+
 use crate::diff_model::FileChange;
 use codex_app_server_protocol::AdditionalNetworkPermissions;
 use codex_app_server_protocol::FileUpdateChange;
 use codex_app_server_protocol::GrantedPermissionProfile;
-use codex_app_server_protocol::NetworkApprovalContext;
-use codex_app_server_protocol::NetworkApprovalContext as AppServerNetworkApprovalContext;
-use codex_app_server_protocol::NetworkApprovalProtocol;
 use codex_app_server_protocol::PatchChangeKind;
 use codex_protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
 use std::collections::HashMap;
 use std::path::PathBuf;
-
-pub(crate) fn network_approval_context_to_core(
-    value: AppServerNetworkApprovalContext,
-) -> NetworkApprovalContext {
-    NetworkApprovalContext {
-        host: value.host,
-        protocol: match value.protocol {
-            codex_app_server_protocol::NetworkApprovalProtocol::Http => {
-                NetworkApprovalProtocol::Http
-            }
-            codex_app_server_protocol::NetworkApprovalProtocol::Https => {
-                NetworkApprovalProtocol::Https
-            }
-            codex_app_server_protocol::NetworkApprovalProtocol::Socks5Tcp => {
-                NetworkApprovalProtocol::Socks5Tcp
-            }
-            codex_app_server_protocol::NetworkApprovalProtocol::Socks5Udp => {
-                NetworkApprovalProtocol::Socks5Udp
-            }
-        },
-    }
-}
 
 pub(crate) fn granted_permission_profile_from_request(
     value: CoreRequestPermissionProfile,
@@ -43,7 +25,7 @@ pub(crate) fn granted_permission_profile_from_request(
     }
 }
 
-pub(crate) fn file_update_changes_to_core(
+pub(crate) fn file_update_changes_to_display(
     changes: Vec<FileUpdateChange>,
 ) -> HashMap<PathBuf, FileChange> {
     changes
@@ -69,13 +51,10 @@ pub(crate) fn file_update_changes_to_core(
 
 #[cfg(test)]
 mod tests {
-    use super::file_update_changes_to_core;
+    use super::file_update_changes_to_display;
     use super::granted_permission_profile_from_request;
-    use super::network_approval_context_to_core;
     use crate::diff_model::FileChange;
     use codex_app_server_protocol::FileUpdateChange;
-    use codex_app_server_protocol::NetworkApprovalContext;
-    use codex_app_server_protocol::NetworkApprovalProtocol;
     use codex_app_server_protocol::PatchChangeKind;
     use codex_protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
     use codex_utils_absolute_path::AbsolutePathBuf;
@@ -88,23 +67,9 @@ mod tests {
     }
 
     #[test]
-    fn converts_app_server_network_approval_context_to_core() {
+    fn converts_file_update_changes_to_display() {
         assert_eq!(
-            network_approval_context_to_core(codex_app_server_protocol::NetworkApprovalContext {
-                host: "example.com".to_string(),
-                protocol: codex_app_server_protocol::NetworkApprovalProtocol::Socks5Tcp,
-            }),
-            NetworkApprovalContext {
-                host: "example.com".to_string(),
-                protocol: NetworkApprovalProtocol::Socks5Tcp,
-            }
-        );
-    }
-
-    #[test]
-    fn converts_file_update_changes_to_core() {
-        assert_eq!(
-            file_update_changes_to_core(vec![FileUpdateChange {
+            file_update_changes_to_display(vec![FileUpdateChange {
                 path: "foo.txt".to_string(),
                 kind: PatchChangeKind::Add,
                 diff: "hello\n".to_string(),

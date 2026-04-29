@@ -1,29 +1,19 @@
 //! User-message display models and helpers for the chat widget.
 //!
-//! App-server turn items and queued TUI submissions describe user input in
-//! slightly different shapes. This module keeps the display-only representation
-//! and comparison keys together so chat rendering can avoid duplicate user rows
-//! while preserving local-only attachment metadata.
+//! The app-server preserves user input as structured chunks, while chat history
+//! renders a single prompt row. This module owns that display projection and
+//! the small compare key used to suppress duplicate rows for pending steers.
 
 use std::path::PathBuf;
 
-use codex_protocol::items::UserMessageItem;
+use codex_app_server_protocol::UserInput;
 use codex_protocol::user_input::TextElement;
-use codex_protocol::user_input::UserInput;
 
 use super::ChatWidget;
 use super::append_text_with_rebased_elements;
 
-#[derive(Debug, Clone)]
-pub(crate) struct UserMessageEvent {
-    pub(super) message: String,
-    pub(super) images: Option<Vec<String>>,
-    pub(super) local_images: Vec<PathBuf>,
-    pub(super) text_elements: Vec<TextElement>,
-}
-
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct RenderedUserMessageEvent {
+pub(super) struct UserMessageDisplay {
     pub(super) message: String,
     pub(super) remote_image_urls: Vec<String>,
     pub(super) local_images: Vec<PathBuf>,
@@ -37,13 +27,13 @@ pub(super) struct PendingSteerCompareKey {
 }
 
 impl ChatWidget {
-    pub(super) fn rendered_user_message_event_from_parts(
+    pub(super) fn user_message_display_from_parts(
         message: String,
         text_elements: Vec<TextElement>,
         local_images: Vec<PathBuf>,
         remote_image_urls: Vec<String>,
-    ) -> RenderedUserMessageEvent {
-        RenderedUserMessageEvent {
+    ) -> UserMessageDisplay {
+        UserMessageDisplay {
             message,
             remote_image_urls,
             local_images,
@@ -51,22 +41,10 @@ impl ChatWidget {
         }
     }
 
-    pub(super) fn rendered_user_message_event_from_event(
-        event: &UserMessageEvent,
-    ) -> RenderedUserMessageEvent {
-        Self::rendered_user_message_event_from_parts(
-            event.message.clone(),
-            event.text_elements.clone(),
-            event.local_images.clone(),
-            event.images.clone().unwrap_or_default(),
-        )
-    }
-
     /// Build the compare key for a submitted pending steer without invoking the
     /// expensive request-serialization path. Pending steers only need to match the
-    /// committed `ItemCompleted(UserMessage)` emitted after core drains input, which
-    /// preserves flattened text and total image count but not UI-only text ranges or
-    /// local image paths.
+    /// committed app-server `UserMessage` item emitted after input drains, which
+    /// preserves flattened text and total image count.
     pub(super) fn pending_steer_compare_key_from_items(
         items: &[UserInput],
     ) -> PendingSteerCompareKey {
@@ -78,7 +56,6 @@ impl ChatWidget {
                 UserInput::Text { text, .. } => message.push_str(text),
                 UserInput::Image { .. } | UserInput::LocalImage { .. } => image_count += 1,
                 UserInput::Skill { .. } | UserInput::Mention { .. } => {}
-                _ => {}
             }
         }
 
@@ -88,15 +65,7 @@ impl ChatWidget {
         }
     }
 
-    pub(super) fn pending_steer_compare_key_from_item(
-        item: &UserMessageItem,
-    ) -> PendingSteerCompareKey {
-        Self::pending_steer_compare_key_from_items(&item.content)
-    }
-
-    pub(super) fn rendered_user_message_event_from_inputs(
-        items: &[UserInput],
-    ) -> RenderedUserMessageEvent {
+    pub(super) fn user_message_display_from_inputs(items: &[UserInput]) -> UserMessageDisplay {
         let mut message = String::new();
         let mut remote_image_urls = Vec::new();
         let mut local_images = Vec::new();
@@ -112,20 +81,23 @@ impl ChatWidget {
                     &mut text_elements,
                     text,
                     current_text_elements.iter().map(|element| {
+                        let range = element.byte_range.clone();
                         TextElement::new(
-                            element.byte_range,
-                            element.placeholder(text).map(str::to_string),
+                            range.clone().into(),
+                            element
+                                .placeholder()
+                                .or_else(|| text.get(range.start..range.end))
+                                .map(str::to_string),
                         )
                     }),
                 ),
-                UserInput::Image { image_url } => remote_image_urls.push(image_url.clone()),
+                UserInput::Image { url } => remote_image_urls.push(url.clone()),
                 UserInput::LocalImage { path } => local_images.push(path.clone()),
                 UserInput::Skill { .. } | UserInput::Mention { .. } => {}
-                _ => {}
             }
         }
 
-        Self::rendered_user_message_event_from_parts(
+        Self::user_message_display_from_parts(
             message,
             text_elements,
             local_images,

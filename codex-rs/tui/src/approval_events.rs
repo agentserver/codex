@@ -1,15 +1,20 @@
 //! TUI-owned approval request models used while rendering and queueing prompts.
+//!
+//! These structs normalize app-server request params into the shape the TUI
+//! needs while an approval may be deferred behind streaming output. Exec
+//! approvals keep app-server decision and permission types; patch approvals add
+//! the file-change display model collected from nearby thread items.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::approval_display::ReviewDecision;
 use crate::diff_model::FileChange;
+use codex_app_server_protocol::AdditionalPermissionProfile;
+use codex_app_server_protocol::CommandExecutionApprovalDecision;
+use codex_app_server_protocol::ExecPolicyAmendment;
 use codex_app_server_protocol::NetworkApprovalContext;
-use codex_protocol::approvals::ExecPolicyAmendment;
-use codex_protocol::approvals::NetworkPolicyAmendment;
-use codex_protocol::approvals::NetworkPolicyRuleAction;
-use codex_protocol::parse_command::ParsedCommand;
+use codex_app_server_protocol::NetworkPolicyAmendment;
+use codex_app_server_protocol::NetworkPolicyRuleAction;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
 use serde::Serialize;
@@ -29,12 +34,11 @@ pub(crate) struct ExecApprovalRequestEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) proposed_network_policy_amendments: Option<Vec<NetworkPolicyAmendment>>,
     #[serde(default)]
-    pub(crate) available_decisions: Option<Vec<ReviewDecision>>,
+    pub(crate) available_decisions: Option<Vec<CommandExecutionApprovalDecision>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) network_approval_context: Option<NetworkApprovalContext>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) additional_permissions: Option<codex_protocol::models::AdditionalPermissionProfile>,
-    pub(crate) parsed_cmd: Vec<ParsedCommand>,
+    pub(crate) additional_permissions: Option<AdditionalPermissionProfile>,
 }
 
 impl ExecApprovalRequestEvent {
@@ -44,7 +48,7 @@ impl ExecApprovalRequestEvent {
             .unwrap_or_else(|| self.call_id.clone())
     }
 
-    pub(crate) fn effective_available_decisions(&self) -> Vec<ReviewDecision> {
+    pub(crate) fn effective_available_decisions(&self) -> Vec<CommandExecutionApprovalDecision> {
         match &self.available_decisions {
             Some(decisions) => decisions.clone(),
             None => Self::default_available_decisions(
@@ -60,34 +64,44 @@ impl ExecApprovalRequestEvent {
         network_approval_context: Option<&NetworkApprovalContext>,
         proposed_execpolicy_amendment: Option<&ExecPolicyAmendment>,
         proposed_network_policy_amendments: Option<&[NetworkPolicyAmendment]>,
-        additional_permissions: Option<&codex_protocol::models::AdditionalPermissionProfile>,
-    ) -> Vec<ReviewDecision> {
+        additional_permissions: Option<&AdditionalPermissionProfile>,
+    ) -> Vec<CommandExecutionApprovalDecision> {
         if network_approval_context.is_some() {
-            let mut decisions = vec![ReviewDecision::Approved, ReviewDecision::ApprovedForSession];
+            let mut decisions = vec![
+                CommandExecutionApprovalDecision::Accept,
+                CommandExecutionApprovalDecision::AcceptForSession,
+            ];
             if let Some(amendment) = proposed_network_policy_amendments.and_then(|amendments| {
                 amendments
                     .iter()
                     .find(|amendment| amendment.action == NetworkPolicyRuleAction::Allow)
             }) {
-                decisions.push(ReviewDecision::NetworkPolicyAmendment {
-                    network_policy_amendment: amendment.clone(),
-                });
+                decisions.push(
+                    CommandExecutionApprovalDecision::ApplyNetworkPolicyAmendment {
+                        network_policy_amendment: amendment.clone(),
+                    },
+                );
             }
-            decisions.push(ReviewDecision::Abort);
+            decisions.push(CommandExecutionApprovalDecision::Cancel);
             return decisions;
         }
 
         if additional_permissions.is_some() {
-            return vec![ReviewDecision::Approved, ReviewDecision::Abort];
+            return vec![
+                CommandExecutionApprovalDecision::Accept,
+                CommandExecutionApprovalDecision::Cancel,
+            ];
         }
 
-        let mut decisions = vec![ReviewDecision::Approved];
+        let mut decisions = vec![CommandExecutionApprovalDecision::Accept];
         if let Some(prefix) = proposed_execpolicy_amendment {
-            decisions.push(ReviewDecision::ApprovedExecpolicyAmendment {
-                proposed_execpolicy_amendment: prefix.clone(),
-            });
+            decisions.push(
+                CommandExecutionApprovalDecision::AcceptWithExecpolicyAmendment {
+                    execpolicy_amendment: prefix.clone(),
+                },
+            );
         }
-        decisions.push(ReviewDecision::Abort);
+        decisions.push(CommandExecutionApprovalDecision::Cancel);
         decisions
     }
 }

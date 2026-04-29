@@ -21,7 +21,6 @@ async fn terminal_title_shows_action_required_while_exec_approval_is_pending() {
         proposed_network_policy_amendments: None,
         additional_permissions: None,
         available_decisions: None,
-        parsed_cmd: vec![],
     };
     handle_exec_approval_request(&mut chat, "sub-action-required", request);
 
@@ -64,7 +63,6 @@ async fn terminal_title_action_required_respects_spinner_setting() {
         proposed_network_policy_amendments: None,
         additional_permissions: None,
         available_decisions: None,
-        parsed_cmd: vec![],
     };
     handle_exec_approval_request(&mut chat, "sub-no-spinner", request);
 
@@ -93,7 +91,6 @@ async fn terminal_title_action_required_blinks_when_animations_are_enabled() {
         proposed_network_policy_amendments: None,
         additional_permissions: None,
         available_decisions: None,
-        parsed_cmd: vec![],
     };
     handle_exec_approval_request(&mut chat, "sub-blink", request);
 
@@ -129,7 +126,6 @@ async fn terminal_title_activity_indicators_do_not_animate_when_animations_are_d
         proposed_network_policy_amendments: None,
         additional_permissions: None,
         available_decisions: None,
-        parsed_cmd: vec![],
     };
     handle_exec_approval_request(&mut chat, "sub-no-animations", request);
 

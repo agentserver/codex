@@ -551,7 +551,7 @@ async fn item_completed_pops_pending_steer_with_local_image_and_text_elements() 
         "user-1",
         vec![
             UserInput::Image {
-                image_url: "data:image/png;base64,placeholder".to_string(),
+                url: "data:image/png;base64,placeholder".to_string(),
             },
             UserInput::Text {
                 text,
@@ -832,10 +832,9 @@ async fn manual_interrupt_restores_pending_steer_mention_bindings_to_composer() 
             items,
             vec![UserInput::Text {
                 text: "please use $figma".to_string(),
-                text_elements: vec![TextElement::new(
-                    (11..17).into(),
-                    Some("$figma".to_string()),
-                )],
+                text_elements: vec![
+                    TextElement::new((11..17).into(), Some("$figma".to_string())).into()
+                ],
             }]
         ),
         other => panic!("expected Op::UserTurn, got {other:?}"),

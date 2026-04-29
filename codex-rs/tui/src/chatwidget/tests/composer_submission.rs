@@ -63,7 +63,7 @@ async fn submission_preserves_text_elements_and_local_images() {
         items[1],
         UserInput::Text {
             text: text.clone(),
-            text_elements: text_elements.clone(),
+            text_elements: text_elements.clone().into_iter().map(Into::into).collect(),
         }
     );
 
@@ -253,7 +253,7 @@ async fn submission_with_remote_and_local_images_keeps_local_placeholder_numberi
     assert_eq!(
         items[0],
         UserInput::Image {
-            image_url: remote_url.clone(),
+            url: remote_url.clone(),
         }
     );
     assert_eq!(
@@ -266,7 +266,7 @@ async fn submission_with_remote_and_local_images_keeps_local_placeholder_numberi
         items[2],
         UserInput::Text {
             text: text.clone(),
-            text_elements: text_elements.clone(),
+            text_elements: text_elements.clone().into_iter().map(Into::into).collect(),
         }
     );
     assert_eq!(text_elements[0].placeholder(&text), Some("[Image #2]"));
@@ -335,7 +335,7 @@ async fn enter_with_only_remote_images_submits_user_turn() {
     assert_eq!(
         items,
         vec![UserInput::Image {
-            image_url: remote_url.clone(),
+            url: remote_url.clone(),
         }]
     );
     assert_eq!(summary, None);
@@ -1103,15 +1103,15 @@ async fn enqueueing_history_prompt_multiple_times_is_stable() {
 }
 
 #[test]
-fn rendered_user_message_event_from_inputs_matches_flattened_user_message_shape() {
+fn user_message_display_from_inputs_matches_flattened_user_message_shape() {
     let local_image = PathBuf::from("/tmp/local.png");
-    let rendered = ChatWidget::rendered_user_message_event_from_inputs(&[
+    let rendered = ChatWidget::user_message_display_from_inputs(&[
         UserInput::Text {
             text: "hello ".to_string(),
-            text_elements: vec![TextElement::new((0..5).into(), /*placeholder*/ None)],
+            text_elements: vec![TextElement::new((0..5).into(), /*placeholder*/ None).into()],
         },
         UserInput::Image {
-            image_url: "https://example.com/remote.png".to_string(),
+            url: "https://example.com/remote.png".to_string(),
         },
         UserInput::LocalImage {
             path: local_image.clone(),
@@ -1126,13 +1126,13 @@ fn rendered_user_message_event_from_inputs_matches_flattened_user_message_shape(
         },
         UserInput::Text {
             text: "world".to_string(),
-            text_elements: vec![TextElement::new((0..5).into(), Some("planet".to_string()))],
+            text_elements: vec![TextElement::new((0..5).into(), Some("planet".to_string())).into()],
         },
     ]);
 
     assert_eq!(
         rendered,
-        ChatWidget::rendered_user_message_event_from_parts(
+        ChatWidget::user_message_display_from_parts(
             "hello world".to_string(),
             vec![
                 TextElement::new((0..5).into(), Some("hello".to_string())),

@@ -317,7 +317,7 @@ pub(super) async fn make_chatwidget_manual(
         goal_status_active_turn_started_at: None,
         external_editor_state: ExternalEditorState::Closed,
         realtime_conversation: RealtimeConversationUiState::default(),
-        last_rendered_user_message_event: None,
+        last_rendered_user_message_display: None,
         last_non_retry_error: None,
     };
     widget.set_model(&resolved_model);
@@ -1081,7 +1081,7 @@ pub(super) fn complete_user_message_for_inputs(
             turn_id: "turn-1".to_string(),
             item: AppServerThreadItem::UserMessage {
                 id: item_id.to_string(),
-                content: content.into_iter().map(AppServerUserInput::from).collect(),
+                content,
             },
         }),
         /*replay_kind*/ None,

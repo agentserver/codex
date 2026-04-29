@@ -579,7 +579,7 @@ mod tests {
     use super::super::ThreadBufferedEvent;
     use super::super::ThreadEventStore;
     use crate::app_command::AppCommand as Op;
-    use crate::approval_display::ReviewDecision;
+    use codex_app_server_protocol::CommandExecutionApprovalDecision;
     use codex_app_server_protocol::CommandExecutionRequestApprovalParams;
     use codex_app_server_protocol::FileChangeRequestApprovalParams;
     use codex_app_server_protocol::McpElicitationObjectType;
@@ -766,7 +766,7 @@ mod tests {
         store.note_outbound_op(&Op::ExecApproval {
             id: "approval-1".to_string(),
             turn_id: Some("turn-1".to_string()),
-            decision: ReviewDecision::Approved.into(),
+            decision: CommandExecutionApprovalDecision::Accept,
         });
 
         let snapshot = store.snapshot();
@@ -919,7 +919,7 @@ mod tests {
         store.note_outbound_op(&Op::ExecApproval {
             id: "call-1".to_string(),
             turn_id: Some("turn-1".to_string()),
-            decision: ReviewDecision::Approved.into(),
+            decision: CommandExecutionApprovalDecision::Accept,
         });
 
         assert_eq!(store.has_pending_thread_approvals(), false);

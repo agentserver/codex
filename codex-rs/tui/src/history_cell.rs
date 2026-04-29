@@ -58,6 +58,8 @@ use codex_config::types::McpServerTransportConfig;
 use codex_mcp::qualified_mcp_tool_name_prefix;
 use codex_otel::RuntimeMetricsSummary;
 use codex_protocol::account::PlanType;
+use codex_protocol::approvals::ExecPolicyAmendment;
+use codex_protocol::approvals::NetworkPolicyAmendment;
 #[cfg(test)]
 use codex_protocol::mcp::Resource;
 #[cfg(test)]
@@ -862,12 +864,27 @@ fn exec_snippet(command: &[String]) -> String {
     truncate_exec_snippet(&full_cmd)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ReviewDecision {
+    Approved,
+    ApprovedExecpolicyAmendment {
+        proposed_execpolicy_amendment: ExecPolicyAmendment,
+    },
+    ApprovedForSession,
+    NetworkPolicyAmendment {
+        network_policy_amendment: NetworkPolicyAmendment,
+    },
+    Denied,
+    TimedOut,
+    Abort,
+}
+
 pub fn new_approval_decision_cell(
     command: Vec<String>,
-    decision: crate::approval_display::ReviewDecision,
+    decision: ReviewDecision,
     actor: ApprovalDecisionActor,
 ) -> Box<dyn HistoryCell> {
-    use crate::approval_display::ReviewDecision::*;
+    use ReviewDecision::*;
     use codex_protocol::approvals::NetworkPolicyRuleAction;
 
     let (symbol, summary): (Span<'static>, Vec<Span<'static>>) = match decision {

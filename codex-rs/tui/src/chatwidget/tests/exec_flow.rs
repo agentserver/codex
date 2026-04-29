@@ -20,7 +20,6 @@ async fn exec_approval_emits_proposed_command_and_decision_history() {
         proposed_network_policy_amendments: None,
         additional_permissions: None,
         available_decisions: None,
-        parsed_cmd: vec![],
     };
     handle_exec_approval_request(&mut chat, "sub-short", ev);
 
@@ -103,7 +102,6 @@ async fn exec_approval_uses_approval_id_when_present() {
             proposed_network_policy_amendments: None,
             additional_permissions: None,
             available_decisions: None,
-            parsed_cmd: vec![],
         },
     );
 
@@ -147,7 +145,6 @@ async fn exec_approval_decision_truncates_multiline_and_long_commands() {
         proposed_network_policy_amendments: None,
         additional_permissions: None,
         available_decisions: None,
-        parsed_cmd: vec![],
     };
     handle_exec_approval_request(&mut chat, "sub-multi", ev_multi);
     let proposed_multi = drain_insert_history(&mut rx);
@@ -199,7 +196,6 @@ async fn exec_approval_decision_truncates_multiline_and_long_commands() {
         proposed_network_policy_amendments: None,
         additional_permissions: None,
         available_decisions: None,
-        parsed_cmd: vec![],
     };
     handle_exec_approval_request(&mut chat, "sub-long", ev_long);
     let proposed_long = drain_insert_history(&mut rx);
@@ -1091,15 +1087,12 @@ async fn approval_modal_exec_snapshot() -> anyhow::Result<()> {
             "this is a test reason such as one that would be produced by the model".into(),
         ),
         network_approval_context: None,
-        proposed_execpolicy_amendment: Some(ExecPolicyAmendment::new(vec![
-            "echo".into(),
-            "hello".into(),
-            "world".into(),
-        ])),
+        proposed_execpolicy_amendment: Some(ExecPolicyAmendment {
+            command: vec!["echo".into(), "hello".into(), "world".into()],
+        }),
         proposed_network_policy_amendments: None,
         additional_permissions: None,
         available_decisions: None,
-        parsed_cmd: vec![],
     };
     handle_exec_approval_request(&mut chat, "sub-approve", ev);
     // Render to a fixed-size test terminal and snapshot.
@@ -1149,15 +1142,12 @@ async fn approval_modal_exec_without_reason_snapshot() -> anyhow::Result<()> {
         cwd: AbsolutePathBuf::current_dir().expect("current dir"),
         reason: None,
         network_approval_context: None,
-        proposed_execpolicy_amendment: Some(ExecPolicyAmendment::new(vec![
-            "echo".into(),
-            "hello".into(),
-            "world".into(),
-        ])),
+        proposed_execpolicy_amendment: Some(ExecPolicyAmendment {
+            command: vec!["echo".into(), "hello".into(), "world".into()],
+        }),
         proposed_network_policy_amendments: None,
         additional_permissions: None,
         available_decisions: None,
-        parsed_cmd: vec![],
     };
     handle_exec_approval_request(&mut chat, "sub-approve-noreason", ev);
 
@@ -1198,11 +1188,10 @@ async fn approval_modal_exec_multiline_prefix_hides_execpolicy_option_snapshot()
         cwd: AbsolutePathBuf::current_dir().expect("current dir"),
         reason: None,
         network_approval_context: None,
-        proposed_execpolicy_amendment: Some(ExecPolicyAmendment::new(command)),
+        proposed_execpolicy_amendment: Some(ExecPolicyAmendment { command }),
         proposed_network_policy_amendments: None,
         additional_permissions: None,
         available_decisions: None,
-        parsed_cmd: vec![],
     };
     handle_exec_approval_request(&mut chat, "sub-approve-multiline-trunc", ev);
 

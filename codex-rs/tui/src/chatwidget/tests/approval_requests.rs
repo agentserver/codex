@@ -23,7 +23,6 @@ async fn exec_approval_emits_proposed_command_and_decision_history() {
         proposed_network_policy_amendments: None,
         additional_permissions: None,
         available_decisions: None,
-        parsed_cmd: vec![],
     };
     handle_exec_approval_request(&mut chat, "sub-short", ev);
 
@@ -130,14 +129,16 @@ fn app_server_exec_approval_request_preserves_permissions_context() {
     );
     assert_eq!(
         request.additional_permissions,
-        Some(codex_protocol::models::AdditionalPermissionProfile {
-            network: Some(NetworkPermissions {
+        Some(AppServerAdditionalPermissionProfile {
+            network: Some(AppServerAdditionalNetworkPermissions {
                 enabled: Some(true),
             }),
-            file_system: Some(FileSystemPermissions::from_read_write_roots(
-                Some(vec![read_path]),
-                Some(vec![write_path]),
-            )),
+            file_system: Some(AppServerAdditionalFileSystemPermissions {
+                read: Some(vec![read_path]),
+                write: Some(vec![write_path]),
+                glob_scan_max_depth: None,
+                entries: None,
+            }),
         })
     );
 }
@@ -206,7 +207,6 @@ async fn exec_approval_uses_approval_id_when_present() {
             proposed_network_policy_amendments: None,
             additional_permissions: None,
             available_decisions: None,
-            parsed_cmd: vec![],
         },
     );
 
@@ -249,7 +249,6 @@ async fn exec_approval_decision_truncates_multiline_and_long_commands() {
         proposed_network_policy_amendments: None,
         additional_permissions: None,
         available_decisions: None,
-        parsed_cmd: vec![],
     };
     handle_exec_approval_request(&mut chat, "sub-multi", ev_multi);
     let proposed_multi = drain_insert_history(&mut rx);
@@ -299,7 +298,6 @@ async fn exec_approval_decision_truncates_multiline_and_long_commands() {
         proposed_network_policy_amendments: None,
         additional_permissions: None,
         available_decisions: None,
-        parsed_cmd: vec![],
     };
     handle_exec_approval_request(&mut chat, "sub-long", ev_long);
     let proposed_long = drain_insert_history(&mut rx);

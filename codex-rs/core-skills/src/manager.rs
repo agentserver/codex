@@ -29,6 +29,8 @@ pub struct SkillsLoadInput {
     pub effective_skill_roots: Vec<AbsolutePathBuf>,
     pub config_layer_stack: ConfigLayerStack,
     pub bundled_skills_enabled: bool,
+    pub environment_id: Option<String>,
+    pub qualify_paths_with_environment_id: bool,
 }
 
 impl SkillsLoadInput {
@@ -43,14 +45,32 @@ impl SkillsLoadInput {
             effective_skill_roots,
             config_layer_stack,
             bundled_skills_enabled,
+            environment_id: None,
+            qualify_paths_with_environment_id: false,
         }
+    }
+
+    pub fn with_environment_id(mut self, environment_id: Option<String>) -> Self {
+        self.environment_id = environment_id;
+        self
+    }
+
+    pub fn with_qualified_paths(mut self, qualify_paths_with_environment_id: bool) -> Self {
+        self.qualify_paths_with_environment_id = qualify_paths_with_environment_id;
+        self
+    }
+
+    fn path_display_environment_id(&self) -> Option<&str> {
+        self.qualify_paths_with_environment_id
+            .then_some(self.environment_id.as_deref())
+            .flatten()
     }
 }
 
 pub struct SkillsManager {
     codex_home: AbsolutePathBuf,
     restriction_product: Option<Product>,
-    cache_by_cwd: RwLock<HashMap<AbsolutePathBuf, SkillLoadOutcome>>,
+    cache_by_cwd: RwLock<HashMap<CwdSkillsCacheKey, SkillLoadOutcome>>,
     cache_by_config: RwLock<HashMap<ConfigSkillsCacheKey, SkillLoadOutcome>>,
 }
 
@@ -93,9 +113,12 @@ impl SkillsManager {
     ) -> SkillLoadOutcome {
         let roots = self.skill_roots_for_config(input, fs).await;
         let skill_config_rules = skill_config_rules_from_stack(&input.config_layer_stack);
-        let cache_key = config_skills_cache_key(&roots, &skill_config_rules);
+        let cache_key = config_skills_cache_key(&roots, &skill_config_rules, &input.environment_id);
         if let Some(outcome) = self.cached_outcome_for_config(&cache_key) {
-            return outcome;
+            return Self::outcome_with_path_display_environment_id(
+                outcome,
+                input.path_display_environment_id(),
+            );
         }
 
         let outcome = self.build_skill_outcome(roots, &skill_config_rules).await;
@@ -104,7 +127,7 @@ impl SkillsManager {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         cache.insert(cache_key, outcome.clone());
-        outcome
+        Self::outcome_with_path_display_environment_id(outcome, input.path_display_environment_id())
     }
 
     pub async fn skill_roots_for_config(
@@ -143,11 +166,15 @@ impl SkillsManager {
         fs: Option<Arc<dyn ExecutorFileSystem>>,
     ) -> SkillLoadOutcome {
         let use_cwd_cache = fs.is_some();
+        let cache_key = CwdSkillsCacheKey::from_input(input);
         if use_cwd_cache
             && !force_reload
-            && let Some(outcome) = self.cached_outcome_for_cwd(&input.cwd)
+            && let Some(outcome) = self.cached_outcome_for_cwd(&cache_key)
         {
-            return outcome;
+            return Self::outcome_with_path_display_environment_id(
+                outcome,
+                input.path_display_environment_id(),
+            );
         }
 
         let mut roots = skill_roots(
@@ -178,9 +205,9 @@ impl SkillsManager {
                 .cache_by_cwd
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache.insert(input.cwd.clone(), outcome.clone());
+            cache.insert(cache_key, outcome.clone());
         }
-        outcome
+        Self::outcome_with_path_display_environment_id(outcome, input.path_display_environment_id())
     }
 
     async fn build_skill_outcome(
@@ -194,6 +221,14 @@ impl SkillsManager {
         );
         let disabled_paths = resolve_disabled_skill_paths(&outcome.skills, skill_config_rules);
         finalize_skill_outcome(outcome, disabled_paths)
+    }
+
+    fn outcome_with_path_display_environment_id(
+        mut outcome: SkillLoadOutcome,
+        path_display_environment_id: Option<&str>,
+    ) -> SkillLoadOutcome {
+        outcome.path_display_environment_id = path_display_environment_id.map(str::to_string);
+        outcome
     }
 
     pub fn clear_cache(&self) {
@@ -219,10 +254,10 @@ impl SkillsManager {
         info!("skills cache cleared ({cleared} entries)");
     }
 
-    fn cached_outcome_for_cwd(&self, cwd: &AbsolutePathBuf) -> Option<SkillLoadOutcome> {
+    fn cached_outcome_for_cwd(&self, cache_key: &CwdSkillsCacheKey) -> Option<SkillLoadOutcome> {
         match self.cache_by_cwd.read() {
-            Ok(cache) => cache.get(cwd).cloned(),
-            Err(err) => err.into_inner().get(cwd).cloned(),
+            Ok(cache) => cache.get(cache_key).cloned(),
+            Err(err) => err.into_inner().get(cache_key).cloned(),
         }
     }
 
@@ -238,7 +273,23 @@ impl SkillsManager {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CwdSkillsCacheKey {
+    cwd: AbsolutePathBuf,
+    environment_id: Option<String>,
+}
+
+impl CwdSkillsCacheKey {
+    fn from_input(input: &SkillsLoadInput) -> Self {
+        Self {
+            cwd: input.cwd.clone(),
+            environment_id: input.environment_id.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ConfigSkillsCacheKey {
+    environment_id: Option<String>,
     roots: Vec<(AbsolutePathBuf, u8)>,
     skill_config_rules: SkillConfigRules,
 }
@@ -268,8 +319,10 @@ pub fn bundled_skills_enabled_from_stack(
 fn config_skills_cache_key(
     roots: &[SkillRoot],
     skill_config_rules: &SkillConfigRules,
+    environment_id: &Option<String>,
 ) -> ConfigSkillsCacheKey {
     ConfigSkillsCacheKey {
+        environment_id: environment_id.clone(),
         roots: roots
             .iter()
             .map(|root| {

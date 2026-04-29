@@ -5,6 +5,12 @@ import type { McpServerStatusDetail } from "./McpServerStatusDetail";
 
 export type ListMcpServerStatusParams = {
 /**
+ * Optional environment used to start executor-backed MCP servers for this
+ * threadless status read. Omitted preserves the legacy default/local
+ * runtime environment.
+ */
+environmentId?: string | null,
+/**
  * Opaque pagination cursor returned by a previous call.
  */
 cursor?: string | null,

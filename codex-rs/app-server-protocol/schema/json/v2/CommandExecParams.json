@@ -496,6 +496,13 @@
         "null"
       ]
     },
+    "environmentId": {
+      "description": "Optional environment for command start. Omitted preserves the legacy server-local command execution behavior. Continuation calls identify the process by `processId` and do not accept a separate environment.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "outputBytesCap": {
       "description": "Optional per-stream stdout/stderr capture cap in bytes.\n\nWhen omitted, the server default applies. Cannot be combined with `disableOutputCap`.",
       "format": "uint",

@@ -83,6 +83,8 @@ impl<'a> AgentsMdManager<'a> {
         environment: Option<&Environment>,
         cwd: &AbsolutePathBuf,
     ) -> Option<String> {
+        // TODO(multi-env): layer AGENTS.md from every selected environment
+        // once turn context exposes the selected environment set here.
         let fs = environment?.get_filesystem();
         self.user_instructions_with_fs(fs.as_ref(), cwd).await
     }

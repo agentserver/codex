@@ -221,6 +221,8 @@ impl Session {
         let mcp_servers = with_codex_apps_mcp(mcp_servers, auth.as_ref(), &mcp_config);
         let auth_statuses =
             compute_auth_statuses(mcp_servers.iter(), store_mode, auth.as_ref()).await;
+        // TODO(multi-env): split the session-owned MCP connection manager per
+        // selected environment before routing non-primary env tool/resource calls.
         let runtime_environment = match turn_context.primary_environment() {
             Some(turn_environment) => McpRuntimeEnvironment::new(
                 Arc::clone(&turn_environment.environment),

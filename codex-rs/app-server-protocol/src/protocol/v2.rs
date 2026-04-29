@@ -2573,6 +2573,11 @@ pub struct ExperimentalFeatureEnablementSetResponse {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct ListMcpServerStatusParams {
+    /// Optional environment used to start executor-backed MCP servers for this
+    /// threadless status read. Omitted preserves the legacy default/local
+    /// runtime environment.
+    #[ts(optional = nullable)]
+    pub environment_id: Option<String>,
     /// Opaque pagination cursor returned by a previous call.
     #[ts(optional = nullable)]
     pub cursor: Option<String>,
@@ -2620,6 +2625,11 @@ pub struct ListMcpServerStatusResponse {
 pub struct McpResourceReadParams {
     #[ts(optional = nullable)]
     pub thread_id: Option<String>,
+    /// Optional environment used to read the resource. For thread-scoped
+    /// requests this must resolve to the thread's selected primary environment
+    /// until per-environment MCP managers are available.
+    #[ts(optional = nullable)]
+    pub environment_id: Option<String>,
     pub server: String,
     pub uri: String,
 }
@@ -3265,6 +3275,11 @@ pub struct CommandExecTerminalSize {
 pub struct CommandExecParams {
     /// Command argv vector. Empty arrays are rejected.
     pub command: Vec<String>,
+    /// Optional environment for command start. Omitted preserves the legacy
+    /// server-local command execution behavior. Continuation calls identify the
+    /// process by `processId` and do not accept a separate environment.
+    #[ts(optional = nullable)]
+    pub environment_id: Option<String>,
     /// Optional client-supplied, connection-scoped process id.
     ///
     /// Required for `tty`, `streamStdin`, `streamStdoutStderr`, and follow-up
@@ -4325,6 +4340,11 @@ pub struct ThreadTurnsListResponse {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct SkillsListParams {
+    /// Optional environment to scan. Omitted preserves the legacy default/local
+    /// skills list behavior.
+    #[ts(optional = nullable)]
+    pub environment_id: Option<String>,
+
     /// When empty, defaults to the current session working directory.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cwds: Vec<PathBuf>,
@@ -4489,6 +4509,9 @@ pub struct SkillMetadata {
     #[ts(optional)]
     pub dependencies: Option<SkillDependencies>,
     pub path: AbsolutePathBuf,
+    /// Environment-qualified path suitable for multi-environment references.
+    /// This is `null` for legacy single-environment listings.
+    pub qualified_path: Option<String>,
     pub scope: SkillScope,
     pub enabled: bool,
 }
@@ -4553,6 +4576,7 @@ pub struct SkillErrorInfo {
 #[ts(export_to = "v2/")]
 pub struct SkillsListEntry {
     pub cwd: PathBuf,
+    pub environment_id: Option<String>,
     pub skills: Vec<SkillMetadata>,
     pub errors: Vec<SkillErrorInfo>,
 }
@@ -4752,6 +4776,7 @@ impl From<CoreSkillMetadata> for SkillMetadata {
             interface: value.interface.map(SkillInterface::from),
             dependencies: value.dependencies.map(SkillDependencies::from),
             path: value.path,
+            qualified_path: None,
             scope: value.scope.into(),
             enabled: true,
         }
@@ -8739,6 +8764,7 @@ mod tests {
             params,
             CommandExecParams {
                 command: vec!["ls".to_string(), "-la".to_string()],
+                environment_id: None,
                 process_id: None,
                 tty: false,
                 stream_stdin: false,
@@ -8760,6 +8786,7 @@ mod tests {
     fn command_exec_params_round_trips_disable_timeout() {
         let params = CommandExecParams {
             command: vec!["sleep".to_string(), "30".to_string()],
+            environment_id: None,
             process_id: Some("sleep-1".to_string()),
             tty: false,
             stream_stdin: false,
@@ -8780,6 +8807,7 @@ mod tests {
             value,
             json!({
                 "command": ["sleep", "30"],
+                "environmentId": null,
                 "processId": "sleep-1",
                 "disableTimeout": true,
                 "timeoutMs": null,
@@ -8801,6 +8829,7 @@ mod tests {
     fn command_exec_params_round_trips_disable_output_cap() {
         let params = CommandExecParams {
             command: vec!["yes".to_string()],
+            environment_id: None,
             process_id: Some("yes-1".to_string()),
             tty: false,
             stream_stdin: false,
@@ -8821,6 +8850,7 @@ mod tests {
             value,
             json!({
                 "command": ["yes"],
+                "environmentId": null,
                 "processId": "yes-1",
                 "streamStdoutStderr": true,
                 "outputBytesCap": null,
@@ -8843,6 +8873,7 @@ mod tests {
     fn command_exec_params_round_trips_env_overrides_and_unsets() {
         let params = CommandExecParams {
             command: vec!["printenv".to_string(), "FOO".to_string()],
+            environment_id: None,
             process_id: Some("env-1".to_string()),
             tty: false,
             stream_stdin: false,
@@ -8867,6 +8898,7 @@ mod tests {
             value,
             json!({
                 "command": ["printenv", "FOO"],
+                "environmentId": null,
                 "processId": "env-1",
                 "outputBytesCap": null,
                 "timeoutMs": null,
@@ -8933,6 +8965,7 @@ mod tests {
     fn command_exec_params_round_trip_with_size() {
         let params = CommandExecParams {
             command: vec!["top".to_string()],
+            environment_id: None,
             process_id: Some("pty-1".to_string()),
             tty: true,
             stream_stdin: false,
@@ -8956,6 +8989,7 @@ mod tests {
             value,
             json!({
                 "command": ["top"],
+                "environmentId": null,
                 "processId": "pty-1",
                 "tty": true,
                 "outputBytesCap": null,
@@ -10090,18 +10124,21 @@ mod tests {
     fn skills_list_params_serialization_uses_force_reload() {
         assert_eq!(
             serde_json::to_value(SkillsListParams {
+                environment_id: None,
                 cwds: Vec::new(),
                 force_reload: false,
                 per_cwd_extra_user_roots: None,
             })
             .unwrap(),
             json!({
+                "environmentId": null,
                 "perCwdExtraUserRoots": null,
             }),
         );
 
         assert_eq!(
             serde_json::to_value(SkillsListParams {
+                environment_id: None,
                 cwds: vec![PathBuf::from("/repo")],
                 force_reload: true,
                 per_cwd_extra_user_roots: Some(vec![SkillsListExtraRootsForCwd {
@@ -10114,6 +10151,7 @@ mod tests {
             })
             .unwrap(),
             json!({
+                "environmentId": null,
                 "cwds": ["/repo"],
                 "forceReload": true,
                 "perCwdExtraUserRoots": [

@@ -6571,6 +6571,13 @@
               "null"
             ]
           },
+          "environmentId": {
+            "description": "Optional environment for command start. Omitted preserves the legacy server-local command execution behavior. Continuation calls identify the process by `processId` and do not accept a separate environment.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "outputBytesCap": {
             "description": "Optional per-stream stdout/stderr capture cap in bytes.\n\nWhen omitted, the server default applies. Cannot be combined with `disableOutputCap`.",
             "format": "uint",
@@ -9950,6 +9957,13 @@
             ],
             "description": "Controls how much MCP inventory data to fetch for each server. Defaults to `Full` when omitted."
           },
+          "environmentId": {
+            "description": "Optional environment used to start executor-backed MCP servers for this threadless status read. Omitted preserves the legacy default/local runtime environment.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "limit": {
             "description": "Optional page size; defaults to a server-defined value.",
             "format": "uint32",
@@ -10482,6 +10496,13 @@
       "McpResourceReadParams": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
+          "environmentId": {
+            "description": "Optional environment used to read the resource. For thread-scoped requests this must resolve to the thread's selected primary environment until per-environment MCP managers are available.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "server": {
             "type": "string"
           },
@@ -13916,6 +13937,13 @@
           "path": {
             "$ref": "#/definitions/v2/AbsolutePathBuf"
           },
+          "qualifiedPath": {
+            "description": "Environment-qualified path suitable for multi-environment references. This is `null` for legacy single-environment listings.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "scope": {
             "$ref": "#/definitions/v2/SkillScope"
           },
@@ -14084,6 +14112,12 @@
           "cwd": {
             "type": "string"
           },
+          "environmentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "errors": {
             "items": {
               "$ref": "#/definitions/v2/SkillErrorInfo"
@@ -14131,6 +14165,13 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "environmentId": {
+            "description": "Optional environment to scan. Omitted preserves the legacy default/local skills list behavior.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "forceReload": {
             "description": "When true, bypass the skills cache and re-scan skills from disk.",

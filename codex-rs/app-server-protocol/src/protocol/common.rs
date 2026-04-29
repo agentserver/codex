@@ -1392,6 +1392,7 @@ mod tests {
             request_id: request_id(),
             params: v2::CommandExecParams {
                 command: vec!["sleep".to_string(), "10".to_string()],
+                environment_id: None,
                 process_id: Some("proc-1".to_string()),
                 tty: false,
                 stream_stdin: false,
@@ -1485,6 +1486,7 @@ mod tests {
             request_id: request_id(),
             params: v2::McpResourceReadParams {
                 thread_id: Some("thread-1".to_string()),
+                environment_id: None,
                 server: "server-a".to_string(),
                 uri: "file:///tmp/resource".to_string(),
             },
@@ -1610,6 +1612,7 @@ mod tests {
             request_id: request_id(),
             params: v2::CommandExecParams {
                 command: vec!["true".to_string()],
+                environment_id: None,
                 process_id: None,
                 tty: false,
                 stream_stdin: false,
@@ -1650,6 +1653,7 @@ mod tests {
             request_id: request_id(),
             params: v2::McpResourceReadParams {
                 thread_id: None,
+                environment_id: None,
                 server: "server-a".to_string(),
                 uri: "file:///tmp/resource".to_string(),
             },
@@ -2581,6 +2585,7 @@ mod tests {
             request_id: RequestId::Integer(1),
             params: v2::CommandExecParams {
                 command: vec!["pwd".to_string()],
+                environment_id: None,
                 process_id: None,
                 tty: false,
                 stream_stdin: false,

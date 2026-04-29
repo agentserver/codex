@@ -746,7 +746,11 @@ impl Session {
             .plugins_for_config(&per_turn_config)
             .await;
         let effective_skill_roots = plugin_outcome.effective_skill_roots();
-        let skills_input = skills_load_input_from_config(&per_turn_config, effective_skill_roots);
+        let primary_environment_id = primary_turn_environment
+            .map(|turn_environment| turn_environment.environment_id.clone());
+        let skills_input = skills_load_input_from_config(&per_turn_config, effective_skill_roots)
+            .with_environment_id(primary_environment_id)
+            .with_qualified_paths(turn_environments.len() > 1);
         let fs = primary_turn_environment
             .map(|turn_environment| turn_environment.environment.get_filesystem());
         let skills_outcome = Arc::new(

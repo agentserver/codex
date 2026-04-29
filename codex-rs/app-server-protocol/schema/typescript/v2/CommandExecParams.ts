@@ -16,6 +16,11 @@ export type CommandExecParams = {/**
  * Command argv vector. Empty arrays are rejected.
  */
 command: Array<string>, /**
+ * Optional environment for command start. Omitted preserves the legacy
+ * server-local command execution behavior. Continuation calls identify the
+ * process by `processId` and do not accept a separate environment.
+ */
+environmentId?: string | null, /**
  * Optional client-supplied, connection-scoped process id.
  *
  * Required for `tty`, `streamStdin`, `streamStdoutStderr`, and follow-up

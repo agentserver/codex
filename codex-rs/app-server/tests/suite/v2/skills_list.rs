@@ -105,6 +105,7 @@ async fn skills_list_includes_skills_from_per_cwd_extra_user_roots() -> Result<(
 
     let request_id = mcp
         .send_skills_list_request(SkillsListParams {
+            environment_id: None,
             cwds: vec![cwd.path().to_path_buf()],
             force_reload: true,
             per_cwd_extra_user_roots: Some(vec![SkillsListExtraRootsForCwd {
@@ -166,6 +167,7 @@ async fn skills_list_excludes_plugin_skills_when_workspace_codex_plugins_disable
 
     let request_id = mcp
         .send_skills_list_request(SkillsListParams {
+            environment_id: None,
             cwds: vec![repo_root.path().to_path_buf()],
             force_reload: true,
             per_cwd_extra_user_roots: None,
@@ -213,6 +215,7 @@ async fn skills_list_skips_cwd_roots_when_environment_disabled() -> Result<()> {
 
     let request_id = mcp
         .send_skills_list_request(SkillsListParams {
+            environment_id: None,
             cwds: vec![cwd.path().to_path_buf()],
             force_reload: true,
             per_cwd_extra_user_roots: Some(vec![SkillsListExtraRootsForCwd {
@@ -256,6 +259,7 @@ async fn skills_list_rejects_relative_extra_user_roots() -> Result<()> {
 
     let request_id = mcp
         .send_skills_list_request(SkillsListParams {
+            environment_id: None,
             cwds: vec![cwd.path().to_path_buf()],
             force_reload: true,
             per_cwd_extra_user_roots: Some(vec![SkillsListExtraRootsForCwd {
@@ -291,6 +295,7 @@ async fn skills_list_accepts_relative_cwds() -> Result<()> {
 
     let request_id = mcp
         .send_skills_list_request(SkillsListParams {
+            environment_id: None,
             cwds: vec![relative_cwd.clone()],
             force_reload: true,
             per_cwd_extra_user_roots: None,
@@ -322,6 +327,7 @@ async fn skills_list_ignores_per_cwd_extra_roots_for_unknown_cwd() -> Result<()>
 
     let request_id = mcp
         .send_skills_list_request(SkillsListParams {
+            environment_id: None,
             cwds: vec![requested_cwd.path().to_path_buf()],
             force_reload: true,
             per_cwd_extra_user_roots: Some(vec![SkillsListExtraRootsForCwd {
@@ -361,6 +367,7 @@ async fn skills_list_uses_cached_result_until_force_reload() -> Result<()> {
     // Seed the cwd cache first without extra roots.
     let first_request_id = mcp
         .send_skills_list_request(SkillsListParams {
+            environment_id: None,
             cwds: vec![cwd.path().to_path_buf()],
             force_reload: false,
             per_cwd_extra_user_roots: None,
@@ -382,6 +389,7 @@ async fn skills_list_uses_cached_result_until_force_reload() -> Result<()> {
 
     let second_request_id = mcp
         .send_skills_list_request(SkillsListParams {
+            environment_id: None,
             cwds: vec![cwd.path().to_path_buf()],
             force_reload: false,
             per_cwd_extra_user_roots: Some(vec![SkillsListExtraRootsForCwd {
@@ -406,6 +414,7 @@ async fn skills_list_uses_cached_result_until_force_reload() -> Result<()> {
 
     let third_request_id = mcp
         .send_skills_list_request(SkillsListParams {
+            environment_id: None,
             cwds: vec![cwd.path().to_path_buf()],
             force_reload: true,
             per_cwd_extra_user_roots: Some(vec![SkillsListExtraRootsForCwd {

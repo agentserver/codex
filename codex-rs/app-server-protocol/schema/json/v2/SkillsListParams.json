@@ -28,6 +28,13 @@
       },
       "type": "array"
     },
+    "environmentId": {
+      "description": "Optional environment to scan. Omitted preserves the legacy default/local skills list behavior.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "forceReload": {
       "description": "When true, bypass the skills cache and re-scan skills from disk.",
       "type": "boolean"

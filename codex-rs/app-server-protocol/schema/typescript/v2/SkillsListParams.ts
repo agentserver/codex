@@ -5,6 +5,11 @@ import type { SkillsListExtraRootsForCwd } from "./SkillsListExtraRootsForCwd";
 
 export type SkillsListParams = {
 /**
+ * Optional environment to scan. Omitted preserves the legacy default/local
+ * skills list behavior.
+ */
+environmentId?: string | null,
+/**
  * When empty, defaults to the current session working directory.
  */
 cwds?: Array<string>,

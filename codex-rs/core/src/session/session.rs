@@ -340,6 +340,58 @@ impl Session {
         Ok(McpRuntimeEnvironment::new(environment, cwd))
     }
 
+    pub(crate) async fn validate_mcp_resource_environment(
+        &self,
+        environment_id: Option<&str>,
+    ) -> CodexResult<()> {
+        let Some(environment_id) = environment_id else {
+            return Ok(());
+        };
+        if environment_id.is_empty() {
+            return Err(CodexErr::InvalidRequest(
+                "mcp/resource/read environmentId must be non-empty".to_string(),
+            ));
+        }
+
+        let session_configuration = {
+            let state = self.state.lock().await;
+            state.session_configuration.clone()
+        };
+        let Some(primary_environment) = session_configuration.environments.first() else {
+            return Err(CodexErr::InvalidRequest(format!(
+                "mcp/resource/read environmentId `{environment_id}` is not selected for this thread"
+            )));
+        };
+        let selected_environment = session_configuration
+            .environments
+            .iter()
+            .find(|selected_environment| selected_environment.environment_id == environment_id)
+            .ok_or_else(|| {
+                CodexErr::InvalidRequest(format!(
+                    "mcp/resource/read environmentId `{environment_id}` is not selected for this thread"
+                ))
+            })?;
+        if self
+            .services
+            .environment_manager
+            .get_environment(&selected_environment.environment_id)
+            .is_none()
+        {
+            return Err(CodexErr::InvalidRequest(format!(
+                "unknown stored MCP environment id `{environment_id}`"
+            )));
+        }
+
+        if selected_environment.environment_id != primary_environment.environment_id {
+            return Err(CodexErr::InvalidRequest(format!(
+                "mcp/resource/read currently supports only the primary selected environment `{}`; got `{environment_id}`",
+                primary_environment.environment_id
+            )));
+        }
+
+        Ok(())
+    }
+
     #[instrument(name = "session_init", level = "info", skip_all)]
     #[allow(clippy::too_many_arguments)]
     #[expect(

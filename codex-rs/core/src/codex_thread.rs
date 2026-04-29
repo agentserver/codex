@@ -401,6 +401,16 @@ impl CodexThread {
         Ok(serde_json::to_value(result)?)
     }
 
+    pub async fn validate_mcp_resource_environment(
+        &self,
+        environment_id: Option<&str>,
+    ) -> CodexResult<()> {
+        self.codex
+            .session
+            .validate_mcp_resource_environment(environment_id)
+            .await
+    }
+
     pub async fn call_mcp_tool(
         &self,
         server: &str,

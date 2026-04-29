@@ -287,6 +287,7 @@ use codex_core_plugins::remote::RemotePluginCatalogError;
 use codex_core_plugins::remote::RemotePluginDetail as RemoteCatalogPluginDetail;
 use codex_core_plugins::remote::RemotePluginServiceConfig;
 use codex_core_plugins::remote::RemotePluginSummary as RemoteCatalogPluginSummary;
+use codex_exec_server::Environment;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::LOCAL_FS;
 use codex_external_agent_sessions::ImportedExternalAgentSession;
@@ -843,6 +844,34 @@ impl CodexMessageProcessor {
                 );
                 true
             }
+        }
+    }
+
+    fn resolve_threadless_environment(
+        environment_manager: &EnvironmentManager,
+        environment_id: Option<&str>,
+        api_name: &str,
+    ) -> Result<(Option<String>, Arc<Environment>), JSONRPCErrorError> {
+        match environment_id {
+            Some("") => Err(invalid_request(format!(
+                "{api_name} environmentId must be non-empty"
+            ))),
+            Some(environment_id) => environment_manager
+                .get_environment(environment_id)
+                .map(|environment| (Some(environment_id.to_string()), environment))
+                .ok_or_else(|| {
+                    invalid_request(format!(
+                        "{api_name} unknown environmentId `{environment_id}`"
+                    ))
+                }),
+            None => Ok((
+                environment_manager
+                    .default_environment_id()
+                    .map(str::to_string),
+                environment_manager
+                    .default_environment()
+                    .unwrap_or_else(|| environment_manager.local_environment()),
+            )),
         }
     }
 
@@ -2107,6 +2136,7 @@ impl CodexMessageProcessor {
 
         let CommandExecParams {
             command,
+            environment_id,
             process_id,
             tty,
             stream_stdin,
@@ -2121,6 +2151,18 @@ impl CodexMessageProcessor {
             sandbox_policy,
             permission_profile,
         } = params;
+        if let Some(environment_id) = environment_id.as_deref() {
+            let (_, environment) = Self::resolve_threadless_environment(
+                self.thread_manager.environment_manager().as_ref(),
+                Some(environment_id),
+                "command/exec",
+            )?;
+            if environment.is_remote() {
+                return Err(invalid_request(
+                    "command/exec environmentId currently supports only local environments",
+                ));
+            }
+        }
         if sandbox_policy.is_some() && permission_profile.is_some() {
             return Err(invalid_request(
                 "`permissionProfile` cannot be combined with `sandboxPolicy`",
@@ -5530,17 +5572,20 @@ impl CodexMessageProcessor {
             .await;
         let auth = self.auth_manager.auth().await;
         let environment_manager = self.thread_manager.environment_manager();
-        let runtime_environment = match environment_manager.default_environment() {
-            Some(environment) => {
-                // Status listing has no turn cwd. This fallback is used only
-                // by executor-backed stdio MCPs whose config omits `cwd`.
-                McpRuntimeEnvironment::new(environment, config.cwd.to_path_buf())
+        let (_, environment) = match Self::resolve_threadless_environment(
+            environment_manager.as_ref(),
+            params.environment_id.as_deref(),
+            "mcp/server/status/list",
+        ) {
+            Ok(environment) => environment,
+            Err(error) => {
+                self.outgoing.send_error(request, error).await;
+                return;
             }
-            None => McpRuntimeEnvironment::new(
-                environment_manager.local_environment(),
-                config.cwd.to_path_buf(),
-            ),
         };
+        // Status listing has no turn cwd. This fallback is used only by
+        // executor-backed stdio MCPs whose config omits `cwd`.
+        let runtime_environment = McpRuntimeEnvironment::new(environment, config.cwd.to_path_buf());
 
         tokio::spawn(async move {
             Self::list_mcp_server_status_task(
@@ -5673,6 +5718,7 @@ impl CodexMessageProcessor {
         let outgoing = Arc::clone(&self.outgoing);
         let McpResourceReadParams {
             thread_id,
+            environment_id,
             server,
             uri,
         } = params;
@@ -5685,6 +5731,16 @@ impl CodexMessageProcessor {
                     return;
                 }
             };
+
+            if let Err(error) = thread
+                .validate_mcp_resource_environment(environment_id.as_deref())
+                .await
+            {
+                self.outgoing
+                    .send_error(request_id, invalid_request(error.to_string()))
+                    .await;
+                return;
+            }
 
             tokio::spawn(async move {
                 let result = thread.read_mcp_resource(&server, &uri).await;
@@ -5704,15 +5760,21 @@ impl CodexMessageProcessor {
             .to_mcp_config(self.thread_manager.plugins_manager().as_ref())
             .await;
         let auth = self.auth_manager.auth().await;
-        let runtime_environment = {
-            let environment_manager = self.thread_manager.environment_manager();
-            let environment = environment_manager
-                .default_environment()
-                .unwrap_or_else(|| environment_manager.local_environment());
-            // Resource reads without a thread have no turn cwd. This fallback
-            // is used only by executor-backed stdio MCPs whose config omits `cwd`.
-            McpRuntimeEnvironment::new(environment, config.cwd.to_path_buf())
+        let environment_manager = self.thread_manager.environment_manager();
+        let (_, environment) = match Self::resolve_threadless_environment(
+            environment_manager.as_ref(),
+            environment_id.as_deref(),
+            "mcp/resource/read",
+        ) {
+            Ok(environment) => environment,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
         };
+        // Resource reads without a thread have no turn cwd. This fallback is
+        // used only by executor-backed stdio MCPs whose config omits `cwd`.
+        let runtime_environment = McpRuntimeEnvironment::new(environment, config.cwd.to_path_buf());
 
         tokio::spawn(async move {
             let result = match read_mcp_resource_without_thread(
@@ -6175,6 +6237,7 @@ impl CodexMessageProcessor {
         params: SkillsListParams,
     ) -> Result<SkillsListResponse, JSONRPCErrorError> {
         let SkillsListParams {
+            environment_id,
             cwds,
             force_reload,
             per_cwd_extra_user_roots,
@@ -6220,11 +6283,28 @@ impl CodexMessageProcessor {
             .await;
         let skills_manager = self.thread_manager.skills_manager();
         let plugins_manager = self.thread_manager.plugins_manager();
-        let fs = self
-            .thread_manager
-            .environment_manager()
-            .default_environment()
-            .map(|environment| environment.get_filesystem());
+        let environment_manager = self.thread_manager.environment_manager();
+        // TODO(multi-env): add selected-environment batch semantics if
+        // skills/list grows a thread-scoped multi-env form.
+        let (resolved_environment_id, fs) = match environment_id.as_deref() {
+            Some(environment_id) => {
+                let (environment_id, environment) = Self::resolve_threadless_environment(
+                    environment_manager.as_ref(),
+                    Some(environment_id),
+                    "skills/list",
+                )?;
+                (environment_id, Some(environment.get_filesystem()))
+            }
+            None => {
+                let environment = environment_manager.default_environment();
+                (
+                    environment_manager
+                        .default_environment_id()
+                        .map(str::to_string),
+                    environment.map(|environment| environment.get_filesystem()),
+                )
+            }
+        };
         let mut data = Vec::new();
         for cwd in cwds {
             let extra_roots = extra_roots_by_cwd
@@ -6236,6 +6316,7 @@ impl CodexMessageProcessor {
                     let error_path = cwd.clone();
                     data.push(codex_app_server_protocol::SkillsListEntry {
                         cwd,
+                        environment_id: resolved_environment_id.clone(),
                         skills: Vec::new(),
                         errors: vec![codex_app_server_protocol::SkillErrorInfo {
                             path: error_path,
@@ -6255,6 +6336,7 @@ impl CodexMessageProcessor {
                     let error_path = cwd.clone();
                     data.push(codex_app_server_protocol::SkillsListEntry {
                         cwd,
+                        environment_id: resolved_environment_id.clone(),
                         skills: Vec::new(),
                         errors: vec![codex_app_server_protocol::SkillErrorInfo {
                             path: error_path,
@@ -6275,7 +6357,9 @@ impl CodexMessageProcessor {
                 effective_skill_roots,
                 config_layer_stack,
                 config.bundled_skills_enabled(),
-            );
+            )
+            .with_environment_id(resolved_environment_id.clone())
+            .with_qualified_paths(environment_id.is_some());
             let outcome = skills_manager
                 .skills_for_cwd_with_extra_user_roots(
                     &skills_input,
@@ -6285,9 +6369,14 @@ impl CodexMessageProcessor {
                 )
                 .await;
             let errors = errors_to_info(&outcome.errors);
-            let skills = skills_to_info(&outcome.skills, &outcome.disabled_paths);
+            let skills = skills_to_info(
+                &outcome.skills,
+                &outcome.disabled_paths,
+                outcome.path_display_environment_id(),
+            );
             data.push(codex_app_server_protocol::SkillsListEntry {
                 cwd,
+                environment_id: resolved_environment_id.clone(),
                 skills,
                 errors,
             });
@@ -8548,6 +8637,7 @@ fn has_model_resume_override(
 fn skills_to_info(
     skills: &[codex_core::skills::SkillMetadata],
     disabled_paths: &std::collections::HashSet<AbsolutePathBuf>,
+    path_display_environment_id: Option<&str>,
 ) -> Vec<codex_app_server_protocol::SkillMetadata> {
     skills
         .iter()
@@ -8584,6 +8674,9 @@ fn skills_to_info(
                     }
                 }),
                 path: skill.path_to_skills_md.clone(),
+                qualified_path: path_display_environment_id.map(|environment_id| {
+                    format_oai_env_path(environment_id, &skill.path_to_skills_md)
+                }),
                 scope: skill.scope.into(),
                 enabled,
             }
@@ -8653,6 +8746,15 @@ fn marketplace_plugin_source_to_info(source: MarketplacePluginSource) -> PluginS
             ref_name,
             sha,
         },
+    }
+}
+
+fn format_oai_env_path(environment_id: &str, path: &AbsolutePathBuf) -> String {
+    let path = path.to_string_lossy().replace('\\', "/");
+    if path.starts_with('/') {
+        format!("oai_env://{environment_id}{path}")
+    } else {
+        format!("oai_env://{environment_id}/{path}")
     }
 }
 

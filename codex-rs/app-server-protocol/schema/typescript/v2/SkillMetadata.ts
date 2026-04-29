@@ -10,4 +10,9 @@ export type SkillMetadata = { name: string, description: string,
 /**
  * Legacy short_description from SKILL.md. Prefer SKILL.json interface.short_description.
  */
-shortDescription?: string, interface?: SkillInterface, dependencies?: SkillDependencies, path: AbsolutePathBuf, scope: SkillScope, enabled: boolean, };
+shortDescription?: string, interface?: SkillInterface, dependencies?: SkillDependencies, path: AbsolutePathBuf,
+/**
+ * Environment-qualified path suitable for multi-environment references.
+ * This is `null` for legacy single-environment listings.
+ */
+qualifiedPath: string | null, scope: SkillScope, enabled: boolean, };

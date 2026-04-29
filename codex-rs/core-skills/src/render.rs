@@ -174,7 +174,8 @@ pub fn build_available_skills(
         return None;
     }
 
-    let absolute_lines = ordered_absolute_skill_lines(&skills);
+    let path_display_environment_id = outcome.path_display_environment_id();
+    let absolute_lines = ordered_absolute_skill_lines(&skills, path_display_environment_id);
     let absolute = build_available_skills_from_lines(
         absolute_lines,
         skills.len(),
@@ -477,10 +478,10 @@ fn sum_description_truncation(rendered: &[RenderedSkillLine]) -> (usize, usize) 
 }
 
 impl<'a> SkillLine<'a> {
-    fn new(skill: &'a SkillMetadata) -> Self {
+    fn new(skill: &'a SkillMetadata, environment_id: Option<&str>) -> Self {
         Self::with_path(
             skill,
-            skill.path_to_skills_md.to_string_lossy().replace('\\', "/"),
+            format_skill_path(&skill.path_to_skills_md, environment_id),
         )
     }
 
@@ -640,6 +641,10 @@ fn build_aliased_available_skills(
     skills: &[SkillMetadata],
     budget: SkillMetadataBudget,
 ) -> Option<AvailableSkills> {
+    if outcome.path_display_environment_id().is_some() {
+        return None;
+    }
+
     let plan = build_alias_plan(outcome, skills, budget)?;
     if plan.table_cost >= budget.limit() {
         return None;
@@ -875,11 +880,25 @@ fn available_skills_cost(budget: SkillMetadataBudget, available: &AvailableSkill
     metadata_cost.saturating_add(lines_cost(budget, &available.skill_lines))
 }
 
-fn ordered_absolute_skill_lines(skills: &[SkillMetadata]) -> Vec<SkillLine<'_>> {
+fn ordered_absolute_skill_lines(
+    skills: &[SkillMetadata],
+    environment_id: Option<&str>,
+) -> Vec<SkillLine<'_>> {
     ordered_skills_for_budget(skills)
         .into_iter()
-        .map(SkillLine::new)
+        .map(|skill| SkillLine::new(skill, environment_id))
         .collect()
+}
+
+fn format_skill_path(path: &AbsolutePathBuf, environment_id: Option<&str>) -> String {
+    let path = path.to_string_lossy().replace('\\', "/");
+    match environment_id {
+        Some(environment_id) if path.starts_with('/') => {
+            format!("oai_env://{environment_id}{path}")
+        }
+        Some(environment_id) => format!("oai_env://{environment_id}/{path}"),
+        None => path,
+    }
 }
 
 fn ordered_skills_for_budget(skills: &[SkillMetadata]) -> Vec<&SkillMetadata> {
@@ -936,7 +955,7 @@ mod tests {
     }
 
     fn expected_skill_line(skill: &SkillMetadata, description: &str) -> String {
-        SkillLine::new(skill).render_with_description(description)
+        SkillLine::new(skill, /*environment_id*/ None).render_with_description(description)
     }
 
     fn normalized_path(path: &AbsolutePathBuf) -> String {
@@ -974,7 +993,7 @@ mod tests {
         budget: SkillMetadataBudget,
     ) -> Option<AvailableSkills> {
         build_available_skills_from_lines(
-            ordered_absolute_skill_lines(skills),
+            ordered_absolute_skill_lines(skills, /*environment_id*/ None),
             skills.len(),
             budget,
             SkillPathAliases::default(),
@@ -1009,9 +1028,10 @@ mod tests {
     fn budgeted_rendering_truncates_descriptions_equally_before_omitting_skills() {
         let alpha = make_skill_with_description("alpha-skill", SkillScope::Repo, "abcdef");
         let beta = make_skill_with_description("beta-skill", SkillScope::Repo, "uvwxyz");
-        let minimum_cost = SkillLine::new(&alpha)
+        let minimum_cost = SkillLine::new(&alpha, /*environment_id*/ None)
             .minimum_cost(SkillMetadataBudget::Characters(usize::MAX))
-            + SkillLine::new(&beta).minimum_cost(SkillMetadataBudget::Characters(usize::MAX));
+            + SkillLine::new(&beta, /*environment_id*/ None)
+                .minimum_cost(SkillMetadataBudget::Characters(usize::MAX));
         let budget = SkillMetadataBudget::Characters(minimum_cost + 6);
 
         let rendered = build_available_skills_from_metadata(&[beta.clone(), alpha.clone()], budget)
@@ -1034,9 +1054,10 @@ mod tests {
     fn budgeted_rendering_does_not_warn_when_average_description_truncation_is_within_threshold() {
         let alpha = make_skill_with_description("alpha-skill", SkillScope::Repo, "abcdefghij");
         let beta = make_skill_with_description("beta-skill", SkillScope::Repo, "uvwxyzabcd");
-        let minimum_cost = SkillLine::new(&alpha)
+        let minimum_cost = SkillLine::new(&alpha, /*environment_id*/ None)
             .minimum_cost(SkillMetadataBudget::Characters(usize::MAX))
-            + SkillLine::new(&beta).minimum_cost(SkillMetadataBudget::Characters(usize::MAX));
+            + SkillLine::new(&beta, /*environment_id*/ None)
+                .minimum_cost(SkillMetadataBudget::Characters(usize::MAX));
         let budget = SkillMetadataBudget::Characters(minimum_cost + 6);
 
         let rendered = build_available_skills_from_metadata(&[alpha, beta], budget)
@@ -1055,9 +1076,9 @@ mod tests {
         let long_skill =
             make_skill_with_description("long-skill", SkillScope::Repo, &long_description);
         let empty_skill = make_skill_with_description("empty-skill", SkillScope::Repo, "");
-        let minimum_cost = SkillLine::new(&long_skill)
+        let minimum_cost = SkillLine::new(&long_skill, /*environment_id*/ None)
             .minimum_cost(SkillMetadataBudget::Characters(usize::MAX))
-            + SkillLine::new(&empty_skill)
+            + SkillLine::new(&empty_skill, /*environment_id*/ None)
                 .minimum_cost(SkillMetadataBudget::Characters(usize::MAX));
         let budget = SkillMetadataBudget::Characters(minimum_cost + 49);
 
@@ -1083,8 +1104,8 @@ mod tests {
         let long_description = "a".repeat(1000);
         let long_skill =
             make_skill_with_description("long-skill", SkillScope::Repo, &long_description);
-        let minimum_cost =
-            SkillLine::new(&long_skill).minimum_cost(SkillMetadataBudget::Tokens(usize::MAX));
+        let minimum_cost = SkillLine::new(&long_skill, /*environment_id*/ None)
+            .minimum_cost(SkillMetadataBudget::Tokens(usize::MAX));
         let budget = SkillMetadataBudget::Tokens(minimum_cost + 1);
 
         let rendered = build_available_skills_from_metadata(&[long_skill], budget)
@@ -1100,9 +1121,10 @@ mod tests {
     fn budgeted_rendering_redistributes_unused_description_budget() {
         let short = make_skill_with_description("short-skill", SkillScope::Repo, "x");
         let long = make_skill_with_description("long-skill", SkillScope::Repo, "abcdefghi");
-        let minimum_cost = SkillLine::new(&short)
+        let minimum_cost = SkillLine::new(&short, /*environment_id*/ None)
             .minimum_cost(SkillMetadataBudget::Characters(usize::MAX))
-            + SkillLine::new(&long).minimum_cost(SkillMetadataBudget::Characters(usize::MAX));
+            + SkillLine::new(&long, /*environment_id*/ None)
+                .minimum_cost(SkillMetadataBudget::Characters(usize::MAX));
         let budget = SkillMetadataBudget::Characters(minimum_cost + 11);
 
         let rendered = build_available_skills_from_metadata(&[short.clone(), long.clone()], budget)
@@ -1126,10 +1148,14 @@ mod tests {
         let user = make_skill("user-skill", SkillScope::User);
         let repo = make_skill("repo-skill", SkillScope::Repo);
         let admin = make_skill("admin-skill", SkillScope::Admin);
-        let system_cost = SkillMetadataBudget::Characters(usize::MAX)
-            .cost(&format!("{}\n", SkillLine::new(&system).render_minimum()));
-        let admin_cost = SkillMetadataBudget::Characters(usize::MAX)
-            .cost(&format!("{}\n", SkillLine::new(&admin).render_minimum()));
+        let system_cost = SkillMetadataBudget::Characters(usize::MAX).cost(&format!(
+            "{}\n",
+            SkillLine::new(&system, /*environment_id*/ None).render_minimum()
+        ));
+        let admin_cost = SkillMetadataBudget::Characters(usize::MAX).cost(&format!(
+            "{}\n",
+            SkillLine::new(&admin, /*environment_id*/ None).render_minimum()
+        ));
         let budget = SkillMetadataBudget::Characters(system_cost + admin_cost);
 
         let rendered = build_available_skills_from_metadata(&[system, user, repo, admin], budget)
@@ -1157,8 +1183,10 @@ mod tests {
         let mut oversized = make_skill("oversized-system-skill", SkillScope::System);
         oversized.description = "desc ".repeat(100);
         let repo = make_skill("repo-skill", SkillScope::Repo);
-        let repo_cost = SkillMetadataBudget::Characters(usize::MAX)
-            .cost(&format!("{}\n", SkillLine::new(&repo).render_full()));
+        let repo_cost = SkillMetadataBudget::Characters(usize::MAX).cost(&format!(
+            "{}\n",
+            SkillLine::new(&repo, /*environment_id*/ None).render_full()
+        ));
         let budget = SkillMetadataBudget::Characters(repo_cost);
 
         let rendered = build_available_skills_from_metadata(&[oversized, repo], budget)
@@ -1203,6 +1231,33 @@ mod tests {
     }
 
     #[test]
+    fn outcome_rendering_uses_env_qualified_paths_when_requested() {
+        let root = test_path_buf("/tmp/skills").abs();
+        let alpha_path = root.join("alpha/SKILL.md");
+        let mut outcome = outcome_with_roots(
+            vec![skill_with_path("alpha-skill", &alpha_path)],
+            vec![root],
+        );
+        outcome.path_display_environment_id = Some("remote".to_string());
+
+        let rendered = build_available_skills(
+            &outcome,
+            SkillMetadataBudget::Characters(usize::MAX),
+            SkillRenderSideEffects::None,
+        )
+        .expect("skills should render");
+
+        assert!(rendered.skill_root_lines.is_empty());
+        assert_eq!(
+            rendered.skill_lines,
+            vec![format!(
+                "- alpha-skill: desc (file: oai_env://remote{})",
+                normalized_path(&alpha_path)
+            )]
+        );
+    }
+
+    #[test]
     fn outcome_rendering_uses_aliases_when_they_allow_more_skills_to_fit() {
         let root = test_path_buf(
             "/Users/xl/.codex/plugins/cache/openai-curated/example/hash1234567890/skills-with-a-very-long-shared-prefix",
@@ -1217,7 +1272,8 @@ mod tests {
         let outcome = outcome_with_roots(skills.clone(), vec![root]);
         let absolute_minimum = skills.iter().fold(0usize, |cost, skill| {
             cost.saturating_add(
-                SkillLine::new(skill).minimum_cost(SkillMetadataBudget::Characters(usize::MAX)),
+                SkillLine::new(skill, /*environment_id*/ None)
+                    .minimum_cost(SkillMetadataBudget::Characters(usize::MAX)),
             )
         });
         let plan = build_alias_plan(

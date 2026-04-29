@@ -89,6 +89,7 @@ pub struct SkillLoadOutcome {
     pub skills: Vec<SkillMetadata>,
     pub errors: Vec<SkillError>,
     pub disabled_paths: HashSet<AbsolutePathBuf>,
+    pub(crate) path_display_environment_id: Option<String>,
     pub(crate) skill_roots: Vec<AbsolutePathBuf>,
     pub(crate) skill_root_by_path: Arc<HashMap<AbsolutePathBuf, AbsolutePathBuf>>,
     pub(crate) file_systems_by_skill_path: SkillFileSystemsByPath,
@@ -117,6 +118,10 @@ impl SkillLoadOutcome {
         self.skills
             .iter()
             .map(|skill| (skill, self.is_skill_enabled(skill)))
+    }
+
+    pub fn path_display_environment_id(&self) -> Option<&str> {
+        self.path_display_environment_id.as_deref()
     }
 
     pub(crate) fn file_system_for_skill(

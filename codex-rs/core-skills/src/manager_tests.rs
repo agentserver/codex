@@ -201,6 +201,71 @@ async fn skills_for_config_reuses_cache_for_same_effective_config() {
     assert_eq!(outcome2.skills, outcome1.skills);
 }
 
+#[test]
+fn skills_cache_keys_include_environment_id() {
+    let codex_home = tempfile::tempdir().expect("tempdir");
+    let cwd = tempfile::tempdir().expect("tempdir");
+    let config_layer_stack = config_stack(&codex_home, "");
+    let base_input = SkillsLoadInput::new(
+        cwd.path().abs(),
+        Vec::new(),
+        config_layer_stack.clone(),
+        bundled_skills_enabled_from_stack(&config_layer_stack),
+    );
+    let local_input = base_input
+        .clone()
+        .with_environment_id(Some("local".to_string()));
+    let remote_input = base_input.with_environment_id(Some("remote".to_string()));
+    let skill_config_rules = skill_config_rules_from_stack(&config_layer_stack);
+
+    assert_ne!(
+        CwdSkillsCacheKey::from_input(&local_input),
+        CwdSkillsCacheKey::from_input(&remote_input)
+    );
+    assert_ne!(
+        config_skills_cache_key(&[], &skill_config_rules, &local_input.environment_id),
+        config_skills_cache_key(&[], &skill_config_rules, &remote_input.environment_id)
+    );
+}
+
+#[tokio::test]
+async fn cached_skills_outcome_applies_path_display_per_request() {
+    let codex_home = tempfile::tempdir().expect("tempdir");
+    let cwd = tempfile::tempdir().expect("tempdir");
+    write_user_skill(&codex_home, "a", "skill-a", "from a");
+    let config_layer_stack = config_stack(&codex_home, "");
+    let skills_manager = SkillsManager::new(
+        codex_home.path().abs(),
+        /*bundled_skills_enabled*/ true,
+    );
+    let base_input = SkillsLoadInput::new(
+        cwd.path().abs(),
+        Vec::new(),
+        config_layer_stack.clone(),
+        bundled_skills_enabled_from_stack(&config_layer_stack),
+    )
+    .with_environment_id(Some("local".to_string()));
+
+    let unqualified = skills_manager
+        .skills_for_cwd(
+            &base_input,
+            /*force_reload*/ false,
+            Some(Arc::clone(&LOCAL_FS)),
+        )
+        .await;
+    let qualified = skills_manager
+        .skills_for_cwd(
+            &base_input.clone().with_qualified_paths(true),
+            /*force_reload*/ false,
+            Some(Arc::clone(&LOCAL_FS)),
+        )
+        .await;
+
+    assert_eq!(unqualified.path_display_environment_id(), None);
+    assert_eq!(qualified.path_display_environment_id(), Some("local"));
+    assert_eq!(qualified.skills, unqualified.skills);
+}
+
 #[tokio::test]
 async fn skills_for_config_disables_plugin_skills_by_name() {
     let codex_home = tempfile::tempdir().expect("tempdir");

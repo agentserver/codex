@@ -67,6 +67,7 @@ url = "{mcp_server_url}/mcp"
 
     let request_id = mcp
         .send_list_mcp_server_status_request(ListMcpServerStatusParams {
+            environment_id: None,
             cursor: None,
             limit: None,
             detail: None,
@@ -238,6 +239,7 @@ url = "{mcp_server_url}/mcp"
 
     let request_id = mcp
         .send_list_mcp_server_status_request(ListMcpServerStatusParams {
+            environment_id: None,
             cursor: None,
             limit: None,
             detail: Some(McpServerStatusDetail::ToolsAndAuthOnly),
@@ -302,6 +304,7 @@ url = "{underscore_server_url}/mcp"
 
     let request_id = mcp
         .send_list_mcp_server_status_request(ListMcpServerStatusParams {
+            environment_id: None,
             cursor: None,
             limit: None,
             detail: None,

@@ -11,12 +11,14 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+WORKSPACE_MANIFEST = ROOT / "codex-rs" / "Cargo.toml"
 TUI_ROOT = ROOT / "codex-rs" / "tui"
 TUI_MANIFEST = TUI_ROOT / "Cargo.toml"
 FORBIDDEN_PACKAGE = "codex-core"
 CODEX_PROTOCOL_PACKAGE = "codex-protocol"
 CODEX_PROTOCOL_MESSAGE = "references `codex_protocol::protocol`"
 IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
+TOKEN_SEPARATOR = r"(?:\s|//[^\n]*(?:\n|$)|/\*(?:.|\n)*?\*/)*"
 FORBIDDEN_SOURCE_RULES = (
     (
         "imports `codex_core`",
@@ -32,7 +34,7 @@ CRATE_ALIAS_PATTERNS = (
     re.compile(rf"\bextern\s+crate\s+({IDENTIFIER})\s+as\s+({IDENTIFIER})\s*;"),
 )
 GROUPED_USE_PATTERN = re.compile(
-    rf"\buse\s+({IDENTIFIER})\s*::\s*\{{([^;]*)\}}\s*;"
+    rf"\buse\s+({IDENTIFIER}){TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}\{{([^;]*)\}}\s*;"
 )
 GROUPED_SELF_ALIAS_PATTERN = re.compile(rf"\bself\s+as\s+({IDENTIFIER})\b")
 
@@ -90,10 +92,17 @@ def dependency_sections(manifest: dict) -> list[tuple[str, dict]]:
 
 def source_failures() -> list[str]:
     failures = []
-    manifest = tomllib.loads(TUI_MANIFEST.read_text())
-    codex_protocol_names = protocol_dependency_names(manifest)
-    for path in sorted(TUI_ROOT.glob("**/*.rs")):
-        text = path.read_text()
+    tui_manifest = tomllib.loads(TUI_MANIFEST.read_text())
+    workspace_manifest = tomllib.loads(WORKSPACE_MANIFEST.read_text())
+    codex_protocol_names = protocol_dependency_names(
+        tui_manifest, workspace_dependencies(workspace_manifest)
+    )
+    source_texts = [(path, path.read_text()) for path in sorted(TUI_ROOT.glob("**/*.rs"))]
+    codex_protocol_names = expanded_crate_aliases(
+        "\n".join(text for _path, text in source_texts), codex_protocol_names
+    )
+
+    for path, text in source_texts:
         seen_locations = set()
         for message, patterns in FORBIDDEN_SOURCE_RULES:
             for pattern in patterns:
@@ -110,16 +119,36 @@ def source_failures() -> list[str]:
     return failures
 
 
-def protocol_dependency_names(manifest: dict) -> set[str]:
+def workspace_dependencies(manifest: dict) -> dict:
+    dependencies = manifest.get("workspace", {}).get("dependencies", {})
+    if isinstance(dependencies, dict):
+        return dependencies
+    return {}
+
+
+def protocol_dependency_names(manifest: dict, workspace_dependencies: dict) -> set[str]:
     names = {"codex_protocol"}
     for _section_name, dependencies in dependency_sections(manifest):
         for dependency_name, dependency_value in dependencies.items():
-            package_name = dependency_name
-            if isinstance(dependency_value, dict):
-                package_name = dependency_value.get("package", dependency_name)
+            package_name = dependency_package_name(
+                dependency_name, dependency_value, workspace_dependencies
+            )
             if package_name == CODEX_PROTOCOL_PACKAGE:
                 names.add(rust_crate_name(dependency_name))
     return names
+
+
+def dependency_package_name(
+    dependency_name: str, dependency_value: object, workspace_dependencies: dict
+) -> str:
+    if isinstance(dependency_value, dict):
+        if "package" in dependency_value:
+            return dependency_value["package"]
+        if dependency_value.get("workspace") is True:
+            workspace_dependency = workspace_dependencies.get(dependency_name)
+            if isinstance(workspace_dependency, dict):
+                return workspace_dependency.get("package", dependency_name)
+    return dependency_name
 
 
 def rust_crate_name(package_or_dependency_name: str) -> str:
@@ -133,8 +162,10 @@ def protocol_reference_matches(
     for crate_name in expanded_crate_aliases(text, codex_protocol_names):
         escaped_name = re.escape(crate_name)
         patterns = (
-            re.compile(rf"\b{escaped_name}\s*::\s*protocol\b"),
-            re.compile(rf"\b{escaped_name}\s*::\s*\{{[^;]*\bprotocol\b"),
+            re.compile(rf"\b{escaped_name}{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}protocol\b"),
+            re.compile(
+                rf"\b{escaped_name}{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}\{{[^;]*\bprotocol\b"
+            ),
         )
         for pattern in patterns:
             matches.extend(pattern.finditer(text))

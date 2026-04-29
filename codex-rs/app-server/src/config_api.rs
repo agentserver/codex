@@ -6,7 +6,6 @@ use crate::error_code::invalid_request;
 use async_trait::async_trait;
 use codex_analytics::AnalyticsEventsClient;
 use codex_app_server_protocol::ConfigBatchWriteParams;
-use codex_app_server_protocol::ConfigEdit;
 use codex_app_server_protocol::ConfigReadParams;
 use codex_app_server_protocol::ConfigReadResponse;
 use codex_app_server_protocol::ConfigRequirements;
@@ -35,14 +34,12 @@ use codex_core::ThreadManager;
 use codex_core::config::Config;
 use codex_core::plugins::PluginId;
 use codex_core_plugins::loader::installed_plugin_telemetry_metadata;
-use codex_core_plugins::remote::remote_plugin_enabled_config_edit;
 use codex_core_plugins::toggles::collect_plugin_enabled_candidates;
 use codex_features::canonical_feature_for_key;
 use codex_features::feature_for_key;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::protocol::Op;
 use serde_json::json;
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::warn;
@@ -60,17 +57,6 @@ const SUPPORTED_EXPERIMENTAL_FEATURE_ENABLEMENT: &[&str] = &[
 #[async_trait]
 pub(crate) trait UserConfigReloader: Send + Sync {
     async fn reload_user_config(&self);
-}
-
-/// Handles config-write compatibility cases whose source of truth is outside
-/// `config.toml`.
-#[async_trait]
-pub(crate) trait RemotePluginConfigWriter: Send + Sync {
-    async fn write_remote_plugin_enabled_config(
-        &self,
-        plugin_id: String,
-        enabled: bool,
-    ) -> Result<(), JSONRPCErrorError>;
 }
 
 #[async_trait]
@@ -92,7 +78,6 @@ impl UserConfigReloader for ThreadManager {
 pub(crate) struct ConfigApi {
     config_manager: ConfigManager,
     user_config_reloader: Arc<dyn UserConfigReloader>,
-    remote_plugin_config_writer: Option<Arc<dyn RemotePluginConfigWriter>>,
     analytics_events_client: AnalyticsEventsClient,
 }
 
@@ -105,17 +90,8 @@ impl ConfigApi {
         Self {
             config_manager,
             user_config_reloader,
-            remote_plugin_config_writer: None,
             analytics_events_client,
         }
-    }
-
-    pub(crate) fn with_remote_plugin_config_writer(
-        mut self,
-        remote_plugin_config_writer: Arc<dyn RemotePluginConfigWriter>,
-    ) -> Self {
-        self.remote_plugin_config_writer = Some(remote_plugin_config_writer);
-        self
     }
 
     pub(crate) async fn load_latest_config(
@@ -178,34 +154,6 @@ impl ConfigApi {
         &self,
         params: ConfigValueWriteParams,
     ) -> Result<ConfigWriteResponse, JSONRPCErrorError> {
-        if let Some(remote_plugin_edit) =
-            remote_plugin_enabled_config_edit(&params.key_path, &params.value)
-            && let Some(remote_plugin_config_writer) = &self.remote_plugin_config_writer
-        {
-            let response = self
-                .batch_write_to_config(ConfigBatchWriteParams {
-                    edits: Vec::new(),
-                    file_path: params.file_path,
-                    expected_version: params.expected_version,
-                    reload_user_config: false,
-                })
-                .await?;
-            remote_plugin_config_writer
-                .write_remote_plugin_enabled_config(
-                    remote_plugin_edit.plugin_id,
-                    remote_plugin_edit.enabled,
-                )
-                .await?;
-            return Ok(response);
-        }
-
-        self.write_value_to_config(params).await
-    }
-
-    async fn write_value_to_config(
-        &self,
-        params: ConfigValueWriteParams,
-    ) -> Result<ConfigWriteResponse, JSONRPCErrorError> {
         let pending_changes =
             collect_plugin_enabled_candidates([(&params.key_path, &params.value)].into_iter());
         let response = self
@@ -218,79 +166,6 @@ impl ConfigApi {
     }
 
     pub(crate) async fn batch_write(
-        &self,
-        params: ConfigBatchWriteParams,
-    ) -> Result<ConfigWriteResponse, JSONRPCErrorError> {
-        let Some(remote_plugin_config_writer) = &self.remote_plugin_config_writer else {
-            return self.batch_write_to_config(params).await;
-        };
-
-        let ConfigBatchWriteParams {
-            edits,
-            file_path,
-            expected_version,
-            reload_user_config,
-        } = params;
-        let mut local_edits = Vec::<ConfigEdit>::new();
-        let mut remote_plugin_toggles = BTreeMap::<String, bool>::new();
-
-        for edit in edits {
-            if let Some(remote_plugin_edit) =
-                remote_plugin_enabled_config_edit(&edit.key_path, &edit.value)
-            {
-                remote_plugin_toggles
-                    .insert(remote_plugin_edit.plugin_id, remote_plugin_edit.enabled);
-            } else {
-                local_edits.push(edit);
-            }
-        }
-
-        if !remote_plugin_toggles.is_empty() && !local_edits.is_empty() {
-            return Err(invalid_request(
-                "remote plugin enablement edits cannot be batched with local config edits",
-            ));
-        }
-
-        if remote_plugin_toggles.is_empty() {
-            return self
-                .batch_write_to_config(ConfigBatchWriteParams {
-                    edits: local_edits,
-                    file_path,
-                    expected_version,
-                    reload_user_config,
-                })
-                .await;
-        }
-
-        let response = self
-            .batch_write_to_config(ConfigBatchWriteParams {
-                edits: Vec::new(),
-                file_path: file_path.clone(),
-                expected_version,
-                reload_user_config: false,
-            })
-            .await?;
-
-        for (plugin_id, enabled) in remote_plugin_toggles {
-            remote_plugin_config_writer
-                .write_remote_plugin_enabled_config(plugin_id, enabled)
-                .await?;
-        }
-
-        if reload_user_config {
-            self.batch_write_to_config(ConfigBatchWriteParams {
-                edits: Vec::new(),
-                file_path,
-                expected_version: None,
-                reload_user_config: true,
-            })
-            .await?;
-        }
-
-        Ok(response)
-    }
-
-    async fn batch_write_to_config(
         &self,
         params: ConfigBatchWriteParams,
     ) -> Result<ConfigWriteResponse, JSONRPCErrorError> {

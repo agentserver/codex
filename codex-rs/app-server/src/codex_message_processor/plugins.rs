@@ -1,13 +1,13 @@
 use super::*;
-use crate::config_api::RemotePluginConfigWriter;
+use crate::config_write_router::RemotePluginEnablementWriter;
 use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
 use async_trait::async_trait;
 use codex_app_server_protocol::PluginInstallPolicy;
 
 #[async_trait]
-impl RemotePluginConfigWriter for CodexMessageProcessor {
-    async fn write_remote_plugin_enabled_config(
+impl RemotePluginEnablementWriter for CodexMessageProcessor {
+    async fn set_remote_plugin_enabled(
         &self,
         plugin_id: String,
         enabled: bool,
@@ -626,13 +626,13 @@ impl CodexMessageProcessor {
     ) -> Result<PluginUninstallResponse, JSONRPCErrorError> {
         let PluginUninstallParams { plugin_id } = params;
         if codex_core::plugins::PluginId::parse(&plugin_id).is_err()
-            && !codex_core_plugins::remote::is_remote_plugin_config_id(&plugin_id)
+            && !codex_core_plugins::remote::is_supported_remote_plugin_id(&plugin_id)
         {
             return Err(invalid_request(
                 "invalid plugin id: expected a local plugin id in the form `plugin@marketplace` or a remote plugin id starting with `plugins~`, `app_`, `asdk_app_`, or `connector_`",
             ));
         }
-        if codex_core_plugins::remote::is_remote_plugin_config_id(&plugin_id) {
+        if codex_core_plugins::remote::is_supported_remote_plugin_id(&plugin_id) {
             return self.remote_plugin_uninstall_response(plugin_id).await;
         }
         let plugins_manager = self.thread_manager.plugins_manager();

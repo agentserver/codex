@@ -9,6 +9,8 @@ use crate::codex_message_processor::CodexMessageProcessor;
 use crate::codex_message_processor::CodexMessageProcessorArgs;
 use crate::config_api::ConfigApi;
 use crate::config_manager::ConfigManager;
+use crate::config_write_router::ConfigWriteRouter;
+use crate::config_write_router::RemotePluginEnablementWriter;
 use crate::connection_rpc_gate::ConnectionRpcGate;
 use crate::device_key_api::DeviceKeyApi;
 use crate::error_code::invalid_request;
@@ -164,6 +166,7 @@ pub(crate) struct MessageProcessor {
     codex_message_processor: Arc<CodexMessageProcessor>,
     thread_manager: Arc<ThreadManager>,
     config_api: ConfigApi,
+    config_write_router: ConfigWriteRouter,
     device_key_api: DeviceKeyApi,
     external_agent_config_api: ExternalAgentConfigApi,
     fs_api: FsApi,
@@ -327,8 +330,11 @@ impl MessageProcessor {
             config_manager,
             thread_manager.clone(),
             analytics_events_client.clone(),
-        )
-        .with_remote_plugin_config_writer(codex_message_processor.clone());
+        );
+        let remote_plugin_enablement_writer: Arc<dyn RemotePluginEnablementWriter> =
+            codex_message_processor.clone();
+        let config_write_router =
+            ConfigWriteRouter::new(config_api.clone(), remote_plugin_enablement_writer);
         let device_key_api =
             DeviceKeyApi::new(config.sqlite_home.clone(), config.model_provider_id.clone());
         let external_agent_config_api =
@@ -346,6 +352,7 @@ impl MessageProcessor {
             codex_message_processor,
             thread_manager: Arc::clone(&thread_manager),
             config_api,
+            config_write_router,
             device_key_api,
             external_agent_config_api,
             fs_api,
@@ -993,7 +1000,7 @@ impl MessageProcessor {
         request_id: ConnectionRequestId,
         params: ConfigValueWriteParams,
     ) {
-        let result = self.config_api.write_value(params).await;
+        let result = self.config_write_router.write_value(params).await;
         self.handle_config_mutation_result(request_id, result).await
     }
 
@@ -1002,7 +1009,7 @@ impl MessageProcessor {
         request_id: ConnectionRequestId,
         params: ConfigBatchWriteParams,
     ) {
-        let result = self.config_api.batch_write(params).await;
+        let result = self.config_write_router.batch_write(params).await;
         self.handle_config_mutation_result(request_id, result).await;
     }
 

@@ -9,7 +9,6 @@ use codex_login::default_client::build_reqwest_client;
 use codex_plugin::PluginId;
 use reqwest::RequestBuilder;
 use serde::Deserialize;
-use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashSet;
@@ -31,12 +30,6 @@ const MAX_REMOTE_DEFAULT_PROMPT_LEN: usize = 128;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemotePluginServiceConfig {
     pub chatgpt_base_url: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RemotePluginEnabledConfigEdit {
-    pub plugin_id: String,
-    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -553,35 +546,13 @@ pub async fn set_remote_plugin_enabled(
     Ok(())
 }
 
-pub fn remote_plugin_enabled_config_edit(
-    key_path: &str,
-    value: &JsonValue,
-) -> Option<RemotePluginEnabledConfigEdit> {
-    let enabled = value.as_bool()?;
-    let mut segments = key_path.split('.');
-    let table = segments.next()?;
-    let plugin_id = segments.next()?;
-    let field = segments.next()?;
-    if table == "plugins"
-        && field == "enabled"
-        && segments.next().is_none()
-        && is_remote_plugin_config_id(plugin_id)
-    {
-        return Some(RemotePluginEnabledConfigEdit {
-            plugin_id: plugin_id.to_string(),
-            enabled,
-        });
-    }
-    None
-}
-
 pub fn is_valid_remote_plugin_id(plugin_id: &str) -> bool {
     plugin_id
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '~')
 }
 
-pub fn is_remote_plugin_config_id(plugin_id: &str) -> bool {
+pub fn is_supported_remote_plugin_id(plugin_id: &str) -> bool {
     !plugin_id.is_empty()
         && is_valid_remote_plugin_id(plugin_id)
         && (plugin_id.starts_with("plugins~")

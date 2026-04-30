@@ -849,8 +849,27 @@ pub struct Config {
     #[experimental("config/read.apps")]
     #[serde(default)]
     pub apps: Option<AppsConfig>,
+    #[experimental("config/read.computer_use")]
+    #[serde(default)]
+    pub computer_use: Option<ComputerUseConfig>,
     #[serde(default, flatten)]
     pub additional: HashMap<String, JsonValue>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "v2/")]
+pub struct ComputerUseMacosConfig {
+    pub denied_bundle_ids: Option<Vec<String>>,
+    pub allowed_bundle_ids: Option<Vec<String>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "v2/")]
+pub struct ComputerUseConfig {
+    pub allow_persistent_approval: Option<bool>,
+    pub macos: Option<ComputerUseMacosConfig>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -947,6 +966,22 @@ pub struct ConfigReadResponse {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS, ExperimentalApi)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
+pub struct ComputerUseMacosRequirements {
+    pub denied_bundle_ids: Option<Vec<String>>,
+    pub allowed_bundle_ids: Option<Vec<String>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS, ExperimentalApi)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ComputerUseRequirements {
+    pub allow_persistent_approval: Option<bool>,
+    pub macos: Option<ComputerUseMacosRequirements>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS, ExperimentalApi)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
 pub struct ConfigRequirements {
     #[experimental(nested)]
     pub allowed_approval_policies: Option<Vec<AskForApproval>>,
@@ -960,6 +995,7 @@ pub struct ConfigRequirements {
     pub enforce_residency: Option<ResidencyRequirement>,
     #[experimental("configRequirements/read.network")]
     pub network: Option<NetworkRequirements>,
+    pub computer_use: Option<ComputerUseRequirements>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -9505,6 +9541,7 @@ mod tests {
             service_tier: None,
             analytics: None,
             apps: None,
+            computer_use: None,
             additional: HashMap::new(),
         });
 
@@ -9538,6 +9575,7 @@ mod tests {
             service_tier: None,
             analytics: None,
             apps: None,
+            computer_use: None,
             additional: HashMap::new(),
         });
 
@@ -9593,6 +9631,7 @@ mod tests {
             service_tier: None,
             analytics: None,
             apps: None,
+            computer_use: None,
             additional: HashMap::new(),
         });
 
@@ -9642,6 +9681,7 @@ mod tests {
             service_tier: None,
             analytics: None,
             apps: None,
+            computer_use: None,
             additional: HashMap::new(),
         });
 
@@ -9666,6 +9706,7 @@ mod tests {
                 hooks: None,
                 enforce_residency: None,
                 network: None,
+                computer_use: None,
             });
 
         assert_eq!(reason, Some("askForApproval.granular"));

@@ -526,7 +526,7 @@ impl Session {
                 model: session_configuration.collaboration_mode.model().to_string(),
                 provider_name: config.model_provider_id.clone(),
                 approval_policy: session_configuration.approval_policy.value().to_string(),
-                sandbox_policy: format!("{:?}", session_configuration.sandbox_policy()),
+                permission_profile: format!("{:?}", session_configuration.permission_profile()),
             };
             let rollout_thread_trace = if matches!(
                 session_configuration.session_source,

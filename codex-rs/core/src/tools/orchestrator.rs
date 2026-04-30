@@ -397,7 +397,7 @@ impl ToolOrchestrator {
         if evaluate_permission_request_hooks
             && let Some(permission_request) = tool.permission_request_payload(req)
         {
-            let permission_request_tool_input = permission_request.tool_input.clone();
+            let permission_request_for_noop_check = permission_request.clone();
             match run_permission_request_hooks(
                 approval_ctx.session,
                 approval_ctx.turn,
@@ -409,7 +409,7 @@ impl ToolOrchestrator {
                 Some(PermissionRequestDecision::Allow {
                     updated_input: Some(updated_input),
                 }) => {
-                    if updated_input != permission_request_tool_input {
+                    if !permission_request_for_noop_check.updated_input_is_noop(&updated_input) {
                         return Err(ToolError::UpdatedInput(updated_input));
                     }
                     let decision = ReviewDecision::Approved;

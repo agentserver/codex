@@ -354,11 +354,7 @@ impl ToolEmitter {
                 (event, result)
             }
             Err(ToolError::UpdatedInput(updated_input)) => {
-                let event = ToolEventStage::Failure(ToolEventFailure::Message(
-                    "tool input rewritten by hook".to_string(),
-                ));
-                let result = Err(FunctionCallError::UpdatedInput(updated_input));
-                (event, result)
+                return Err(FunctionCallError::UpdatedInput(updated_input));
             }
         };
         self.emit(ctx, event).await;

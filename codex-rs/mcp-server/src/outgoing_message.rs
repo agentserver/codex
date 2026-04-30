@@ -343,7 +343,7 @@ mod tests {
         let rollout_file = NamedTempFile::new()?;
         let session_configured_event = SessionConfiguredEvent {
             session_id: codex_protocol::SessionId::from(thread_id),
-            thread_id: thread_id,
+            thread_id,
             forked_from_id: None,
             thread_name: None,
             model: "gpt-4o".to_string(),

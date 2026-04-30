@@ -1051,7 +1051,7 @@ async fn bang_shell_enter_while_task_running_submits_run_user_shell_command() {
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
         session_id: codex_protocol::SessionId::from(thread_id),
-        thread_id: thread_id,
+        thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),

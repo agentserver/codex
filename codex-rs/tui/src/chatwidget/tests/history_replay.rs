@@ -16,7 +16,7 @@ async fn resumed_initial_messages_render_history() {
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
         session_id: codex_protocol::SessionId::from(thread_id),
-        thread_id: thread_id,
+        thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -131,7 +131,7 @@ async fn replayed_user_message_preserves_text_elements_and_local_images() {
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
         session_id: codex_protocol::SessionId::from(thread_id),
-        thread_id: thread_id,
+        thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -194,7 +194,7 @@ async fn replayed_user_message_preserves_remote_image_urls() {
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
         session_id: codex_protocol::SessionId::from(thread_id),
-        thread_id: thread_id,
+        thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -395,7 +395,7 @@ async fn replayed_user_message_with_only_remote_images_renders_history_cell() {
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
         session_id: codex_protocol::SessionId::from(thread_id),
-        thread_id: thread_id,
+        thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),
@@ -450,7 +450,7 @@ async fn replayed_user_message_with_only_local_images_does_not_render_history_ce
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
         session_id: codex_protocol::SessionId::from(thread_id),
-        thread_id: thread_id,
+        thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),

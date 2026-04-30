@@ -1188,7 +1188,7 @@ async fn submit_user_message_emits_structured_plugin_mentions_from_bindings() {
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
         session_id: codex_protocol::SessionId::from(thread_id),
-        thread_id: thread_id,
+        thread_id,
         forked_from_id: None,
         thread_name: None,
         model: "test-model".to_string(),

@@ -13,7 +13,7 @@ use crate::ThreadId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TS, Hash)]
 #[ts(type = "string")]
 pub struct SessionId {
-    uuid: Uuid,
+    pub(crate) uuid: Uuid,
 }
 
 impl SessionId {
@@ -54,13 +54,13 @@ impl From<SessionId> for String {
 
 impl From<ThreadId> for SessionId {
     fn from(value: ThreadId) -> Self {
-        Self::from_string(&value.to_string()).expect("thread ids serialize as UUIDs")
+        Self { uuid: value.uuid }
     }
 }
 
 impl From<SessionId> for ThreadId {
     fn from(value: SessionId) -> Self {
-        ThreadId::from_string(&value.to_string()).expect("session ids serialize as UUIDs")
+        ThreadId { uuid: value.uuid }
     }
 }
 

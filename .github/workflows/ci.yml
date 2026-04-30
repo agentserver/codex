@@ -61,7 +61,7 @@ jobs:
           PACK_OUTPUT="${OUTPUT_DIR}/codex-npm-${CODEX_VERSION}.tgz"
           echo "pack_output=$PACK_OUTPUT" >> "$GITHUB_OUTPUT"
 
-      - name: Test Darwin arm64 npm staging
+      - name: Test Apple Silicon npm package includes DeviceCheckProbe
         run: python3 codex-cli/scripts/test_build_npm_package.py
 
       - name: Upload staged npm package artifact

@@ -19,11 +19,8 @@
 //! # }
 //! ```
 
-use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::OnceLock;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
@@ -178,17 +175,13 @@ where
 /// across local and remote log sinks.
 #[derive(Clone, Debug)]
 pub struct LogEntryFormatter {
-    id: LogEntryFormatterId,
     process_uuid: String,
 }
 
 impl LogEntryFormatter {
     /// Create a formatter that stamps generated log entries with `process_uuid`.
     pub fn new(process_uuid: impl Into<String>) -> Self {
-        static NEXT_FORMATTER_ID: AtomicU64 = AtomicU64::new(1);
-
         Self {
-            id: LogEntryFormatterId(NEXT_FORMATTER_ID.fetch_add(1, Ordering::Relaxed)),
             process_uuid: process_uuid.into(),
         }
     }
@@ -206,21 +199,11 @@ impl LogEntryFormatter {
         attrs.record(&mut visitor);
 
         if let Some(span) = ctx.span(id) {
-            let mut extensions = span.extensions_mut();
-            if extensions.get_mut::<SpanLogContexts>().is_none() {
-                extensions.insert(SpanLogContexts::default());
-            }
-            extensions
-                .get_mut::<SpanLogContexts>()
-                .expect("span log contexts inserted")
-                .insert(
-                    self.id,
-                    SpanLogContext {
-                        name: span.metadata().name().to_string(),
-                        formatted_fields: format_fields(attrs),
-                        thread_id: visitor.thread_id,
-                    },
-                );
+            span.extensions_mut().insert(SpanLogContext {
+                name: span.metadata().name().to_string(),
+                formatted_fields: format_fields(attrs),
+                thread_id: visitor.thread_id,
+            });
         }
     }
 
@@ -238,26 +221,17 @@ impl LogEntryFormatter {
 
         if let Some(span) = ctx.span(id) {
             let mut extensions = span.extensions_mut();
-            if extensions.get_mut::<SpanLogContexts>().is_none() {
-                extensions.insert(SpanLogContexts::default());
-            }
-            let log_contexts = extensions
-                .get_mut::<SpanLogContexts>()
-                .expect("span log contexts inserted");
-            if let Some(log_context) = log_contexts.get_mut(&self.id) {
+            if let Some(log_context) = extensions.get_mut::<SpanLogContext>() {
                 if let Some(thread_id) = visitor.thread_id {
                     log_context.thread_id = Some(thread_id);
                 }
                 append_fields(&mut log_context.formatted_fields, values);
             } else {
-                log_contexts.insert(
-                    self.id,
-                    SpanLogContext {
-                        name: span.metadata().name().to_string(),
-                        formatted_fields: format_fields(values),
-                        thread_id: visitor.thread_id,
-                    },
-                );
+                extensions.insert(SpanLogContext {
+                    name: span.metadata().name().to_string(),
+                    formatted_fields: format_fields(values),
+                    thread_id: visitor.thread_id,
+                });
             }
         }
     }
@@ -310,9 +284,7 @@ impl LogEntryFormatter {
         if let Some(scope) = ctx.event_scope(event) {
             for span in scope.from_root() {
                 let extensions = span.extensions();
-                if let Some(log_context) = extensions
-                    .get::<SpanLogContexts>()
-                    .and_then(|contexts| contexts.get(&self.id))
+                if let Some(log_context) = extensions.get::<SpanLogContext>()
                     && log_context.thread_id.is_some()
                 {
                     thread_id = log_context.thread_id.clone();
@@ -334,10 +306,7 @@ impl LogEntryFormatter {
         if let Some(scope) = ctx.event_scope(event) {
             for span in scope.from_root() {
                 let extensions = span.extensions();
-                if let Some(log_context) = extensions
-                    .get::<SpanLogContexts>()
-                    .and_then(|contexts| contexts.get(&self.id))
-                {
+                if let Some(log_context) = extensions.get::<SpanLogContext>() {
                     feedback_log_body.push_str(&log_context.name);
                     if !log_context.formatted_fields.is_empty() {
                         feedback_log_body.push('{');
@@ -370,26 +339,6 @@ where
 enum LogDbCommand {
     Entry(Box<LogEntry>),
     Flush(oneshot::Sender<()>),
-}
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct LogEntryFormatterId(u64);
-
-#[derive(Default, Debug)]
-struct SpanLogContexts(BTreeMap<LogEntryFormatterId, SpanLogContext>);
-
-impl SpanLogContexts {
-    fn insert(&mut self, formatter_id: LogEntryFormatterId, context: SpanLogContext) {
-        self.0.insert(formatter_id, context);
-    }
-
-    fn get(&self, formatter_id: &LogEntryFormatterId) -> Option<&SpanLogContext> {
-        self.0.get(formatter_id)
-    }
-
-    fn get_mut(&mut self, formatter_id: &LogEntryFormatterId) -> Option<&mut SpanLogContext> {
-        self.0.get_mut(formatter_id)
-    }
 }
 
 #[derive(Debug)]
@@ -702,20 +651,13 @@ mod tests {
     }
 
     #[test]
-    fn log_entry_formatter_can_be_used_by_multiple_layers() {
-        let layer_a = RecordingFormatterLayer::new("process-a");
-        let layer_b = RecordingFormatterLayer::new("process-b");
-        let subscriber = tracing_subscriber::registry()
-            .with(
-                layer_a
-                    .clone()
-                    .with_filter(Targets::new().with_default(tracing::Level::TRACE)),
-            )
-            .with(
-                layer_b
-                    .clone()
-                    .with_filter(Targets::new().with_default(tracing::Level::TRACE)),
-            );
+    fn log_entry_formatter_formats_recorded_span_fields() {
+        let layer = RecordingFormatterLayer::new("process-1");
+        let subscriber = tracing_subscriber::registry().with(
+            layer
+                .clone()
+                .with_filter(Targets::new().with_default(tracing::Level::TRACE)),
+        );
         let dispatch = tracing::Dispatch::new(subscriber);
 
         tracing::dispatcher::with_default(&dispatch, || {
@@ -728,18 +670,14 @@ mod tests {
             span.in_scope(|| tracing::info!("thread-scoped"));
         });
 
-        for (entries, process_uuid) in [
-            (layer_a.entries(), "process-a"),
-            (layer_b.entries(), "process-b"),
-        ] {
-            assert_eq!(entries.len(), 1);
-            assert_eq!(entries[0].process_uuid.as_deref(), Some(process_uuid));
-            assert_eq!(entries[0].thread_id.as_deref(), Some("thread-1"));
-            assert_eq!(
-                entries[0].feedback_log_body.as_deref(),
-                Some("feedback-thread{thread_id=\"thread-1\" turn=7}: thread-scoped")
-            );
-        }
+        let entries = layer.entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].process_uuid.as_deref(), Some("process-1"));
+        assert_eq!(entries[0].thread_id.as_deref(), Some("thread-1"));
+        assert_eq!(
+            entries[0].feedback_log_body.as_deref(),
+            Some("feedback-thread{thread_id=\"thread-1\" turn=7}: thread-scoped")
+        );
     }
 
     #[tokio::test]

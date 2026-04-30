@@ -15,8 +15,6 @@ use codex_app_server_protocol::ThreadLoadedListParams;
 use codex_app_server_protocol::ThreadLoadedListResponse;
 use codex_app_server_protocol::ThreadReadParams;
 use codex_app_server_protocol::ThreadReadResponse;
-use codex_app_server_protocol::ThreadResumeParams;
-use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::ThreadStatus;
@@ -36,7 +34,7 @@ use tokio::time::timeout;
 
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 #[tokio::test]
-async fn thread_unsubscribe_keeps_thread_loaded_until_idle_timeout() -> Result<()> {
+async fn thread_unsubscribe_over_stdio_unloads_idle_thread_immediately() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
@@ -59,14 +57,11 @@ async fn thread_unsubscribe_keeps_thread_loaded_until_idle_timeout() -> Result<(
     let unsubscribe = to_response::<ThreadUnsubscribeResponse>(unsubscribe_resp)?;
     assert_eq!(unsubscribe.status, ThreadUnsubscribeStatus::Unsubscribed);
 
-    assert!(
-        timeout(
-            std::time::Duration::from_millis(250),
-            mcp.read_stream_until_notification_message("thread/closed"),
-        )
-        .await
-        .is_err()
-    );
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("thread/closed"),
+    )
+    .await??;
 
     let list_id = mcp
         .send_thread_loaded_list_request(ThreadLoadedListParams::default())
@@ -78,7 +73,7 @@ async fn thread_unsubscribe_keeps_thread_loaded_until_idle_timeout() -> Result<(
     .await??;
     let ThreadLoadedListResponse { data, next_cursor } =
         to_response::<ThreadLoadedListResponse>(list_resp)?;
-    assert_eq!(data, vec![thread_id]);
+    assert_eq!(data, Vec::<String>::new());
     assert_eq!(next_cursor, None);
 
     Ok(())
@@ -242,7 +237,7 @@ async fn thread_unsubscribe_during_turn_keeps_turn_running() -> Result<()> {
 }
 
 #[tokio::test]
-async fn thread_unsubscribe_preserves_cached_status_before_idle_unload() -> Result<()> {
+async fn thread_unsubscribe_over_stdio_unloads_and_read_reports_not_loaded() -> Result<()> {
     let server = responses::start_mock_server().await;
     let _response_mock = responses::mount_sse_once(
         &server,
@@ -305,34 +300,31 @@ async fn thread_unsubscribe_preserves_cached_status_before_idle_unload() -> Resu
     .await??;
     let unsubscribe = to_response::<ThreadUnsubscribeResponse>(unsubscribe_resp)?;
     assert_eq!(unsubscribe.status, ThreadUnsubscribeStatus::Unsubscribed);
-    assert!(
-        timeout(
-            std::time::Duration::from_millis(250),
-            mcp.read_stream_until_notification_message("thread/closed"),
-        )
-        .await
-        .is_err()
-    );
-
-    let resume_id = mcp
-        .send_thread_resume_request(ThreadResumeParams {
-            thread_id,
-            ..Default::default()
-        })
-        .await?;
-    let resume_resp: JSONRPCResponse = timeout(
+    timeout(
         DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(resume_id)),
+        mcp.read_stream_until_notification_message("thread/closed"),
     )
     .await??;
-    let resume: ThreadResumeResponse = to_response::<ThreadResumeResponse>(resume_resp)?;
-    assert_eq!(resume.thread.status, ThreadStatus::SystemError);
+
+    let read_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id,
+            include_turns: false,
+        })
+        .await?;
+    let read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
+    )
+    .await??;
+    let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
+    assert_eq!(thread.status, ThreadStatus::NotLoaded);
 
     Ok(())
 }
 
 #[tokio::test]
-async fn thread_unsubscribe_reports_not_subscribed_before_idle_unload() -> Result<()> {
+async fn thread_unsubscribe_over_stdio_reports_not_loaded_after_immediate_unload() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
@@ -357,6 +349,11 @@ async fn thread_unsubscribe_reports_not_subscribed_before_idle_unload() -> Resul
         first_unsubscribe.status,
         ThreadUnsubscribeStatus::Unsubscribed
     );
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("thread/closed"),
+    )
+    .await??;
 
     let second_unsubscribe_id = mcp
         .send_thread_unsubscribe_request(ThreadUnsubscribeParams { thread_id })
@@ -369,7 +366,7 @@ async fn thread_unsubscribe_reports_not_subscribed_before_idle_unload() -> Resul
     let second_unsubscribe = to_response::<ThreadUnsubscribeResponse>(second_unsubscribe_resp)?;
     assert_eq!(
         second_unsubscribe.status,
-        ThreadUnsubscribeStatus::NotSubscribed
+        ThreadUnsubscribeStatus::NotLoaded
     );
 
     Ok(())

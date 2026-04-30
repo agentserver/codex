@@ -215,6 +215,10 @@ impl ConnectionSessionState {
         self.origin.allows_device_key_requests()
     }
 
+    fn thread_unloading_delay(&self) -> Duration {
+        self.origin.thread_unloading_delay()
+    }
+
     pub(crate) fn experimental_api_enabled(&self) -> bool {
         self.initialized
             .get()
@@ -506,9 +510,13 @@ impl MessageProcessor {
         }
     }
 
-    pub(crate) async fn connection_initialized(&self, connection_id: ConnectionId) {
+    pub(crate) async fn connection_initialized(
+        &self,
+        connection_id: ConnectionId,
+        session_state: &ConnectionSessionState,
+    ) {
         self.codex_message_processor
-            .connection_initialized(connection_id)
+            .connection_initialized(connection_id, session_state.thread_unloading_delay())
             .await;
     }
 
@@ -695,7 +703,7 @@ impl MessageProcessor {
                 // initialize handling for the specific connection.
                 outbound_initialized.store(true, Ordering::Release);
                 self.codex_message_processor
-                    .connection_initialized(connection_id)
+                    .connection_initialized(connection_id, session.thread_unloading_delay())
                     .await;
             }
             return Ok(());

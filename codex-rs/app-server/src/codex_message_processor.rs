@@ -426,6 +426,7 @@ use crate::filters::source_kind_matches;
 use crate::thread_state::ThreadListenerCommand;
 use crate::thread_state::ThreadState;
 use crate::thread_state::ThreadStateManager;
+use crate::thread_state::ThreadSubscriptionState;
 use token_usage_replay::latest_token_usage_turn_id_for_thread_path;
 use token_usage_replay::latest_token_usage_turn_id_from_rollout_items;
 use token_usage_replay::send_thread_token_usage_update_to_connection;
@@ -448,7 +449,6 @@ struct ThreadListFilters {
 const LOGIN_CHATGPT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const LOGIN_ISSUER_OVERRIDE_ENV_VAR: &str = "CODEX_APP_SERVER_LOGIN_ISSUER";
 const APP_LIST_LOAD_TIMEOUT: Duration = Duration::from_secs(90);
-const THREAD_UNLOADING_DELAY: Duration = Duration::from_secs(30 * 60);
 
 enum ActiveLogin {
     Browser {
@@ -572,55 +572,53 @@ enum RefreshTokenRequestOutcome {
 }
 
 struct UnloadingState {
-    delay: Duration,
-    has_subscribers_rx: watch::Receiver<bool>,
+    subscription_rx: watch::Receiver<ThreadSubscriptionState>,
     has_subscribers: (bool, Instant),
+    unloading_delay: Duration,
     thread_status_rx: watch::Receiver<ThreadStatus>,
     is_active: (bool, Instant),
 }
 
 impl UnloadingState {
-    async fn new(
-        listener_task_context: &ListenerTaskContext,
-        thread_id: ThreadId,
-        delay: Duration,
-    ) -> Option<Self> {
-        let has_subscribers_rx = listener_task_context
+    async fn new(listener_task_context: &ListenerTaskContext, thread_id: ThreadId) -> Option<Self> {
+        let subscription_rx = listener_task_context
             .thread_state_manager
-            .subscribe_to_has_connections(thread_id)
+            .subscribe_to_subscriptions(thread_id)
             .await?;
         let thread_status_rx = listener_task_context
             .thread_watch_manager
             .subscribe(thread_id)
             .await?;
-        let has_subscribers = (*has_subscribers_rx.borrow(), Instant::now());
+        let subscription = *subscription_rx.borrow();
+        let has_subscribers = (subscription.has_connections, Instant::now());
         let is_active = (
             matches!(*thread_status_rx.borrow(), ThreadStatus::Active { .. }),
             Instant::now(),
         );
         Some(Self {
-            delay,
-            has_subscribers_rx,
+            subscription_rx,
             thread_status_rx,
             has_subscribers,
+            unloading_delay: subscription.unloading_delay,
             is_active,
         })
     }
 
     fn unloading_target(&self) -> Option<Instant> {
         match (self.has_subscribers, self.is_active) {
-            ((false, has_no_subscribers_since), (false, is_inactive_since)) => {
-                Some(std::cmp::max(has_no_subscribers_since, is_inactive_since) + self.delay)
-            }
+            ((false, has_no_subscribers_since), (false, is_inactive_since)) => Some(
+                std::cmp::max(has_no_subscribers_since, is_inactive_since) + self.unloading_delay,
+            ),
             _ => None,
         }
     }
 
     fn sync_receiver_values(&mut self) {
-        let has_subscribers = *self.has_subscribers_rx.borrow();
-        if self.has_subscribers.0 != has_subscribers {
-            self.has_subscribers = (has_subscribers, Instant::now());
+        let subscription = *self.subscription_rx.borrow();
+        if self.has_subscribers.0 != subscription.has_connections {
+            self.has_subscribers = (subscription.has_connections, Instant::now());
         }
+        self.unloading_delay = subscription.unloading_delay;
 
         let is_active = matches!(*self.thread_status_rx.borrow(), ThreadStatus::Active { .. });
         if self.is_active.0 != is_active {
@@ -658,7 +656,7 @@ impl UnloadingState {
             };
             tokio::select! {
                 _ = unloading_sleep => return true,
-                changed = self.has_subscribers_rx.changed() => {
+                changed = self.subscription_rx.changed() => {
                     if changed.is_err() {
                         return false;
                     }
@@ -4152,9 +4150,13 @@ impl CodexMessageProcessor {
         self.thread_manager.subscribe_thread_created()
     }
 
-    pub(crate) async fn connection_initialized(&self, connection_id: ConnectionId) {
+    pub(crate) async fn connection_initialized(
+        &self,
+        connection_id: ConnectionId,
+        unloading_delay: Duration,
+    ) {
         self.thread_state_manager
-            .connection_initialized(connection_id)
+            .connection_initialized(connection_id, unloading_delay)
             .await;
     }
 
@@ -7536,12 +7538,8 @@ impl CodexMessageProcessor {
         thread_state: Arc<Mutex<ThreadState>>,
     ) -> Result<(), JSONRPCErrorError> {
         let (cancel_tx, mut cancel_rx) = oneshot::channel();
-        let Some(mut unloading_state) = UnloadingState::new(
-            &listener_task_context,
-            conversation_id,
-            THREAD_UNLOADING_DELAY,
-        )
-        .await
+        let Some(mut unloading_state) =
+            UnloadingState::new(&listener_task_context, conversation_id).await
         else {
             return Err(JSONRPCErrorError {
                 code: INVALID_REQUEST_ERROR_CODE,
@@ -10879,7 +10877,9 @@ mod tests {
         let connection = ConnectionId(1);
         let (cancel_tx, cancel_rx) = oneshot::channel();
 
-        manager.connection_initialized(connection).await;
+        manager
+            .connection_initialized(connection, Duration::ZERO)
+            .await;
         manager
             .try_ensure_connection_subscribed(
                 thread_id, connection, /*experimental_raw_events*/ false,
@@ -10922,8 +10922,12 @@ mod tests {
         let connection_b = ConnectionId(2);
         let (cancel_tx, mut cancel_rx) = oneshot::channel();
 
-        manager.connection_initialized(connection_a).await;
-        manager.connection_initialized(connection_b).await;
+        manager
+            .connection_initialized(connection_a, Duration::ZERO)
+            .await;
+        manager
+            .connection_initialized(connection_b, Duration::ZERO)
+            .await;
         manager
             .try_ensure_connection_subscribed(
                 thread_id,
@@ -10961,14 +10965,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn adding_connection_to_thread_updates_has_connections_watcher() -> Result<()> {
+    async fn adding_connection_to_thread_updates_subscription_watcher() -> Result<()> {
         let manager = ThreadStateManager::new();
         let thread_id = ThreadId::from_string("ad7f0408-99b8-4f6e-a46f-bd0eec433370")?;
         let connection_a = ConnectionId(1);
         let connection_b = ConnectionId(2);
 
-        manager.connection_initialized(connection_a).await;
-        manager.connection_initialized(connection_b).await;
+        manager
+            .connection_initialized(connection_a, Duration::ZERO)
+            .await;
+        manager
+            .connection_initialized(connection_b, Duration::from_secs(30 * 60))
+            .await;
         manager
             .try_ensure_connection_subscribed(
                 thread_id,
@@ -10977,33 +10985,51 @@ mod tests {
             )
             .await
             .expect("connection_a should be live");
-        let mut has_connections = manager
-            .subscribe_to_has_connections(thread_id)
+        let mut subscription = manager
+            .subscribe_to_subscriptions(thread_id)
             .await
-            .expect("thread should have a has-connections watcher");
-        assert!(*has_connections.borrow());
-
-        assert!(
-            manager
-                .unsubscribe_connection_from_thread(thread_id, connection_a)
-                .await
-        );
-        tokio::time::timeout(Duration::from_secs(1), has_connections.changed())
-            .await
-            .expect("timed out waiting for no-subscriber update")
-            .expect("has-connections watcher should remain open");
-        assert!(!*has_connections.borrow());
+            .expect("thread should have a subscription watcher");
+        assert!(subscription.borrow().has_connections);
+        assert_eq!(subscription.borrow().unloading_delay, Duration::ZERO);
 
         assert!(
             manager
                 .try_add_connection_to_thread(thread_id, connection_b)
                 .await
         );
-        tokio::time::timeout(Duration::from_secs(1), has_connections.changed())
+        tokio::time::timeout(Duration::from_secs(1), subscription.changed())
             .await
-            .expect("timed out waiting for subscriber update")
-            .expect("has-connections watcher should remain open");
-        assert!(*has_connections.borrow());
+            .expect("timed out waiting for max-delay update")
+            .expect("subscription watcher should remain open");
+        assert!(subscription.borrow().has_connections);
+        assert_eq!(
+            subscription.borrow().unloading_delay,
+            Duration::from_secs(30 * 60)
+        );
+
+        assert!(
+            manager
+                .unsubscribe_connection_from_thread(thread_id, connection_b)
+                .await
+        );
+        tokio::time::timeout(Duration::from_secs(1), subscription.changed())
+            .await
+            .expect("timed out waiting for remaining-subscriber update")
+            .expect("subscription watcher should remain open");
+        assert!(subscription.borrow().has_connections);
+        assert_eq!(subscription.borrow().unloading_delay, Duration::ZERO);
+
+        assert!(
+            manager
+                .unsubscribe_connection_from_thread(thread_id, connection_a)
+                .await
+        );
+        tokio::time::timeout(Duration::from_secs(1), subscription.changed())
+            .await
+            .expect("timed out waiting for no-subscriber update")
+            .expect("subscription watcher should remain open");
+        assert!(!subscription.borrow().has_connections);
+        assert_eq!(subscription.borrow().unloading_delay, Duration::ZERO);
         Ok(())
     }
 
@@ -11013,7 +11039,9 @@ mod tests {
         let thread_id = ThreadId::from_string("ad7f0408-99b8-4f6e-a46f-bd0eec433370")?;
         let connection = ConnectionId(1);
 
-        manager.connection_initialized(connection).await;
+        manager
+            .connection_initialized(connection, Duration::ZERO)
+            .await;
         let threads_to_unload = manager.remove_connection(connection).await;
         assert_eq!(threads_to_unload, Vec::<ThreadId>::new());
 

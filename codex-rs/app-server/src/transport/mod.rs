@@ -23,6 +23,7 @@ use std::sync::RwLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -176,10 +177,20 @@ pub(crate) enum ConnectionOrigin {
     Stdio,
     InProcess,
     WebSocket,
+    UnixSocket,
     RemoteControl,
 }
 
 impl ConnectionOrigin {
+    pub(crate) fn thread_unloading_delay(self) -> Duration {
+        match self {
+            Self::Stdio | Self::InProcess => Duration::ZERO,
+            Self::WebSocket | Self::UnixSocket | Self::RemoteControl => {
+                Duration::from_secs(30 * 60)
+            }
+        }
+    }
+
     pub(crate) fn allows_device_key_requests(self) -> bool {
         // Device-key endpoints are only for local connections that own the app-server instance.
         // Do not include remote transports such as SSH or remote-control websocket connections.
@@ -505,6 +516,30 @@ mod tests {
                 updated_at: 1,
             },
         })
+    }
+
+    #[test]
+    fn connection_origin_sets_thread_unloading_delay() {
+        assert_eq!(
+            ConnectionOrigin::Stdio.thread_unloading_delay(),
+            Duration::ZERO
+        );
+        assert_eq!(
+            ConnectionOrigin::InProcess.thread_unloading_delay(),
+            Duration::ZERO
+        );
+        assert_eq!(
+            ConnectionOrigin::WebSocket.thread_unloading_delay(),
+            Duration::from_secs(30 * 60)
+        );
+        assert_eq!(
+            ConnectionOrigin::UnixSocket.thread_unloading_delay(),
+            Duration::from_secs(30 * 60)
+        );
+        assert_eq!(
+            ConnectionOrigin::RemoteControl.thread_unloading_delay(),
+            Duration::from_secs(30 * 60)
+        );
     }
 
     #[test]

@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Weak;
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -174,25 +175,41 @@ pub(crate) async fn resolve_server_request_on_thread_listener(
 
 struct ThreadEntry {
     state: Arc<Mutex<ThreadState>>,
-    connection_ids: HashSet<ConnectionId>,
-    has_connections_watcher: watch::Sender<bool>,
+    connection_unloading_delays: HashMap<ConnectionId, Duration>,
+    idle_unloading_delay: Duration,
+    subscription_watcher: watch::Sender<ThreadSubscriptionState>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ThreadSubscriptionState {
+    pub(crate) has_connections: bool,
+    pub(crate) unloading_delay: Duration,
 }
 
 impl Default for ThreadEntry {
     fn default() -> Self {
         Self {
             state: Arc::new(Mutex::new(ThreadState::default())),
-            connection_ids: HashSet::new(),
-            has_connections_watcher: watch::channel(false).0,
+            connection_unloading_delays: HashMap::new(),
+            idle_unloading_delay: Duration::ZERO,
+            subscription_watcher: watch::channel(ThreadSubscriptionState::default()).0,
         }
     }
 }
 
 impl ThreadEntry {
-    fn update_has_connections(&self) {
-        let _ = self.has_connections_watcher.send_if_modified(|current| {
+    fn update_subscription_state(&mut self) {
+        if let Some(delay) = self.connection_unloading_delays.values().max().copied() {
+            self.idle_unloading_delay = delay;
+        }
+
+        let next = ThreadSubscriptionState {
+            has_connections: !self.connection_unloading_delays.is_empty(),
+            unloading_delay: self.idle_unloading_delay,
+        };
+        let _ = self.subscription_watcher.send_if_modified(|current| {
             let prev = *current;
-            *current = !self.connection_ids.is_empty();
+            *current = next;
             prev != *current
         });
     }
@@ -200,7 +217,7 @@ impl ThreadEntry {
 
 #[derive(Default)]
 struct ThreadStateManagerInner {
-    live_connections: HashSet<ConnectionId>,
+    live_connections: HashMap<ConnectionId, Duration>,
     threads: HashMap<ThreadId, ThreadEntry>,
     thread_ids_by_connection: HashMap<ConnectionId, HashSet<ThreadId>>,
 }
@@ -215,12 +232,16 @@ impl ThreadStateManager {
         Self::default()
     }
 
-    pub(crate) async fn connection_initialized(&self, connection_id: ConnectionId) {
+    pub(crate) async fn connection_initialized(
+        &self,
+        connection_id: ConnectionId,
+        unloading_delay: Duration,
+    ) {
         self.state
             .lock()
             .await
             .live_connections
-            .insert(connection_id);
+            .insert(connection_id, unloading_delay);
     }
 
     pub(crate) async fn subscribed_connection_ids(&self, thread_id: ThreadId) -> Vec<ConnectionId> {
@@ -228,7 +249,13 @@ impl ThreadStateManager {
         state
             .threads
             .get(&thread_id)
-            .map(|thread_entry| thread_entry.connection_ids.iter().copied().collect())
+            .map(|thread_entry| {
+                thread_entry
+                    .connection_unloading_delays
+                    .keys()
+                    .copied()
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -313,8 +340,10 @@ impl ThreadStateManager {
                 }
             }
             if let Some(thread_entry) = state.threads.get_mut(&thread_id) {
-                thread_entry.connection_ids.remove(&connection_id);
-                thread_entry.update_has_connections();
+                thread_entry
+                    .connection_unloading_delays
+                    .remove(&connection_id);
+                thread_entry.update_subscription_state();
             }
         };
 
@@ -328,7 +357,7 @@ impl ThreadStateManager {
             .await
             .threads
             .get(&thread_id)
-            .is_some_and(|thread_entry| !thread_entry.connection_ids.is_empty())
+            .is_some_and(|thread_entry| !thread_entry.connection_unloading_delays.is_empty())
     }
 
     pub(crate) async fn try_ensure_connection_subscribed(
@@ -339,17 +368,17 @@ impl ThreadStateManager {
     ) -> Option<Arc<Mutex<ThreadState>>> {
         let thread_state = {
             let mut state = self.state.lock().await;
-            if !state.live_connections.contains(&connection_id) {
-                return None;
-            }
+            let unloading_delay = state.live_connections.get(&connection_id).copied()?;
             state
                 .thread_ids_by_connection
                 .entry(connection_id)
                 .or_default()
                 .insert(thread_id);
             let thread_entry = state.threads.entry(thread_id).or_default();
-            thread_entry.connection_ids.insert(connection_id);
-            thread_entry.update_has_connections();
+            thread_entry
+                .connection_unloading_delays
+                .insert(connection_id, unloading_delay);
+            thread_entry.update_subscription_state();
             thread_entry.state.clone()
         };
         {
@@ -367,17 +396,19 @@ impl ThreadStateManager {
         connection_id: ConnectionId,
     ) -> bool {
         let mut state = self.state.lock().await;
-        if !state.live_connections.contains(&connection_id) {
+        let Some(unloading_delay) = state.live_connections.get(&connection_id).copied() else {
             return false;
-        }
+        };
         state
             .thread_ids_by_connection
             .entry(connection_id)
             .or_default()
             .insert(thread_id);
         let thread_entry = state.threads.entry(thread_id).or_default();
-        thread_entry.connection_ids.insert(connection_id);
-        thread_entry.update_has_connections();
+        thread_entry
+            .connection_unloading_delays
+            .insert(connection_id, unloading_delay);
+        thread_entry.update_subscription_state();
         true
     }
 
@@ -391,30 +422,31 @@ impl ThreadStateManager {
                 .unwrap_or_default();
             for thread_id in &thread_ids {
                 if let Some(thread_entry) = state.threads.get_mut(thread_id) {
-                    thread_entry.connection_ids.remove(&connection_id);
-                    thread_entry.update_has_connections();
+                    thread_entry
+                        .connection_unloading_delays
+                        .remove(&connection_id);
+                    thread_entry.update_subscription_state();
                 }
             }
             thread_ids
                 .into_iter()
                 .filter(|thread_id| {
-                    state
-                        .threads
-                        .get(thread_id)
-                        .is_some_and(|thread_entry| thread_entry.connection_ids.is_empty())
+                    state.threads.get(thread_id).is_some_and(|thread_entry| {
+                        thread_entry.connection_unloading_delays.is_empty()
+                    })
                 })
                 .collect::<Vec<_>>()
         }
     }
 
-    pub(crate) async fn subscribe_to_has_connections(
+    pub(crate) async fn subscribe_to_subscriptions(
         &self,
         thread_id: ThreadId,
-    ) -> Option<watch::Receiver<bool>> {
+    ) -> Option<watch::Receiver<ThreadSubscriptionState>> {
         let state = self.state.lock().await;
         state
             .threads
             .get(&thread_id)
-            .map(|thread_entry| thread_entry.has_connections_watcher.subscribe())
+            .map(|thread_entry| thread_entry.subscription_watcher.subscribe())
     }
 }

@@ -607,6 +607,12 @@ impl OutgoingMessageSender {
         request_id: ConnectionRequestId,
         error: JSONRPCErrorError,
     ) {
+        self.analytics_events_client.track_error_response(
+            request_id.connection_id.0,
+            request_id.request_id.clone(),
+            error.clone(),
+            /*error_type*/ None,
+        );
         let outgoing_message = OutgoingMessage::Error(OutgoingError {
             id: request_id.request_id,
             error,

@@ -4484,6 +4484,10 @@ impl CodexMessageProcessor {
         Some(persisted_metadata)
     }
 
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "running-thread resume subscription must be serialized against pending unloads"
+    )]
     async fn resume_running_thread(
         &self,
         request_id: &ConnectionRequestId,
@@ -4537,12 +4541,6 @@ impl CodexMessageProcessor {
                 .thread_state_manager
                 .thread_state(existing_thread_id)
                 .await;
-            self.ensure_listener_task_running(
-                existing_thread_id,
-                existing_thread.clone(),
-                thread_state.clone(),
-            )
-            .await?;
 
             let config_snapshot = existing_thread.config_snapshot().await;
             let mismatch_details = collect_resume_override_mismatches(params, &config_snapshot);
@@ -4571,16 +4569,6 @@ impl CodexMessageProcessor {
             let instruction_sources =
                 Self::instruction_sources_from_config(&config_for_instruction_sources).await;
 
-            let listener_command_tx = {
-                let thread_state = thread_state.lock().await;
-                thread_state.listener_command_tx()
-            };
-            let Some(listener_command_tx) = listener_command_tx else {
-                return Err(internal_error(format!(
-                    "failed to enqueue running thread resume for thread {existing_thread_id}: thread listener is not running"
-                )));
-            };
-
             let emit_thread_goal_update = self.config.features.enabled(Feature::Goals);
             let thread_goal_state_db = if emit_thread_goal_update {
                 if let Some(state_db) = existing_thread.state_db() {
@@ -4592,19 +4580,76 @@ impl CodexMessageProcessor {
                 None
             };
 
+            let pending_resume_request = crate::thread_state::PendingThreadResumeRequest {
+                request_id: request_id.clone(),
+                history_items,
+                config_snapshot,
+                instruction_sources,
+                thread_summary,
+                emit_thread_goal_update,
+                thread_goal_state_db,
+                include_turns: !params.exclude_turns,
+            };
+
+            let connection_id = request_id.connection_id;
+            {
+                let pending_thread_unloads = self.pending_thread_unloads.lock().await;
+                if pending_thread_unloads.contains(&existing_thread_id) {
+                    return Err(invalid_request(format!(
+                        "thread {existing_thread_id} is closing; retry thread/resume after the thread is closed"
+                    )));
+                }
+                if !self
+                    .thread_state_manager
+                    .try_add_connection_to_thread(existing_thread_id, connection_id)
+                    .await
+                {
+                    tracing::debug!(
+                        thread_id = %existing_thread_id,
+                        connection_id = ?connection_id,
+                        "skipping running thread resume for closed connection"
+                    );
+                    return Ok(true);
+                }
+            }
+
+            if let Err(error) = self
+                .ensure_listener_task_running(
+                    existing_thread_id,
+                    existing_thread.clone(),
+                    thread_state.clone(),
+                )
+                .await
+            {
+                let _ = self
+                    .thread_state_manager
+                    .unsubscribe_connection_from_thread(existing_thread_id, connection_id)
+                    .await;
+                return Err(error);
+            }
+
+            let listener_command_tx = {
+                let thread_state = thread_state.lock().await;
+                thread_state.listener_command_tx()
+            };
+            let Some(listener_command_tx) = listener_command_tx else {
+                let _ = self
+                    .thread_state_manager
+                    .unsubscribe_connection_from_thread(existing_thread_id, connection_id)
+                    .await;
+                return Err(internal_error(format!(
+                    "failed to enqueue running thread resume for thread {existing_thread_id}: thread listener is not running"
+                )));
+            };
+
             let command = crate::thread_state::ThreadListenerCommand::SendThreadResumeResponse(
-                Box::new(crate::thread_state::PendingThreadResumeRequest {
-                    request_id: request_id.clone(),
-                    history_items,
-                    config_snapshot,
-                    instruction_sources,
-                    thread_summary,
-                    emit_thread_goal_update,
-                    thread_goal_state_db,
-                    include_turns: !params.exclude_turns,
-                }),
+                Box::new(pending_resume_request),
             );
             if listener_command_tx.send(command).is_err() {
+                let _ = self
+                    .thread_state_manager
+                    .unsubscribe_connection_from_thread(existing_thread_id, connection_id)
+                    .await;
                 return Err(internal_error(format!(
                     "failed to enqueue running thread resume for thread {existing_thread_id}: thread listener command channel is closed"
                 )));
@@ -8304,6 +8349,9 @@ async fn handle_pending_thread_resume_request(
         )
         .await
     {
+        let _ = thread_state_manager
+            .unsubscribe_connection_from_thread(conversation_id, connection_id)
+            .await;
         outgoing
             .send_error(request_id, internal_error(message))
             .await;
@@ -8324,6 +8372,9 @@ async fn handle_pending_thread_resume_request(
         let pending_thread_unloads = pending_thread_unloads.lock().await;
         if pending_thread_unloads.contains(&conversation_id) {
             drop(pending_thread_unloads);
+            let _ = thread_state_manager
+                .unsubscribe_connection_from_thread(conversation_id, connection_id)
+                .await;
             outgoing
                 .send_error(
                     request_id,

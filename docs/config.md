@@ -66,6 +66,12 @@ Codex can run a notification hook when the agent finishes a turn. See the config
 
 When Codex knows which client started the turn, the legacy notify JSON payload also includes a top-level `client` field. The TUI reports `codex-tui`, and the app server reports the `clientInfo.name` value from `initialize`.
 
+## Lifecycle hooks
+
+Admins can set `allow_managed_hooks_only = true` in `requirements.toml` to ignore
+user, project, and session hook configs while still allowing managed hooks from
+requirements and managed config layers.
+
 ## JSON Schema
 
 The generated JSON Schema for `config.toml` lives at `codex-rs/core/config.schema.json`.

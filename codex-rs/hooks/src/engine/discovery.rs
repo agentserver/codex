@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
@@ -15,8 +17,6 @@ use codex_config::RequirementSource;
 use codex_plugin::PluginHookSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
-use std::collections::HashMap;
-use std::collections::HashSet;
 
 use super::ConfiguredHandler;
 use super::HookListEntry;
@@ -41,6 +41,17 @@ struct HookHandlerSource<'a> {
     plugin_id: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+struct HookDiscoveryPolicy {
+    allow_managed_hooks_only: bool,
+}
+
+impl HookDiscoveryPolicy {
+    fn allows(self, source: &HookHandlerSource<'_>) -> bool {
+        !self.allow_managed_hooks_only || source.source.is_managed()
+    }
+}
+
 pub(crate) fn discover_handlers(
     config_layer_stack: Option<&ConfigLayerStack>,
     plugin_hook_sources: Vec<PluginHookSource>,
@@ -51,6 +62,15 @@ pub(crate) fn discover_handlers(
     let mut warnings = plugin_hook_load_warnings;
     let mut display_order = 0_i64;
     let disabled_hook_keys = disabled_hook_keys_from_stack(config_layer_stack);
+    let policy = HookDiscoveryPolicy {
+        allow_managed_hooks_only: config_layer_stack.is_some_and(|config_layer_stack| {
+            config_layer_stack
+                .requirements()
+                .allow_managed_hooks_only
+                .as_ref()
+                .is_some_and(|requirement| requirement.value)
+        }),
+    };
 
     if let Some(config_layer_stack) = config_layer_stack {
         append_managed_requirement_handlers(
@@ -60,6 +80,7 @@ pub(crate) fn discover_handlers(
             &mut display_order,
             config_layer_stack,
             &disabled_hook_keys,
+            policy,
         );
 
         for layer in config_layer_stack.get_layers(
@@ -67,6 +88,20 @@ pub(crate) fn discover_handlers(
             /*include_disabled*/ false,
         ) {
             let hook_source = hook_source_for_config_layer_source(&layer.name);
+            let policy_path = config_toml_source_path(layer);
+            let policy_source = HookHandlerSource {
+                path: &policy_path,
+                key_source: policy_path.display().to_string(),
+                source: hook_source,
+                disabled_hook_keys: &disabled_hook_keys,
+                env: HashMap::new(),
+                plugin_id: None,
+            };
+            if !policy.allows(&policy_source) {
+                warn_for_skipped_unmanaged_hooks(layer, &mut warnings);
+                continue;
+            }
+
             let json_hooks = load_hooks_json(layer.config_folder().as_deref(), &mut warnings);
             let toml_hooks = load_toml_hooks_from_layer(layer, &mut warnings);
 
@@ -97,6 +132,7 @@ pub(crate) fn discover_handlers(
                         plugin_id: None,
                     },
                     hook_events,
+                    policy,
                 );
             }
         }
@@ -109,6 +145,7 @@ pub(crate) fn discover_handlers(
         &mut display_order,
         plugin_hook_sources,
         &disabled_hook_keys,
+        policy,
     );
 
     DiscoveryResult {
@@ -118,6 +155,28 @@ pub(crate) fn discover_handlers(
     }
 }
 
+fn warn_for_skipped_unmanaged_hooks(layer: &ConfigLayerEntry, warnings: &mut Vec<String>) {
+    if let Some(config_folder) = layer.config_folder() {
+        let source_path = config_folder.join("hooks.json");
+        if source_path.as_path().is_file() {
+            warnings.push(skipped_unmanaged_hooks_warning(&source_path));
+        }
+    }
+
+    if layer.config.get("hooks").is_some() {
+        warnings.push(skipped_unmanaged_hooks_warning(&config_toml_source_path(
+            layer,
+        )));
+    }
+}
+
+fn skipped_unmanaged_hooks_warning(path: &AbsolutePathBuf) -> String {
+    format!(
+        "skipping unmanaged hooks config {} because `allow_managed_hooks_only` is enabled",
+        path.display()
+    )
+}
+
 fn append_managed_requirement_handlers(
     handlers: &mut Vec<ConfiguredHandler>,
     hook_entries: &mut Vec<HookListEntry>,
@@ -125,6 +184,7 @@ fn append_managed_requirement_handlers(
     display_order: &mut i64,
     config_layer_stack: &ConfigLayerStack,
     disabled_hook_keys: &HashSet<String>,
+    policy: HookDiscoveryPolicy,
 ) {
     let Some(managed_hooks) = config_layer_stack.requirements().managed_hooks.as_ref() else {
         return;
@@ -148,6 +208,7 @@ fn append_managed_requirement_handlers(
             plugin_id: None,
         },
         managed_hooks.get().hooks.clone(),
+        policy,
     );
 }
 
@@ -158,6 +219,7 @@ fn append_plugin_hook_sources(
     display_order: &mut i64,
     plugin_hook_sources: Vec<PluginHookSource>,
     disabled_hook_keys: &HashSet<String>,
+    policy: HookDiscoveryPolicy,
 ) {
     // TODO(abhinav): check enabled/trusted state here before plugin hooks become runnable.
     for source in plugin_hook_sources {
@@ -193,6 +255,7 @@ fn append_plugin_hook_sources(
                 plugin_id: Some(plugin_id),
             },
             hooks,
+            policy,
         );
     }
 }
@@ -340,7 +403,13 @@ fn append_hook_events(
     display_order: &mut i64,
     source: HookHandlerSource<'_>,
     hook_events: HookEventsToml,
+    policy: HookDiscoveryPolicy,
 ) {
+    if !policy.allows(&source) {
+        warnings.push(skipped_unmanaged_hooks_warning(source.path));
+        return;
+    }
+
     for (event_name, groups) in hook_events.into_matcher_groups() {
         append_matcher_groups(
             handlers,

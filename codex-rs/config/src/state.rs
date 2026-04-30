@@ -18,6 +18,11 @@ use toml::Value as TomlValue;
 #[derive(Debug, Default, Clone)]
 pub struct LoaderOverrides {
     pub managed_config_path: Option<PathBuf>,
+    pub system_config_path: Option<PathBuf>,
+    pub system_requirements_path: Option<PathBuf>,
+    pub ignore_managed_requirements: bool,
+    pub ignore_user_config: bool,
+    pub ignore_user_and_project_exec_policy_rules: bool,
     //TODO(gt): Add a macos_ prefix to this field and remove the target_os check.
     #[cfg(target_os = "macos")]
     pub managed_preferences_base64: Option<String>,
@@ -29,11 +34,18 @@ impl LoaderOverrides {
     ///
     /// This is intended for tests that should load only repo-controlled config fixtures.
     pub fn without_managed_config_for_tests() -> Self {
-        Self::with_managed_config_path_for_tests(
-            std::env::temp_dir()
-                .join("codex-config-tests")
-                .join("managed_config.toml"),
-        )
+        let base = std::env::temp_dir().join("codex-config-tests");
+        Self {
+            managed_config_path: Some(base.join("managed_config.toml")),
+            system_config_path: Some(base.join("config.toml")),
+            system_requirements_path: Some(base.join("requirements.toml")),
+            ignore_managed_requirements: false,
+            ignore_user_config: false,
+            ignore_user_and_project_exec_policy_rules: false,
+            #[cfg(target_os = "macos")]
+            managed_preferences_base64: Some(String::new()),
+            macos_managed_config_requirements_base64: Some(String::new()),
+        }
     }
 
     /// Returns overrides with host MDM disabled and managed config loaded from `managed_config_path`.
@@ -42,9 +54,7 @@ impl LoaderOverrides {
     pub fn with_managed_config_path_for_tests(managed_config_path: PathBuf) -> Self {
         Self {
             managed_config_path: Some(managed_config_path),
-            #[cfg(target_os = "macos")]
-            managed_preferences_base64: Some(String::new()),
-            macos_managed_config_requirements_base64: Some(String::new()),
+            ..Self::without_managed_config_for_tests()
         }
     }
 }
@@ -157,6 +167,9 @@ pub struct ConfigLayerStack {
     /// sources. This preserves the original allow-lists so they can be
     /// surfaced via APIs.
     requirements_toml: ConfigRequirementsToml,
+
+    /// Whether execpolicy should skip `.rules` files from user and project config-layer folders.
+    ignore_user_and_project_exec_policy_rules: bool,
 }
 
 impl ConfigLayerStack {
@@ -171,7 +184,20 @@ impl ConfigLayerStack {
             user_layer_index,
             requirements,
             requirements_toml,
+            ignore_user_and_project_exec_policy_rules: false,
         })
+    }
+
+    pub fn with_user_and_project_exec_policy_rules_ignored(
+        mut self,
+        ignore_user_and_project_exec_policy_rules: bool,
+    ) -> Self {
+        self.ignore_user_and_project_exec_policy_rules = ignore_user_and_project_exec_policy_rules;
+        self
+    }
+
+    pub fn ignore_user_and_project_exec_policy_rules(&self) -> bool {
+        self.ignore_user_and_project_exec_policy_rules
     }
 
     /// Returns the raw user config layer, if any.
@@ -211,6 +237,8 @@ impl ConfigLayerStack {
                     user_layer_index: self.user_layer_index,
                     requirements: self.requirements.clone(),
                     requirements_toml: self.requirements_toml.clone(),
+                    ignore_user_and_project_exec_policy_rules: self
+                        .ignore_user_and_project_exec_policy_rules,
                 }
             }
             None => {
@@ -232,6 +260,8 @@ impl ConfigLayerStack {
                     user_layer_index: Some(user_layer_index),
                     requirements: self.requirements.clone(),
                     requirements_toml: self.requirements_toml.clone(),
+                    ignore_user_and_project_exec_policy_rules: self
+                        .ignore_user_and_project_exec_policy_rules,
                 }
             }
         }

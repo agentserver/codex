@@ -746,13 +746,9 @@ impl App {
                     self.chat_widget.show_windows_sandbox_setup_status();
                     self.windows_sandbox.setup_started_at = Some(Instant::now());
                     let session_telemetry = self.session_telemetry.clone();
-                    let policy = crate::permission_compat::legacy_compatible_sandbox_policy(
-                        &permission_profile,
-                        policy_cwd.as_path(),
-                    );
                     tokio::task::spawn_blocking(move || {
                         let result = crate::legacy_core::windows_sandbox::run_elevated_setup(
-                            &policy,
+                            &permission_profile,
                             policy_cwd.as_path(),
                             command_cwd.as_path(),
                             &env_map,
@@ -823,14 +819,10 @@ impl App {
                     let session_telemetry = self.session_telemetry.clone();
 
                     self.chat_widget.show_windows_sandbox_setup_status();
-                    let policy = crate::permission_compat::legacy_compatible_sandbox_policy(
-                        &permission_profile,
-                        policy_cwd.as_path(),
-                    );
                     tokio::task::spawn_blocking(move || {
                         if let Err(err) =
                             crate::legacy_core::windows_sandbox::run_legacy_setup_preflight(
-                                &policy,
+                                &permission_profile,
                                 policy_cwd.as_path(),
                                 command_cwd.as_path(),
                                 &env_map,

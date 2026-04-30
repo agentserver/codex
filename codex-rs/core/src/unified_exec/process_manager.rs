@@ -877,7 +877,7 @@ impl UnifiedExecProcessManager {
 
         #[cfg(target_os = "windows")]
         if request.sandbox == codex_sandboxing::SandboxType::WindowsRestrictedToken {
-            let sandbox_policy = request.compatibility_sandbox_policy();
+            let sandbox_policy = request.windows_compatibility_sandbox_policy();
             let policy_json = serde_json::to_string(&sandbox_policy).map_err(|err| {
                 UnifiedExecError::create_process(format!(
                     "failed to serialize Windows sandbox policy: {err}"

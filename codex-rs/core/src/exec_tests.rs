@@ -378,15 +378,14 @@ async fn process_exec_tool_call_preserves_full_buffer_capture_policy() -> Result
 
 #[test]
 fn windows_restricted_token_skips_external_sandbox_policies() {
-    let policy = SandboxPolicy::ExternalSandbox {
-        network_access: codex_protocol::protocol::NetworkAccess::Restricted,
+    let permission_profile = PermissionProfile::External {
+        network: NetworkSandboxPolicy::Restricted,
     };
-    let file_system_policy = FileSystemSandboxPolicy::from(&policy);
+    let file_system_policy = permission_profile.file_system_sandbox_policy();
 
     assert_eq!(
         should_use_windows_restricted_token_sandbox(
             SandboxType::WindowsRestrictedToken,
-            &policy,
             &file_system_policy,
         ),
         false
@@ -395,13 +394,12 @@ fn windows_restricted_token_skips_external_sandbox_policies() {
 
 #[test]
 fn windows_restricted_token_runs_for_legacy_restricted_policies() {
-    let policy = SandboxPolicy::new_read_only_policy();
-    let file_system_policy = FileSystemSandboxPolicy::from(&policy);
+    let permission_profile = PermissionProfile::read_only();
+    let file_system_policy = permission_profile.file_system_sandbox_policy();
 
     assert_eq!(
         should_use_windows_restricted_token_sandbox(
             SandboxType::WindowsRestrictedToken,
-            &policy,
             &file_system_policy,
         ),
         true
@@ -426,37 +424,38 @@ fn windows_proxy_enforcement_uses_elevated_backend() {
 
 #[test]
 fn windows_restricted_token_rejects_network_only_restrictions() {
-    let policy = SandboxPolicy::ExternalSandbox {
-        network_access: codex_protocol::protocol::NetworkAccess::Restricted,
-    };
+    let permission_profile = PermissionProfile::from_runtime_permissions(
+        &FileSystemSandboxPolicy::unrestricted(),
+        NetworkSandboxPolicy::Restricted,
+    );
     let file_system_policy = FileSystemSandboxPolicy::unrestricted();
     let sandbox_policy_cwd = AbsolutePathBuf::current_dir().expect("cwd");
 
     assert_eq!(
             unsupported_windows_restricted_token_sandbox_reason(
                 SandboxType::WindowsRestrictedToken,
-                &policy,
+                &permission_profile,
                 &file_system_policy,
                 NetworkSandboxPolicy::Restricted,
                 &sandbox_policy_cwd,
                 WindowsSandboxLevel::RestrictedToken,
             ),
             Some(
-                "windows sandbox backend cannot enforce file_system=Unrestricted, network=Restricted, legacy_policy=ExternalSandbox { network_access: Restricted }; refusing to run unsandboxed".to_string()
+                "windows sandbox backend cannot enforce file_system=Unrestricted, network=Restricted, permission_profile=Managed { file_system: Unrestricted, network: Restricted }; refusing to run unsandboxed".to_string()
             )
         );
 }
 
 #[test]
 fn windows_restricted_token_allows_legacy_restricted_policies() {
-    let policy = SandboxPolicy::new_read_only_policy();
-    let file_system_policy = FileSystemSandboxPolicy::from(&policy);
+    let permission_profile = PermissionProfile::read_only();
+    let file_system_policy = permission_profile.file_system_sandbox_policy();
     let sandbox_policy_cwd = AbsolutePathBuf::current_dir().expect("cwd");
 
     assert_eq!(
         unsupported_windows_restricted_token_sandbox_reason(
             SandboxType::WindowsRestrictedToken,
-            &policy,
+            &permission_profile,
             &file_system_policy,
             NetworkSandboxPolicy::Restricted,
             &sandbox_policy_cwd,
@@ -468,19 +467,19 @@ fn windows_restricted_token_allows_legacy_restricted_policies() {
 
 #[test]
 fn windows_restricted_token_allows_legacy_workspace_write_policies() {
-    let policy = SandboxPolicy::WorkspaceWrite {
-        writable_roots: vec![],
-        network_access: false,
-        exclude_tmpdir_env_var: true,
-        exclude_slash_tmp: true,
-    };
-    let file_system_policy = FileSystemSandboxPolicy::from(&policy);
+    let permission_profile = PermissionProfile::workspace_write_with(
+        &[],
+        NetworkSandboxPolicy::Restricted,
+        /*exclude_tmpdir_env_var*/ true,
+        /*exclude_slash_tmp*/ true,
+    );
+    let file_system_policy = permission_profile.file_system_sandbox_policy();
     let sandbox_policy_cwd = AbsolutePathBuf::current_dir().expect("cwd");
 
     assert_eq!(
         unsupported_windows_restricted_token_sandbox_reason(
             SandboxType::WindowsRestrictedToken,
-            &policy,
+            &permission_profile,
             &file_system_policy,
             NetworkSandboxPolicy::Restricted,
             &sandbox_policy_cwd,
@@ -498,20 +497,21 @@ fn windows_elevated_allows_split_restricted_read_policies() {
     )
     .expect("absolute docs");
     std::fs::create_dir_all(docs.as_path()).expect("create docs");
-    let policy = SandboxPolicy::ReadOnly {
-        network_access: false,
-    };
     let file_system_policy = FileSystemSandboxPolicy::restricted(vec![
         codex_protocol::permissions::FileSystemSandboxEntry {
             path: codex_protocol::permissions::FileSystemPath::Path { path: docs },
             access: codex_protocol::permissions::FileSystemAccessMode::Read,
         },
     ]);
+    let permission_profile = PermissionProfile::from_runtime_permissions(
+        &file_system_policy,
+        NetworkSandboxPolicy::Restricted,
+    );
 
     assert_eq!(
         unsupported_windows_restricted_token_sandbox_reason(
             SandboxType::WindowsRestrictedToken,
-            &policy,
+            &permission_profile,
             &file_system_policy,
             NetworkSandboxPolicy::Restricted,
             &temp_dir.path().abs(),
@@ -526,12 +526,6 @@ fn windows_restricted_token_rejects_split_only_filesystem_policies() {
     let temp_dir = tempfile::TempDir::new().expect("tempdir");
     let docs = temp_dir.path().join("docs");
     std::fs::create_dir_all(&docs).expect("create docs");
-    let policy = SandboxPolicy::WorkspaceWrite {
-        writable_roots: vec![],
-        network_access: false,
-        exclude_tmpdir_env_var: true,
-        exclude_slash_tmp: true,
-    };
     let file_system_policy = FileSystemSandboxPolicy::restricted(vec![
         codex_protocol::permissions::FileSystemSandboxEntry {
             path: codex_protocol::permissions::FileSystemPath::Special {
@@ -549,11 +543,15 @@ fn windows_restricted_token_rejects_split_only_filesystem_policies() {
             access: codex_protocol::permissions::FileSystemAccessMode::Read,
         },
     ]);
+    let permission_profile = PermissionProfile::from_runtime_permissions(
+        &file_system_policy,
+        NetworkSandboxPolicy::Restricted,
+    );
 
     assert_eq!(
         unsupported_windows_restricted_token_sandbox_reason(
             SandboxType::WindowsRestrictedToken,
-            &policy,
+            &permission_profile,
             &file_system_policy,
             NetworkSandboxPolicy::Restricted,
             &temp_dir.path().abs(),
@@ -571,12 +569,6 @@ fn windows_restricted_token_rejects_root_write_read_only_carveouts() {
     let temp_dir = tempfile::TempDir::new().expect("tempdir");
     let docs = temp_dir.path().join("docs");
     std::fs::create_dir_all(&docs).expect("create docs");
-    let policy = SandboxPolicy::WorkspaceWrite {
-        writable_roots: vec![],
-        network_access: false,
-        exclude_tmpdir_env_var: true,
-        exclude_slash_tmp: true,
-    };
     let file_system_policy = FileSystemSandboxPolicy::restricted(vec![
         codex_protocol::permissions::FileSystemSandboxEntry {
             path: codex_protocol::permissions::FileSystemPath::Special {
@@ -592,11 +584,15 @@ fn windows_restricted_token_rejects_root_write_read_only_carveouts() {
             access: codex_protocol::permissions::FileSystemAccessMode::Read,
         },
     ]);
+    let permission_profile = PermissionProfile::from_runtime_permissions(
+        &file_system_policy,
+        NetworkSandboxPolicy::Restricted,
+    );
 
     assert_eq!(
         unsupported_windows_restricted_token_sandbox_reason(
             SandboxType::WindowsRestrictedToken,
-            &policy,
+            &permission_profile,
             &file_system_policy,
             NetworkSandboxPolicy::Restricted,
             &temp_dir.path().abs(),
@@ -617,12 +613,6 @@ fn windows_restricted_token_supports_full_read_split_write_read_carveouts() {
         .abs();
     let docs = cwd.join("docs");
     std::fs::create_dir_all(docs.as_path()).expect("create docs");
-    let policy = SandboxPolicy::WorkspaceWrite {
-        writable_roots: vec![],
-        network_access: false,
-        exclude_tmpdir_env_var: true,
-        exclude_slash_tmp: true,
-    };
     let file_system_policy = FileSystemSandboxPolicy::restricted(vec![
         codex_protocol::permissions::FileSystemSandboxEntry {
             path: codex_protocol::permissions::FileSystemPath::Special {
@@ -643,6 +633,10 @@ fn windows_restricted_token_supports_full_read_split_write_read_carveouts() {
             access: codex_protocol::permissions::FileSystemAccessMode::Read,
         },
     ]);
+    let permission_profile = PermissionProfile::from_runtime_permissions(
+        &file_system_policy,
+        NetworkSandboxPolicy::Restricted,
+    );
 
     // The legacy workspace-write root already protects top-level `.codex`, so
     // the restricted-token overlay only needs the extra read-only docs carveout.
@@ -651,7 +645,7 @@ fn windows_restricted_token_supports_full_read_split_write_read_carveouts() {
     assert_eq!(
         resolve_windows_restricted_token_filesystem_overrides(
             SandboxType::WindowsRestrictedToken,
-            &policy,
+            &permission_profile,
             &file_system_policy,
             NetworkSandboxPolicy::Restricted,
             &cwd,
@@ -672,9 +666,6 @@ fn windows_elevated_supports_split_restricted_read_roots() {
     let docs = temp_dir.path().join("docs");
     std::fs::create_dir_all(&docs).expect("create docs");
     let expected_docs = dunce::canonicalize(&docs).expect("canonical docs");
-    let policy = SandboxPolicy::ReadOnly {
-        network_access: false,
-    };
     let file_system_policy = FileSystemSandboxPolicy::restricted(vec![
         codex_protocol::permissions::FileSystemSandboxEntry {
             path: codex_protocol::permissions::FileSystemPath::Path {
@@ -684,11 +675,15 @@ fn windows_elevated_supports_split_restricted_read_roots() {
             access: codex_protocol::permissions::FileSystemAccessMode::Read,
         },
     ]);
+    let permission_profile = PermissionProfile::from_runtime_permissions(
+        &file_system_policy,
+        NetworkSandboxPolicy::Restricted,
+    );
 
     assert_eq!(
         resolve_windows_elevated_filesystem_overrides(
             SandboxType::WindowsRestrictedToken,
-            &policy,
+            &permission_profile,
             &file_system_policy,
             NetworkSandboxPolicy::Restricted,
             &temp_dir.path().abs(),
@@ -709,12 +704,6 @@ fn windows_elevated_supports_split_write_read_carveouts() {
     let docs = temp_dir.path().join("docs");
     std::fs::create_dir_all(&docs).expect("create docs");
     let expected_docs = dunce::canonicalize(&docs).expect("canonical docs");
-    let policy = SandboxPolicy::WorkspaceWrite {
-        writable_roots: vec![],
-        network_access: false,
-        exclude_tmpdir_env_var: true,
-        exclude_slash_tmp: true,
-    };
     let file_system_policy = FileSystemSandboxPolicy::restricted(vec![
         codex_protocol::permissions::FileSystemSandboxEntry {
             path: codex_protocol::permissions::FileSystemPath::Special {
@@ -738,11 +727,15 @@ fn windows_elevated_supports_split_write_read_carveouts() {
             access: codex_protocol::permissions::FileSystemAccessMode::Read,
         },
     ]);
+    let permission_profile = PermissionProfile::from_runtime_permissions(
+        &file_system_policy,
+        NetworkSandboxPolicy::Restricted,
+    );
 
     assert_eq!(
         resolve_windows_elevated_filesystem_overrides(
             SandboxType::WindowsRestrictedToken,
-            &policy,
+            &permission_profile,
             &file_system_policy,
             NetworkSandboxPolicy::Restricted,
             &temp_dir.path().abs(),
@@ -765,12 +758,6 @@ fn windows_elevated_rejects_unreadable_split_carveouts() {
     let temp_dir = tempfile::TempDir::new().expect("tempdir");
     let blocked = temp_dir.path().join("blocked");
     std::fs::create_dir_all(&blocked).expect("create blocked");
-    let policy = SandboxPolicy::WorkspaceWrite {
-        writable_roots: vec![],
-        network_access: false,
-        exclude_tmpdir_env_var: true,
-        exclude_slash_tmp: true,
-    };
     let file_system_policy = FileSystemSandboxPolicy::restricted(vec![
         codex_protocol::permissions::FileSystemSandboxEntry {
             path: codex_protocol::permissions::FileSystemPath::Special {
@@ -794,11 +781,15 @@ fn windows_elevated_rejects_unreadable_split_carveouts() {
             access: codex_protocol::permissions::FileSystemAccessMode::None,
         },
     ]);
+    let permission_profile = PermissionProfile::from_runtime_permissions(
+        &file_system_policy,
+        NetworkSandboxPolicy::Restricted,
+    );
 
     assert_eq!(
         unsupported_windows_restricted_token_sandbox_reason(
             SandboxType::WindowsRestrictedToken,
-            &policy,
+            &permission_profile,
             &file_system_policy,
             NetworkSandboxPolicy::Restricted,
             &temp_dir.path().abs(),
@@ -814,12 +805,6 @@ fn windows_elevated_rejects_unreadable_split_carveouts() {
 #[test]
 fn windows_elevated_rejects_unreadable_globs() {
     let temp_dir = tempfile::TempDir::new().expect("tempdir");
-    let policy = SandboxPolicy::WorkspaceWrite {
-        writable_roots: vec![],
-        network_access: false,
-        exclude_tmpdir_env_var: true,
-        exclude_slash_tmp: true,
-    };
     let file_system_policy = FileSystemSandboxPolicy::restricted(vec![
         codex_protocol::permissions::FileSystemSandboxEntry {
             path: codex_protocol::permissions::FileSystemPath::Special {
@@ -842,11 +827,15 @@ fn windows_elevated_rejects_unreadable_globs() {
             access: codex_protocol::permissions::FileSystemAccessMode::None,
         },
     ]);
+    let permission_profile = PermissionProfile::from_runtime_permissions(
+        &file_system_policy,
+        NetworkSandboxPolicy::Restricted,
+    );
 
     assert_eq!(
         unsupported_windows_restricted_token_sandbox_reason(
             SandboxType::WindowsRestrictedToken,
-            &policy,
+            &permission_profile,
             &file_system_policy,
             NetworkSandboxPolicy::Restricted,
             &temp_dir.path().abs(),
@@ -865,12 +854,6 @@ fn windows_elevated_rejects_reopened_writable_descendants() {
     let docs = temp_dir.path().join("docs");
     let nested = docs.join("nested");
     std::fs::create_dir_all(&nested).expect("create nested");
-    let policy = SandboxPolicy::WorkspaceWrite {
-        writable_roots: vec![],
-        network_access: false,
-        exclude_tmpdir_env_var: true,
-        exclude_slash_tmp: true,
-    };
     let file_system_policy = FileSystemSandboxPolicy::restricted(vec![
         codex_protocol::permissions::FileSystemSandboxEntry {
             path: codex_protocol::permissions::FileSystemPath::Special {
@@ -901,11 +884,15 @@ fn windows_elevated_rejects_reopened_writable_descendants() {
             access: codex_protocol::permissions::FileSystemAccessMode::Write,
         },
     ]);
+    let permission_profile = PermissionProfile::from_runtime_permissions(
+        &file_system_policy,
+        NetworkSandboxPolicy::Restricted,
+    );
 
     assert_eq!(
         unsupported_windows_restricted_token_sandbox_reason(
             SandboxType::WindowsRestrictedToken,
-            &policy,
+            &permission_profile,
             &file_system_policy,
             NetworkSandboxPolicy::Restricted,
             &temp_dir.path().abs(),

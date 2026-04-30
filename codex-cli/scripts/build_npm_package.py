@@ -138,6 +138,17 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Directory containing pre-installed native binaries to bundle (vendor root).",
     )
+    parser.add_argument(
+        "--skip-native-component",
+        dest="skip_native_components",
+        action="append",
+        default=[],
+        choices=tuple(COMPONENT_DEST_DIR),
+        help=(
+            "Skip one native component while staging. May be repeated. "
+            "Intended for historical-artifact smoke tests only."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -161,7 +172,11 @@ def main() -> int:
         stage_sources(staging_dir, version, package)
 
         vendor_src = args.vendor_src.resolve() if args.vendor_src else None
-        native_components = PACKAGE_NATIVE_COMPONENTS.get(package, [])
+        native_components = [
+            component
+            for component in PACKAGE_NATIVE_COMPONENTS.get(package, [])
+            if component not in args.skip_native_components
+        ]
         target_filter = PACKAGE_TARGET_FILTERS.get(package)
 
         if native_components:

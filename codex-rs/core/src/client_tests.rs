@@ -1,5 +1,4 @@
 use super::AttestationPurpose;
-use super::AttestationPurpose;
 use super::AuthRequestTelemetryContext;
 use super::ModelClient;
 use super::PendingUnauthorizedRetry;

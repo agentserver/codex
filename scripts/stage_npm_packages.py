@@ -58,14 +58,24 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Retain temporary staging directories instead of deleting them.",
     )
+    parser.add_argument(
+        "--skip-native-component",
+        dest="skip_native_components",
+        action="append",
+        default=[],
+        help=(
+            "Skip one native component while staging. May be repeated. "
+            "Intended for historical-artifact smoke tests only."
+        ),
+    )
     return parser.parse_args()
 
 
-def collect_native_components(packages: list[str]) -> set[str]:
+def collect_native_components(packages: list[str], skipped_components: set[str]) -> set[str]:
     components: set[str] = set()
     for package in packages:
         components.update(PACKAGE_NATIVE_COMPONENTS.get(package, []))
-    return components
+    return components - skipped_components
 
 
 def expand_packages(packages: list[str]) -> list[str]:
@@ -146,7 +156,8 @@ def main() -> int:
     runner_temp = Path(os.environ.get("RUNNER_TEMP", tempfile.gettempdir()))
 
     packages = expand_packages(list(args.packages))
-    native_components = collect_native_components(packages)
+    skipped_components = set(args.skip_native_components)
+    native_components = collect_native_components(packages, skipped_components)
 
     vendor_temp_root: Path | None = None
     vendor_src: Path | None = None
@@ -184,6 +195,8 @@ def main() -> int:
 
             if vendor_src is not None:
                 cmd.extend(["--vendor-src", str(vendor_src)])
+            for component in sorted(skipped_components):
+                cmd.extend(["--skip-native-component", component])
 
             try:
                 run_command(cmd)

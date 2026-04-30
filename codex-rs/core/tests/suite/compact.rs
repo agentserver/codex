@@ -624,7 +624,7 @@ async fn manual_pre_compact_hook_blocks_compaction() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn compact_hooks_respect_matchers_and_post_receives_summary() {
+async fn compact_hooks_respect_matchers_and_post_runs_after_compaction() {
     skip_if_no_network!();
 
     let server = start_mock_server().await;
@@ -685,7 +685,7 @@ async fn compact_hooks_respect_matchers_and_post_receives_summary() {
     let input = &hook_inputs[0];
     assert_eq!(input["hook_event_name"], "PostCompact");
     assert_eq!(input["trigger"], "manual");
-    assert_eq!(input["compact_summary"], SUMMARY_TEXT);
+    assert!(input.get("compact_summary").is_none());
     assert!(input.get("status").is_none());
     assert!(input.get("error").is_none());
     assert!(input.get("reason").is_none());

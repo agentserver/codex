@@ -10,9 +10,6 @@
     }
   },
   "properties": {
-    "compact_summary": {
-      "type": "string"
-    },
     "cwd": {
       "type": "string"
     },
@@ -42,7 +39,6 @@
     }
   },
   "required": [
-    "compact_summary",
     "cwd",
     "hook_event_name",
     "model",

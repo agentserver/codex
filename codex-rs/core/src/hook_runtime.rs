@@ -301,7 +301,6 @@ pub(crate) async fn run_post_compact_hooks(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     trigger: CompactionTrigger,
-    compact_summary: String,
 ) -> PostCompactHookOutcome {
     let request = codex_hooks::PostCompactRequest {
         session_id: sess.conversation_id,
@@ -310,7 +309,6 @@ pub(crate) async fn run_post_compact_hooks(
         transcript_path: sess.hook_transcript_path().await,
         model: turn_context.model_info.slug.clone(),
         trigger: compaction_trigger_label(trigger).to_string(),
-        compact_summary,
     };
     let preview_runs = sess.hooks().preview_post_compact(&request);
     emit_hook_started_events(sess, turn_context, preview_runs).await;

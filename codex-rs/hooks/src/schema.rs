@@ -330,7 +330,6 @@ pub(crate) struct PostCompactCommandInput {
     pub model: String,
     #[schemars(schema_with = "compaction_trigger_schema")]
     pub trigger: String,
-    pub compact_summary: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

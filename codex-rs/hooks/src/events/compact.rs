@@ -37,7 +37,6 @@ pub struct PostCompactRequest {
     pub transcript_path: Option<PathBuf>,
     pub model: String,
     pub trigger: String,
-    pub compact_summary: String,
 }
 
 #[derive(Debug)]
@@ -222,7 +221,6 @@ fn post_command_input_json(request: &PostCompactRequest) -> Result<String, serde
         hook_event_name: "PostCompact".to_string(),
         model: request.model.clone(),
         trigger: request.trigger.clone(),
-        compact_summary: request.compact_summary.clone(),
     })
 }
 
@@ -501,7 +499,7 @@ mod tests {
     }
 
     #[test]
-    fn post_compact_input_includes_summary() {
+    fn post_compact_input_includes_lifecycle_metadata() {
         let input_json = post_command_input_json(&post_request()).expect("serialize command input");
         let input: serde_json::Value =
             serde_json::from_str(&input_json).expect("parse command input");
@@ -516,7 +514,6 @@ mod tests {
                 "hook_event_name": "PostCompact",
                 "model": "gpt-test",
                 "trigger": "manual",
-                "compact_summary": "summary request complete",
             })
         );
     }
@@ -644,7 +641,6 @@ mod tests {
             transcript_path: None,
             model: "gpt-test".to_string(),
             trigger: "manual".to_string(),
-            compact_summary: "summary request complete".to_string(),
         }
     }
 

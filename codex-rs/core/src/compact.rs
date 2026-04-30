@@ -174,9 +174,8 @@ async fn run_compact_task_inner(
     .await;
     let status = compaction_status_from_result(&result);
     let error = result.as_ref().err().map(ToString::to_string);
-    if let Ok(compact_summary) = &result {
-        let post_compact_outcome =
-            run_post_compact_hooks(&sess, &turn_context, trigger, compact_summary.clone()).await;
+    if result.is_ok() {
+        let post_compact_outcome = run_post_compact_hooks(&sess, &turn_context, trigger).await;
         if let PostCompactHookOutcome::Stopped = post_compact_outcome {
             attempt.track(sess.as_ref(), status, error).await;
             return Err(CodexErr::TurnAborted);

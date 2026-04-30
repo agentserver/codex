@@ -5,7 +5,6 @@ use crate::Prompt;
 use crate::compact::CompactionAnalyticsAttempt;
 use crate::compact::InitialContextInjection;
 use crate::compact::compaction_status_from_result;
-use crate::compact::content_items_to_text;
 use crate::compact::insert_initial_context_before_last_real_user_or_summary;
 use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
@@ -138,9 +137,8 @@ async fn run_remote_compact_task_inner(
         run_remote_compact_task_inner_impl(sess, turn_context, initial_context_injection).await;
     let status = compaction_status_from_result(&result);
     let error = result.as_ref().err().map(ToString::to_string);
-    if let Ok(compact_summary) = &result {
-        let post_compact_outcome =
-            run_post_compact_hooks(sess, turn_context, trigger, compact_summary.clone()).await;
+    if result.is_ok() {
+        let post_compact_outcome = run_post_compact_hooks(sess, turn_context, trigger).await;
         if let PostCompactHookOutcome::Stopped = post_compact_outcome {
             attempt.track(sess.as_ref(), status, error).await;
             return Err(CodexErr::TurnAborted);
@@ -161,7 +159,7 @@ async fn run_remote_compact_task_inner_impl(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     initial_context_injection: InitialContextInjection,
-) -> CodexResult<String> {
+) -> CodexResult<()> {
     let context_compaction_item = ContextCompactionItem::new();
     // Use the UI compaction item ID as the trace compaction ID so protocol lifecycle events,
     // endpoint attempts, and the installed history checkpoint all have one join key.
@@ -247,7 +245,6 @@ async fn run_remote_compact_task_inner_impl(
         InitialContextInjection::DoNotInject => None,
         InitialContextInjection::BeforeLastUserMessage => Some(turn_context.to_turn_context_item()),
     };
-    let compact_summary = compact_summary_from_history(&new_history);
     let compacted_item = CompactedItem {
         message: String::new(),
         replacement_history: Some(new_history.clone()),
@@ -265,29 +262,7 @@ async fn run_remote_compact_task_inner_impl(
 
     sess.emit_turn_item_completed(turn_context, compaction_item)
         .await;
-    Ok(compact_summary)
-}
-
-fn compact_summary_from_history(items: &[ResponseItem]) -> String {
-    items
-        .iter()
-        .rev()
-        .find_map(|item| match item {
-            ResponseItem::Message { content, .. } => {
-                let summary = content_items_to_text(content)?;
-                crate::compact::is_summary_message(&summary)
-                    .then(|| strip_summary_prefix(&summary).to_string())
-            }
-            _ => None,
-        })
-        .unwrap_or_default()
-}
-
-fn strip_summary_prefix(summary: &str) -> &str {
-    summary
-        .strip_prefix(crate::compact::SUMMARY_PREFIX)
-        .and_then(|summary| summary.strip_prefix('\n'))
-        .unwrap_or(summary)
+    Ok(())
 }
 
 pub(crate) async fn process_compacted_history(
@@ -310,71 +285,6 @@ pub(crate) async fn process_compacted_history(
 
     compacted_history.retain(should_keep_compacted_history_item);
     insert_initial_context_before_last_real_user_or_summary(compacted_history, initial_context)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use codex_protocol::models::ContentItem;
-    use pretty_assertions::assert_eq;
-
-    #[test]
-    fn compact_summary_from_history_uses_plaintext_message_not_encrypted_marker() {
-        let items = vec![
-            ResponseItem::Message {
-                id: None,
-                role: "assistant".to_string(),
-                content: vec![ContentItem::OutputText {
-                    text: format!("{}\nplain compact summary", crate::compact::SUMMARY_PREFIX),
-                }],
-                phase: None,
-            },
-            ResponseItem::Compaction {
-                encrypted_content: "gAAAAABencrypted".to_string(),
-            },
-        ];
-
-        let summary = compact_summary_from_history(&items);
-
-        assert_eq!("plain compact summary", summary);
-    }
-
-    #[test]
-    fn compact_summary_from_history_ignores_encrypted_marker_without_plaintext() {
-        let items = vec![ResponseItem::Compaction {
-            encrypted_content: "gAAAAABencrypted".to_string(),
-        }];
-
-        let summary = compact_summary_from_history(&items);
-
-        assert_eq!("", summary);
-    }
-
-    #[test]
-    fn compact_summary_from_history_ignores_regular_messages() {
-        let items = vec![
-            ResponseItem::Message {
-                id: None,
-                role: "assistant".to_string(),
-                content: vec![ContentItem::OutputText {
-                    text: format!("{}\nplain compact summary", crate::compact::SUMMARY_PREFIX),
-                }],
-                phase: None,
-            },
-            ResponseItem::Message {
-                id: None,
-                role: "assistant".to_string(),
-                content: vec![ContentItem::OutputText {
-                    text: "A regular assistant note after compaction.".to_string(),
-                }],
-                phase: None,
-            },
-        ];
-
-        let summary = compact_summary_from_history(&items);
-
-        assert_eq!("plain compact summary", summary);
-    }
 }
 
 /// Returns whether an item from remote compaction output should be preserved.

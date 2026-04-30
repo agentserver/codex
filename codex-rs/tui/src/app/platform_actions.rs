@@ -21,18 +21,14 @@ impl App {
         permission_profile: PermissionProfile,
         tx: AppEventSender,
     ) {
-        let sandbox_policy = crate::permission_compat::legacy_compatible_sandbox_policy(
-            &permission_profile,
-            cwd.as_path(),
-        );
-
         tokio::task::spawn_blocking(move || {
             let logs_base_dir_path = logs_base_dir.as_path();
-            let result = codex_windows_sandbox::apply_world_writable_scan_and_denies(
+            let result = crate::legacy_core::windows_sandbox::apply_world_writable_scan_and_denies(
                 logs_base_dir_path,
                 cwd.as_path(),
                 &env_map,
-                &sandbox_policy,
+                &permission_profile,
+                cwd.as_path(),
                 Some(logs_base_dir_path),
             );
             if result.is_err() {

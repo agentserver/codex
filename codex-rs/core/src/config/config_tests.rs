@@ -139,32 +139,22 @@ fn http_mcp(url: &str) -> McpServerConfig {
     }
 }
 
-async fn derive_legacy_sandbox_policy_for_test(
+async fn derive_permission_profile_for_test(
     cfg: &ConfigToml,
     sandbox_mode_override: Option<SandboxMode>,
     profile_sandbox_mode: Option<SandboxMode>,
     windows_sandbox_level: WindowsSandboxLevel,
     active_project: Option<&ProjectConfig>,
     permission_profile_constraint: Option<&Constrained<PermissionProfile>>,
-) -> SandboxPolicy {
-    let permission_profile = cfg
-        .derive_permission_profile(
-            sandbox_mode_override,
-            profile_sandbox_mode,
-            windows_sandbox_level,
-            active_project,
-            permission_profile_constraint,
-        )
-        .await;
-    permission_profile
-        .to_legacy_sandbox_policy(Path::new("/"))
-        .unwrap_or_else(|err| {
-            tracing::warn!(
-                error = %err,
-                "derived permission profile cannot be represented as a legacy sandbox policy; falling back to read-only"
-            );
-            SandboxPolicy::new_read_only_policy()
-        })
+) -> PermissionProfile {
+    cfg.derive_permission_profile(
+        sandbox_mode_override,
+        profile_sandbox_mode,
+        windows_sandbox_level,
+        active_project,
+        permission_profile_constraint,
+    )
+    .await
 }
 
 #[tokio::test]
@@ -2142,7 +2132,7 @@ network_access = false  # This should be ignored.
     let sandbox_full_access_cfg = toml::from_str::<ConfigToml>(sandbox_full_access)
         .expect("TOML deserialization should succeed");
     let sandbox_mode_override = None;
-    let resolution = derive_legacy_sandbox_policy_for_test(
+    let resolution = derive_permission_profile_for_test(
         &sandbox_full_access_cfg,
         sandbox_mode_override,
         /*profile_sandbox_mode*/ None,
@@ -2151,7 +2141,7 @@ network_access = false  # This should be ignored.
         /*permission_profile_constraint*/ None,
     )
     .await;
-    assert_eq!(resolution, SandboxPolicy::DangerFullAccess);
+    assert_eq!(resolution, PermissionProfile::Disabled);
 
     let sandbox_read_only = r#"
 sandbox_mode = "read-only"
@@ -2163,7 +2153,7 @@ network_access = true  # This should be ignored.
     let sandbox_read_only_cfg = toml::from_str::<ConfigToml>(sandbox_read_only)
         .expect("TOML deserialization should succeed");
     let sandbox_mode_override = None;
-    let resolution = derive_legacy_sandbox_policy_for_test(
+    let resolution = derive_permission_profile_for_test(
         &sandbox_read_only_cfg,
         sandbox_mode_override,
         /*profile_sandbox_mode*/ None,
@@ -2172,7 +2162,7 @@ network_access = true  # This should be ignored.
         /*permission_profile_constraint*/ None,
     )
     .await;
-    assert_eq!(resolution, SandboxPolicy::new_read_only_policy());
+    assert_eq!(resolution, PermissionProfile::read_only());
 
     let writable_root = test_absolute_path("/my/workspace");
     let sandbox_workspace_write = format!(
@@ -2195,7 +2185,7 @@ trust_level = "trusted"
     let sandbox_workspace_write_cfg = toml::from_str::<ConfigToml>(&sandbox_workspace_write)
         .expect("TOML deserialization should succeed");
     let sandbox_mode_override = None;
-    let resolution = derive_legacy_sandbox_policy_for_test(
+    let resolution = derive_permission_profile_for_test(
         &sandbox_workspace_write_cfg,
         sandbox_mode_override,
         /*profile_sandbox_mode*/ None,
@@ -2205,16 +2195,16 @@ trust_level = "trusted"
     )
     .await;
     if cfg!(target_os = "windows") {
-        assert_eq!(resolution, SandboxPolicy::new_read_only_policy());
+        assert_eq!(resolution, PermissionProfile::read_only());
     } else {
         assert_eq!(
             resolution,
-            SandboxPolicy::WorkspaceWrite {
-                writable_roots: vec![writable_root.clone()],
-                network_access: false,
-                exclude_tmpdir_env_var: true,
-                exclude_slash_tmp: true,
-            }
+            PermissionProfile::workspace_write_with(
+                std::slice::from_ref(&writable_root),
+                NetworkSandboxPolicy::Restricted,
+                /*exclude_tmpdir_env_var*/ true,
+                /*exclude_slash_tmp*/ true,
+            )
         );
     }
 
@@ -2235,7 +2225,7 @@ exclude_slash_tmp = true
     let sandbox_workspace_write_cfg = toml::from_str::<ConfigToml>(&sandbox_workspace_write)
         .expect("TOML deserialization should succeed");
     let sandbox_mode_override = None;
-    let resolution = derive_legacy_sandbox_policy_for_test(
+    let resolution = derive_permission_profile_for_test(
         &sandbox_workspace_write_cfg,
         sandbox_mode_override,
         /*profile_sandbox_mode*/ None,
@@ -2245,16 +2235,16 @@ exclude_slash_tmp = true
     )
     .await;
     if cfg!(target_os = "windows") {
-        assert_eq!(resolution, SandboxPolicy::new_read_only_policy());
+        assert_eq!(resolution, PermissionProfile::read_only());
     } else {
         assert_eq!(
             resolution,
-            SandboxPolicy::WorkspaceWrite {
-                writable_roots: vec![writable_root],
-                network_access: false,
-                exclude_tmpdir_env_var: true,
-                exclude_slash_tmp: true,
-            }
+            PermissionProfile::workspace_write_with(
+                &[writable_root],
+                NetworkSandboxPolicy::Restricted,
+                /*exclude_tmpdir_env_var*/ true,
+                /*exclude_slash_tmp*/ true,
+            )
         );
     }
 }
@@ -7156,7 +7146,7 @@ trust_level = "untrusted"
         trust_level: Some(TrustLevel::Untrusted),
     };
 
-    let resolution = derive_legacy_sandbox_policy_for_test(
+    let resolution = derive_permission_profile_for_test(
         &cfg,
         /*sandbox_mode_override*/ None,
         /*profile_sandbox_mode*/ None,
@@ -7168,23 +7158,17 @@ trust_level = "untrusted"
 
     // Verify that untrusted projects get WorkspaceWrite (or ReadOnly on Windows due to downgrade)
     if cfg!(target_os = "windows") {
-        assert!(
-            matches!(resolution, SandboxPolicy::ReadOnly { .. }),
-            "Expected ReadOnly on Windows, got {resolution:?}"
-        );
+        assert_eq!(resolution, PermissionProfile::read_only());
     } else {
-        assert!(
-            matches!(resolution, SandboxPolicy::WorkspaceWrite { .. }),
-            "Expected WorkspaceWrite for untrusted project, got {resolution:?}"
-        );
+        assert_eq!(resolution, PermissionProfile::workspace_write());
     }
 
     Ok(())
 }
 
 #[tokio::test]
-async fn derive_sandbox_policy_falls_back_to_read_only_for_implicit_defaults() -> anyhow::Result<()>
-{
+async fn derive_permission_profile_falls_back_to_read_only_for_implicit_defaults()
+-> anyhow::Result<()> {
     let project_dir = TempDir::new()?;
     let project_path = project_dir.path().to_path_buf();
     let project_key = project_path.to_string_lossy().to_string();
@@ -7213,7 +7197,7 @@ async fn derive_sandbox_policy_falls_back_to_read_only_for_implicit_defaults() -
         }
     })?;
 
-    let resolution = derive_legacy_sandbox_policy_for_test(
+    let resolution = derive_permission_profile_for_test(
         &cfg,
         /*sandbox_mode_override*/ None,
         /*profile_sandbox_mode*/ None,
@@ -7223,12 +7207,12 @@ async fn derive_sandbox_policy_falls_back_to_read_only_for_implicit_defaults() -
     )
     .await;
 
-    assert_eq!(resolution, SandboxPolicy::new_read_only_policy());
+    assert_eq!(resolution, PermissionProfile::read_only());
     Ok(())
 }
 
 #[tokio::test]
-async fn derive_sandbox_policy_preserves_windows_downgrade_for_unsupported_fallback()
+async fn derive_permission_profile_preserves_windows_downgrade_for_unsupported_fallback()
 -> anyhow::Result<()> {
     let project_dir = TempDir::new()?;
     let project_path = project_dir.path().to_path_buf();
@@ -7266,7 +7250,7 @@ async fn derive_sandbox_policy_preserves_windows_downgrade_for_unsupported_fallb
         }
     })?;
 
-    let resolution = derive_legacy_sandbox_policy_for_test(
+    let resolution = derive_permission_profile_for_test(
         &cfg,
         /*sandbox_mode_override*/ None,
         /*profile_sandbox_mode*/ None,
@@ -7277,9 +7261,9 @@ async fn derive_sandbox_policy_preserves_windows_downgrade_for_unsupported_fallb
     .await;
 
     if cfg!(target_os = "windows") {
-        assert_eq!(resolution, SandboxPolicy::new_read_only_policy());
+        assert_eq!(resolution, PermissionProfile::read_only());
     } else {
-        assert_eq!(resolution, SandboxPolicy::new_workspace_write_policy());
+        assert_eq!(resolution, PermissionProfile::workspace_write());
     }
     Ok(())
 }

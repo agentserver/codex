@@ -38,12 +38,12 @@ use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
 use codex_protocol::protocol::ExecOutputStream;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_sandboxing::SandboxCommand;
 use codex_sandboxing::SandboxManager;
 use codex_sandboxing::SandboxTransformRequest;
 use codex_sandboxing::SandboxType;
 use codex_sandboxing::SandboxablePreference;
+use codex_sandboxing::compatibility_sandbox_policy_for_permission_profile;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_pty::DEFAULT_OUTPUT_BYTES_CAP;
 use codex_utils_pty::process_group::kill_child_process_group;
@@ -109,6 +109,16 @@ pub(crate) struct WindowsSandboxFilesystemOverrides {
     pub(crate) read_roots_include_platform_defaults: bool,
     pub(crate) write_roots_override: Option<Vec<PathBuf>>,
     pub(crate) additional_deny_write_paths: Vec<AbsolutePathBuf>,
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+struct RawExecSandboxContext<'a> {
+    sandbox: SandboxType,
+    permission_profile: &'a PermissionProfile,
+    file_system_sandbox_policy: &'a FileSystemSandboxPolicy,
+    network_sandbox_policy: NetworkSandboxPolicy,
+    sandbox_policy_cwd: &'a AbsolutePathBuf,
+    windows_sandbox_filesystem_overrides: Option<&'a WindowsSandboxFilesystemOverrides>,
 }
 
 fn windows_sandbox_uses_elevated_backend(
@@ -392,11 +402,10 @@ pub fn build_exec_request(
         exec_req.windows_sandbox_level,
         exec_req.network.is_some(),
     );
-    let sandbox_policy = exec_req.compatibility_sandbox_policy();
     exec_req.windows_sandbox_filesystem_overrides = if use_windows_elevated_backend {
         resolve_windows_elevated_filesystem_overrides(
             exec_req.sandbox,
-            &sandbox_policy,
+            &exec_req.permission_profile,
             &exec_req.file_system_sandbox_policy,
             exec_req.network_sandbox_policy,
             sandbox_cwd,
@@ -405,7 +414,7 @@ pub fn build_exec_request(
     } else {
         resolve_windows_restricted_token_filesystem_overrides(
             exec_req.sandbox,
-            &sandbox_policy,
+            &exec_req.permission_profile,
             &exec_req.file_system_sandbox_policy,
             exec_req.network_sandbox_policy,
             sandbox_cwd,
@@ -421,7 +430,6 @@ pub(crate) async fn execute_exec_request(
     stdout_stream: Option<StdoutStream>,
     after_spawn: Option<Box<dyn FnOnce() + Send>>,
 ) -> Result<ExecToolCallOutput> {
-    let sandbox_policy = exec_request.compatibility_sandbox_policy();
     let ExecRequest {
         command,
         cwd,
@@ -431,11 +439,11 @@ pub(crate) async fn execute_exec_request(
         expiration,
         capture_policy,
         sandbox,
-        windows_sandbox_policy_cwd: _,
+        windows_sandbox_policy_cwd,
         windows_sandbox_level,
         windows_sandbox_private_desktop,
-        permission_profile: _,
-        file_system_sandbox_policy: _,
+        permission_profile,
+        file_system_sandbox_policy,
         network_sandbox_policy,
         windows_sandbox_filesystem_overrides,
         arg0,
@@ -456,38 +464,46 @@ pub(crate) async fn execute_exec_request(
     };
 
     let start = Instant::now();
-    let raw_output_result = get_raw_output_result(
-        params,
-        network_sandbox_policy,
-        stdout_stream,
-        after_spawn,
+    let sandbox_context = RawExecSandboxContext {
         sandbox,
-        &sandbox_policy,
-        windows_sandbox_filesystem_overrides.as_ref(),
-    )
-    .await;
+        permission_profile: &permission_profile,
+        file_system_sandbox_policy: &file_system_sandbox_policy,
+        network_sandbox_policy,
+        sandbox_policy_cwd: &windows_sandbox_policy_cwd,
+        windows_sandbox_filesystem_overrides: windows_sandbox_filesystem_overrides.as_ref(),
+    };
+    let raw_output_result =
+        get_raw_output_result(params, stdout_stream, after_spawn, sandbox_context).await;
     let duration = start.elapsed();
     finalize_exec_result(raw_output_result, sandbox, duration)
 }
 
 async fn get_raw_output_result(
     params: ExecParams,
-    network_sandbox_policy: NetworkSandboxPolicy,
     stdout_stream: Option<StdoutStream>,
     after_spawn: Option<Box<dyn FnOnce() + Send>>,
-    #[cfg_attr(not(windows), allow(unused_variables))] sandbox: SandboxType,
-    #[cfg_attr(not(windows), allow(unused_variables))] sandbox_policy: &SandboxPolicy,
-    #[cfg_attr(not(windows), allow(unused_variables))] windows_sandbox_filesystem_overrides: Option<
-        &WindowsSandboxFilesystemOverrides,
-    >,
+    sandbox_context: RawExecSandboxContext<'_>,
 ) -> Result<RawExecToolCallOutput> {
     #[cfg(target_os = "windows")]
-    if sandbox == SandboxType::WindowsRestrictedToken {
-        return exec_windows_sandbox(params, sandbox_policy, windows_sandbox_filesystem_overrides)
-            .await;
+    if sandbox_context.sandbox == SandboxType::WindowsRestrictedToken {
+        return exec_windows_sandbox(
+            params,
+            sandbox_context.permission_profile,
+            sandbox_context.file_system_sandbox_policy,
+            sandbox_context.network_sandbox_policy,
+            sandbox_context.sandbox_policy_cwd,
+            sandbox_context.windows_sandbox_filesystem_overrides,
+        )
+        .await;
     }
 
-    exec(params, network_sandbox_policy, stdout_stream, after_spawn).await
+    exec(
+        params,
+        sandbox_context.network_sandbox_policy,
+        stdout_stream,
+        after_spawn,
+    )
+    .await
 }
 
 #[cfg(target_os = "windows")]
@@ -559,7 +575,10 @@ fn record_windows_sandbox_spawn_failure(
 #[cfg(target_os = "windows")]
 async fn exec_windows_sandbox(
     params: ExecParams,
-    sandbox_policy: &SandboxPolicy,
+    permission_profile: &PermissionProfile,
+    file_system_sandbox_policy: &FileSystemSandboxPolicy,
+    network_sandbox_policy: NetworkSandboxPolicy,
+    sandbox_policy_cwd: &AbsolutePathBuf,
     windows_sandbox_filesystem_overrides: Option<&WindowsSandboxFilesystemOverrides>,
 ) -> Result<RawExecToolCallOutput> {
     use crate::config::find_codex_home;
@@ -589,7 +608,13 @@ async fn exec_windows_sandbox(
         None
     };
 
-    let policy_str = serde_json::to_string(sandbox_policy).map_err(|err| {
+    let sandbox_policy = compatibility_sandbox_policy_for_permission_profile(
+        permission_profile,
+        file_system_sandbox_policy,
+        network_sandbox_policy,
+        sandbox_policy_cwd,
+    );
+    let policy_str = serde_json::to_string(&sandbox_policy).map_err(|err| {
         CodexErr::Io(io::Error::other(format!(
             "failed to serialize Windows sandbox policy: {err}"
         )))
@@ -969,21 +994,16 @@ async fn exec(
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn should_use_windows_restricted_token_sandbox(
     sandbox: SandboxType,
-    sandbox_policy: &SandboxPolicy,
     file_system_sandbox_policy: &FileSystemSandboxPolicy,
 ) -> bool {
     sandbox == SandboxType::WindowsRestrictedToken
         && file_system_sandbox_policy.kind == FileSystemSandboxKind::Restricted
-        && !matches!(
-            sandbox_policy,
-            SandboxPolicy::DangerFullAccess | SandboxPolicy::ExternalSandbox { .. }
-        )
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn unsupported_windows_restricted_token_sandbox_reason(
     sandbox: SandboxType,
-    sandbox_policy: &SandboxPolicy,
+    permission_profile: &PermissionProfile,
     file_system_sandbox_policy: &FileSystemSandboxPolicy,
     network_sandbox_policy: NetworkSandboxPolicy,
     sandbox_policy_cwd: &AbsolutePathBuf,
@@ -992,7 +1012,7 @@ pub(crate) fn unsupported_windows_restricted_token_sandbox_reason(
     if windows_sandbox_level == WindowsSandboxLevel::Elevated {
         resolve_windows_elevated_filesystem_overrides(
             sandbox,
-            sandbox_policy,
+            permission_profile,
             file_system_sandbox_policy,
             network_sandbox_policy,
             sandbox_policy_cwd,
@@ -1002,7 +1022,7 @@ pub(crate) fn unsupported_windows_restricted_token_sandbox_reason(
     } else {
         resolve_windows_restricted_token_filesystem_overrides(
             sandbox,
-            sandbox_policy,
+            permission_profile,
             file_system_sandbox_policy,
             network_sandbox_policy,
             sandbox_policy_cwd,
@@ -1014,7 +1034,7 @@ pub(crate) fn unsupported_windows_restricted_token_sandbox_reason(
 
 pub(crate) fn resolve_windows_restricted_token_filesystem_overrides(
     sandbox: SandboxType,
-    sandbox_policy: &SandboxPolicy,
+    permission_profile: &PermissionProfile,
     file_system_sandbox_policy: &FileSystemSandboxPolicy,
     network_sandbox_policy: NetworkSandboxPolicy,
     sandbox_policy_cwd: &AbsolutePathBuf,
@@ -1029,22 +1049,15 @@ pub(crate) fn resolve_windows_restricted_token_filesystem_overrides(
     let needs_direct_runtime_enforcement = file_system_sandbox_policy
         .needs_direct_runtime_enforcement(network_sandbox_policy, sandbox_policy_cwd);
 
-    if should_use_windows_restricted_token_sandbox(
-        sandbox,
-        sandbox_policy,
-        file_system_sandbox_policy,
-    ) && !needs_direct_runtime_enforcement
+    if should_use_windows_restricted_token_sandbox(sandbox, file_system_sandbox_policy)
+        && !needs_direct_runtime_enforcement
     {
         return Ok(None);
     }
 
-    if !should_use_windows_restricted_token_sandbox(
-        sandbox,
-        sandbox_policy,
-        file_system_sandbox_policy,
-    ) {
+    if !should_use_windows_restricted_token_sandbox(sandbox, file_system_sandbox_policy) {
         return Err(format!(
-            "windows sandbox backend cannot enforce file_system={:?}, network={network_sandbox_policy:?}, legacy_policy={sandbox_policy:?}; refusing to run unsandboxed",
+            "windows sandbox backend cannot enforce file_system={:?}, network={network_sandbox_policy:?}, permission_profile={permission_profile:?}; refusing to run unsandboxed",
             file_system_sandbox_policy.kind,
         ));
     }
@@ -1069,7 +1082,14 @@ pub(crate) fn resolve_windows_restricted_token_filesystem_overrides(
         );
     }
 
-    let legacy_writable_roots = sandbox_policy.get_writable_roots_with_cwd(sandbox_policy_cwd);
+    let legacy_sandbox_policy = compatibility_sandbox_policy_for_permission_profile(
+        permission_profile,
+        file_system_sandbox_policy,
+        network_sandbox_policy,
+        sandbox_policy_cwd,
+    );
+    let legacy_writable_roots =
+        legacy_sandbox_policy.get_writable_roots_with_cwd(sandbox_policy_cwd);
     let split_writable_roots =
         file_system_sandbox_policy.get_writable_roots_with_cwd(sandbox_policy_cwd);
     let legacy_root_paths: BTreeSet<PathBuf> = legacy_writable_roots
@@ -1154,7 +1174,7 @@ fn normalize_windows_override_path(path: &Path) -> std::result::Result<PathBuf, 
 
 pub(crate) fn resolve_windows_elevated_filesystem_overrides(
     sandbox: SandboxType,
-    sandbox_policy: &SandboxPolicy,
+    permission_profile: &PermissionProfile,
     file_system_sandbox_policy: &FileSystemSandboxPolicy,
     network_sandbox_policy: NetworkSandboxPolicy,
     sandbox_policy_cwd: &AbsolutePathBuf,
@@ -1164,13 +1184,9 @@ pub(crate) fn resolve_windows_elevated_filesystem_overrides(
         return Ok(None);
     }
 
-    if !should_use_windows_restricted_token_sandbox(
-        sandbox,
-        sandbox_policy,
-        file_system_sandbox_policy,
-    ) {
+    if !should_use_windows_restricted_token_sandbox(sandbox, file_system_sandbox_policy) {
         return Err(format!(
-            "windows sandbox backend cannot enforce file_system={:?}, network={network_sandbox_policy:?}, legacy_policy={sandbox_policy:?}; refusing to run unsandboxed",
+            "windows sandbox backend cannot enforce file_system={:?}, network={network_sandbox_policy:?}, permission_profile={permission_profile:?}; refusing to run unsandboxed",
             file_system_sandbox_policy.kind,
         ));
     }
@@ -1200,7 +1216,14 @@ pub(crate) fn resolve_windows_elevated_filesystem_overrides(
     let needs_direct_runtime_enforcement = file_system_sandbox_policy
         .needs_direct_runtime_enforcement(network_sandbox_policy, sandbox_policy_cwd);
     let normalize_path = |path: PathBuf| dunce::canonicalize(&path).unwrap_or(path);
-    let legacy_writable_roots = sandbox_policy.get_writable_roots_with_cwd(sandbox_policy_cwd);
+    let legacy_sandbox_policy = compatibility_sandbox_policy_for_permission_profile(
+        permission_profile,
+        file_system_sandbox_policy,
+        network_sandbox_policy,
+        sandbox_policy_cwd,
+    );
+    let legacy_writable_roots =
+        legacy_sandbox_policy.get_writable_roots_with_cwd(sandbox_policy_cwd);
     let legacy_root_paths: BTreeSet<PathBuf> = legacy_writable_roots
         .iter()
         .map(|root| normalize_path(root.root.to_path_buf()))

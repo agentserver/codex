@@ -204,6 +204,9 @@ pub enum ShellModelOutput {
 
 /// Returns the permission fields required by `Op::UserTurn` for tests that
 /// construct the op directly.
+///
+/// The legacy sandbox field is intentionally omitted when a canonical
+/// `PermissionProfile` is available.
 pub fn turn_permission_fields(
     permission_profile: PermissionProfile,
     _cwd: &Path,

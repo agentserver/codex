@@ -1,5 +1,6 @@
 use super::*;
 use crate::tools::sandboxing::SandboxAttempt;
+use codex_exec_server::LOCAL_FS;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::FileSystemPermissions;
@@ -50,6 +51,7 @@ fn guardian_review_request_includes_patch_context() {
     let expected_patch = action.patch.clone();
     let request = ApplyPatchRequest {
         action,
+        file_system: LOCAL_FS.clone(),
         file_paths: vec![path.clone()],
         changes: HashMap::from([(
             path.to_path_buf(),
@@ -88,6 +90,7 @@ fn permission_request_payload_uses_apply_patch_hook_name_and_aliases() {
     let expected_patch = action.patch.clone();
     let req = ApplyPatchRequest {
         action,
+        file_system: LOCAL_FS.clone(),
         file_paths: vec![path],
         changes: HashMap::new(),
         exec_approval_requirement: ExecApprovalRequirement::NeedsApproval {
@@ -127,6 +130,7 @@ fn file_system_sandbox_context_uses_active_attempt() {
     };
     let req = ApplyPatchRequest {
         action: ApplyPatchAction::new_add_for_test(&path, "hello".to_string()),
+        file_system: LOCAL_FS.clone(),
         file_paths: vec![path.clone()],
         changes: HashMap::new(),
         exec_approval_requirement: ExecApprovalRequirement::Skip {
@@ -184,6 +188,7 @@ fn no_sandbox_attempt_has_no_file_system_context() {
         .abs();
     let req = ApplyPatchRequest {
         action: ApplyPatchAction::new_add_for_test(&path, "hello".to_string()),
+        file_system: LOCAL_FS.clone(),
         file_paths: vec![path.clone()],
         changes: HashMap::new(),
         exec_approval_requirement: ExecApprovalRequirement::Skip {

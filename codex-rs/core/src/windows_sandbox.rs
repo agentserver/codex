@@ -10,7 +10,6 @@ use codex_login::default_client::originator;
 use codex_otel::sanitize_metric_tag_value;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::PermissionProfile;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_sandboxing::compatibility_sandbox_policy_for_permission_profile;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -56,6 +55,19 @@ pub fn windows_sandbox_level_from_config(config: &Config) -> WindowsSandboxLevel
 
 pub fn windows_sandbox_level_from_features(features: &Features) -> WindowsSandboxLevel {
     WindowsSandboxLevel::from_features(features)
+}
+
+fn compatibility_windows_sandbox_policy(
+    permission_profile: &PermissionProfile,
+    policy_cwd: &Path,
+) -> codex_protocol::protocol::SandboxPolicy {
+    let file_system_policy = permission_profile.file_system_sandbox_policy();
+    compatibility_sandbox_policy_for_permission_profile(
+        permission_profile,
+        &file_system_policy,
+        permission_profile.network_sandbox_policy(),
+        policy_cwd,
+    )
 }
 
 pub fn resolve_windows_sandbox_mode(
@@ -175,15 +187,16 @@ pub fn elevated_setup_failure_metric_name(_err: &anyhow::Error) -> &'static str 
 
 #[cfg(target_os = "windows")]
 pub fn run_elevated_setup(
-    policy: &SandboxPolicy,
+    permission_profile: &PermissionProfile,
     policy_cwd: &Path,
     command_cwd: &Path,
     env_map: &HashMap<String, String>,
     codex_home: &Path,
 ) -> anyhow::Result<()> {
+    let policy = compatibility_windows_sandbox_policy(permission_profile, policy_cwd);
     codex_windows_sandbox::run_elevated_setup(
         codex_windows_sandbox::SandboxSetupRequest {
-            policy,
+            policy: &policy,
             policy_cwd,
             command_cwd,
             env_map,
@@ -196,7 +209,7 @@ pub fn run_elevated_setup(
 
 #[cfg(not(target_os = "windows"))]
 pub fn run_elevated_setup(
-    _policy: &SandboxPolicy,
+    _permission_profile: &PermissionProfile,
     _policy_cwd: &Path,
     _command_cwd: &Path,
     _env_map: &HashMap<String, String>,
@@ -207,14 +220,15 @@ pub fn run_elevated_setup(
 
 #[cfg(target_os = "windows")]
 pub fn run_legacy_setup_preflight(
-    policy: &SandboxPolicy,
+    permission_profile: &PermissionProfile,
     policy_cwd: &Path,
     command_cwd: &Path,
     env_map: &HashMap<String, String>,
     codex_home: &Path,
 ) -> anyhow::Result<()> {
+    let policy = compatibility_windows_sandbox_policy(permission_profile, policy_cwd);
     codex_windows_sandbox::run_windows_sandbox_legacy_preflight(
-        policy,
+        &policy,
         policy_cwd,
         codex_home,
         command_cwd,
@@ -224,15 +238,16 @@ pub fn run_legacy_setup_preflight(
 
 #[cfg(target_os = "windows")]
 pub fn run_setup_refresh_with_extra_read_roots(
-    policy: &SandboxPolicy,
+    permission_profile: &PermissionProfile,
     policy_cwd: &Path,
     command_cwd: &Path,
     env_map: &HashMap<String, String>,
     codex_home: &Path,
     extra_read_roots: Vec<PathBuf>,
 ) -> anyhow::Result<()> {
+    let policy = compatibility_windows_sandbox_policy(permission_profile, policy_cwd);
     codex_windows_sandbox::run_setup_refresh_with_extra_read_roots(
-        policy,
+        &policy,
         policy_cwd,
         command_cwd,
         env_map,
@@ -244,7 +259,7 @@ pub fn run_setup_refresh_with_extra_read_roots(
 
 #[cfg(not(target_os = "windows"))]
 pub fn run_legacy_setup_preflight(
-    _policy: &SandboxPolicy,
+    _permission_profile: &PermissionProfile,
     _policy_cwd: &Path,
     _command_cwd: &Path,
     _env_map: &HashMap<String, String>,
@@ -255,7 +270,7 @@ pub fn run_legacy_setup_preflight(
 
 #[cfg(not(target_os = "windows"))]
 pub fn run_setup_refresh_with_extra_read_roots(
-    _policy: &SandboxPolicy,
+    _permission_profile: &PermissionProfile,
     _policy_cwd: &Path,
     _command_cwd: &Path,
     _env_map: &HashMap<String, String>,
@@ -263,6 +278,24 @@ pub fn run_setup_refresh_with_extra_read_roots(
     _extra_read_roots: Vec<PathBuf>,
 ) -> anyhow::Result<()> {
     anyhow::bail!("Windows sandbox read-root refresh is only supported on Windows")
+}
+
+pub fn apply_world_writable_scan_and_denies(
+    logs_base_dir: &Path,
+    cwd: &Path,
+    env_map: &HashMap<String, String>,
+    permission_profile: &PermissionProfile,
+    policy_cwd: &Path,
+    audit_dir: Option<&Path>,
+) -> anyhow::Result<()> {
+    let policy = compatibility_windows_sandbox_policy(permission_profile, policy_cwd);
+    codex_windows_sandbox::apply_world_writable_scan_and_denies(
+        logs_base_dir,
+        cwd,
+        env_map,
+        &policy,
+        audit_dir,
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -320,20 +353,13 @@ async fn run_windows_sandbox_setup_and_persist(
     let codex_home = request.codex_home;
     let active_profile = request.active_profile;
     let setup_codex_home = codex_home.clone();
-    let file_system_sandbox_policy = permission_profile.file_system_sandbox_policy();
-    let policy = compatibility_sandbox_policy_for_permission_profile(
-        &permission_profile,
-        &file_system_sandbox_policy,
-        permission_profile.network_sandbox_policy(),
-        policy_cwd.as_path(),
-    );
 
     let setup_result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         match mode {
             WindowsSandboxSetupMode::Elevated => {
                 if !sandbox_setup_is_complete(setup_codex_home.as_path()) {
                     run_elevated_setup(
-                        &policy,
+                        &permission_profile,
                         policy_cwd.as_path(),
                         command_cwd.as_path(),
                         &env_map,
@@ -343,7 +369,7 @@ async fn run_windows_sandbox_setup_and_persist(
             }
             WindowsSandboxSetupMode::Unelevated => {
                 run_legacy_setup_preflight(
-                    &policy,
+                    &permission_profile,
                     policy_cwd.as_path(),
                     command_cwd.as_path(),
                     &env_map,

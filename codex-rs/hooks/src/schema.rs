@@ -313,7 +313,6 @@ pub(crate) struct PreCompactCommandInput {
     pub model: String,
     #[schemars(schema_with = "compaction_trigger_schema")]
     pub trigger: String,
-    pub custom_instructions: String,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]

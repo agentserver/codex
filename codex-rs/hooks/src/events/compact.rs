@@ -26,7 +26,6 @@ pub struct PreCompactRequest {
     pub transcript_path: Option<PathBuf>,
     pub model: String,
     pub trigger: String,
-    pub custom_instructions: String,
 }
 
 #[derive(Debug, Clone)]
@@ -141,7 +140,6 @@ fn pre_command_input_json(request: &PreCompactRequest) -> Result<String, serde_j
         hook_event_name: "PreCompact".to_string(),
         model: request.model.clone(),
         trigger: request.trigger.clone(),
-        custom_instructions: request.custom_instructions.clone(),
     })
 }
 
@@ -493,7 +491,6 @@ mod tests {
                 "hook_event_name": "PreCompact",
                 "model": "gpt-test",
                 "trigger": "manual",
-                "custom_instructions": "",
             })
         );
     }
@@ -628,7 +625,6 @@ mod tests {
             transcript_path: None,
             model: "gpt-test".to_string(),
             trigger: "manual".to_string(),
-            custom_instructions: String::new(),
         }
     }
 

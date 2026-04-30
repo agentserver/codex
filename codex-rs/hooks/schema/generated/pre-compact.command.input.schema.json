@@ -10,9 +10,6 @@
     }
   },
   "properties": {
-    "custom_instructions": {
-      "type": "string"
-    },
     "cwd": {
       "type": "string"
     },
@@ -42,7 +39,6 @@
     }
   },
   "required": [
-    "custom_instructions",
     "cwd",
     "hook_event_name",
     "model",

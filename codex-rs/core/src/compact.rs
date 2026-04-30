@@ -136,8 +136,7 @@ async fn run_compact_task_inner(
         phase,
     )
     .await;
-    let pre_compact_outcome =
-        run_pre_compact_hooks(&sess, &turn_context, trigger, String::new()).await;
+    let pre_compact_outcome = run_pre_compact_hooks(&sess, &turn_context, trigger).await;
     match pre_compact_outcome {
         PreCompactHookOutcome::Continue => {}
         PreCompactHookOutcome::Stopped { reason } => {

@@ -255,7 +255,6 @@ pub(crate) async fn run_pre_compact_hooks(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     trigger: CompactionTrigger,
-    custom_instructions: String,
 ) -> PreCompactHookOutcome {
     let request = codex_hooks::PreCompactRequest {
         session_id: sess.conversation_id,
@@ -264,7 +263,6 @@ pub(crate) async fn run_pre_compact_hooks(
         transcript_path: sess.hook_transcript_path().await,
         model: turn_context.model_info.slug.clone(),
         trigger: compaction_trigger_label(trigger).to_string(),
-        custom_instructions,
     };
     let preview_runs = sess.hooks().preview_pre_compact(&request);
     emit_hook_started_events(sess, turn_context, preview_runs).await;

@@ -617,7 +617,6 @@ async fn manual_pre_compact_hook_blocks_compaction() {
     let input = &hook_inputs[0];
     assert_eq!(input["hook_event_name"], "PreCompact");
     assert_eq!(input["trigger"], "manual");
-    assert_eq!(input["custom_instructions"], "");
     assert!(input.get("reason").is_none());
     assert!(input.get("phase").is_none());
     assert!(input.get("implementation").is_none());

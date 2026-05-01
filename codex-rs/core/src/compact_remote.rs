@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::Prompt;
+use crate::client::CompactConversationOptions;
 use crate::compact::CompactionAnalyticsAttempt;
 use crate::compact::InitialContextInjection;
 use crate::compact::compaction_status_from_result;
@@ -118,8 +119,10 @@ pub(crate) async fn run_remote_prefix_compact_task(
             turn_context.reasoning_effort,
             turn_context.reasoning_summary,
             &turn_context.session_telemetry,
-            Some(PREFIX_COMPACTION_MODE),
-            &compaction_trace,
+            CompactConversationOptions {
+                mode: Some(PREFIX_COMPACTION_MODE),
+                compaction_trace: &compaction_trace,
+            },
         )
         .or_else(|err| async {
             let total_usage_breakdown = sess.get_total_token_usage_breakdown().await;
@@ -232,8 +235,10 @@ async fn run_remote_compact_task_inner_impl(
             turn_context.reasoning_effort,
             turn_context.reasoning_summary,
             &turn_context.session_telemetry,
-            /*mode*/ None,
-            &compaction_trace,
+            CompactConversationOptions {
+                mode: None,
+                compaction_trace: &compaction_trace,
+            },
         )
         .or_else(|err| async {
             let total_usage_breakdown = sess.get_total_token_usage_breakdown().await;

@@ -202,6 +202,11 @@ pub struct ModelClient {
     state: Arc<ModelClientState>,
 }
 
+pub(crate) struct CompactConversationOptions<'a> {
+    pub(crate) mode: Option<&'static str>,
+    pub(crate) compaction_trace: &'a CompactionTraceContext,
+}
+
 /// A turn-scoped streaming session created from a [`ModelClient`].
 ///
 /// The session establishes a Responses WebSocket connection lazily and reuses it across multiple
@@ -409,15 +414,14 @@ impl ModelClient {
     ///
     /// The model selection and telemetry context are passed explicitly to keep `ModelClient`
     /// session-scoped.
-    pub async fn compact_conversation_history(
+    pub(crate) async fn compact_conversation_history(
         &self,
         prompt: &Prompt,
         model_info: &ModelInfo,
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
         session_telemetry: &SessionTelemetry,
-        mode: Option<&'static str>,
-        compaction_trace: &CompactionTraceContext,
+        options: CompactConversationOptions<'_>,
     ) -> Result<Vec<ResponseItem>> {
         if prompt.input.is_empty() {
             return Ok(Vec::new());
@@ -466,7 +470,7 @@ impl ModelClient {
             parallel_tool_calls: prompt.parallel_tool_calls,
             reasoning,
             text,
-            mode,
+            mode: options.mode,
         };
 
         let mut extra_headers = ApiHeaderMap::new();
@@ -477,7 +481,7 @@ impl ModelClient {
         extra_headers.extend(build_conversation_headers(Some(
             self.state.conversation_id.to_string(),
         )));
-        let trace_attempt = compaction_trace.start_attempt(&payload);
+        let trace_attempt = options.compaction_trace.start_attempt(&payload);
         let result = client
             .compact_input(&payload, extra_headers)
             .await

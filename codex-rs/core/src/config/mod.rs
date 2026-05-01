@@ -15,7 +15,6 @@ use codex_config::ConfigRequirements;
 use codex_config::ConfigRequirementsToml;
 use codex_config::ConstrainedWithSource;
 use codex_config::FeatureRequirementsToml;
-use codex_config::LoaderOverrides;
 use codex_config::McpServerIdentity;
 use codex_config::McpServerRequirement;
 use codex_config::PluginRequirementsToml;
@@ -54,6 +53,7 @@ use codex_config::types::TuiKeymap;
 use codex_config::types::TuiNotificationSettings;
 use codex_config::types::UriBasedFileOpener;
 use codex_config::types::WindowsSandboxModeToml;
+use codex_core_plugins::PluginsConfigInput;
 use codex_exec_server::ExecutorFileSystem;
 use codex_exec_server::LOCAL_FS;
 use codex_features::AppsMcpPathOverrideConfigToml;
@@ -128,6 +128,7 @@ mod schema;
 pub use codex_config::Constrained;
 pub use codex_config::ConstraintError;
 pub use codex_config::ConstraintResult;
+pub use codex_config::LoaderOverrides;
 pub use codex_network_proxy::NetworkProxyAuditMetadata;
 use codex_sandboxing::compatibility_sandbox_policy_for_permission_profile;
 pub use codex_sandboxing::system_bwrap_warning;
@@ -375,8 +376,7 @@ pub enum ThreadStoreConfig {
     Local,
     /// Persist threads through the remote thread-store service.
     Remote { endpoint: String },
-    /// Test-only in-memory thread store.
-    #[cfg(debug_assertions)]
+    /// In-memory thread store for test and debug configurations.
     InMemory { id: String },
 }
 
@@ -506,6 +506,9 @@ pub struct Config {
 
     /// Persisted startup availability NUX state for model tooltips.
     pub model_availability_nux: ModelAvailabilityNuxConfig,
+
+    /// Start the composer in Vim mode (`Normal`) by default.
+    pub tui_vim_mode_default: bool,
 
     /// Start the TUI in the specified collaboration mode (plan/default).
 
@@ -996,11 +999,23 @@ impl Config {
         }
     }
 
+    /// Build the plugin-manager input from the effective config.
+    pub fn plugins_config_input(&self) -> PluginsConfigInput {
+        PluginsConfigInput::new(
+            self.config_layer_stack.clone(),
+            self.features.enabled(Feature::Plugins),
+            self.features.enabled(Feature::RemotePlugin),
+            self.features.enabled(Feature::PluginHooks),
+            self.chatgpt_base_url.clone(),
+        )
+    }
+
     pub async fn to_mcp_config(
         &self,
-        plugins_manager: &crate::plugins::PluginsManager,
+        plugins_manager: &codex_core_plugins::PluginsManager,
     ) -> McpConfig {
-        let loaded_plugins = plugins_manager.plugins_for_config(self).await;
+        let plugins_input = self.plugins_config_input();
+        let loaded_plugins = plugins_manager.plugins_for_config(&plugins_input).await;
         let mut configured_mcp_servers = self.mcp_servers.get().clone();
         for plugin in loaded_plugins
             .plugins()
@@ -1049,6 +1064,17 @@ impl Config {
     ) -> std::io::Result<Self> {
         ConfigBuilder::default()
             .cli_overrides(cli_overrides)
+            .build()
+            .await
+    }
+
+    pub async fn load_with_cli_overrides_and_loader_overrides(
+        cli_overrides: Vec<(String, TomlValue)>,
+        loader_overrides: LoaderOverrides,
+    ) -> std::io::Result<Self> {
+        ConfigBuilder::default()
+            .cli_overrides(cli_overrides)
+            .loader_overrides(loader_overrides)
             .build()
             .await
     }
@@ -1586,7 +1612,6 @@ fn thread_store_config(
     match thread_store {
         Some(ThreadStoreToml::Local {}) => ThreadStoreConfig::Local,
         Some(ThreadStoreToml::Remote { endpoint }) => ThreadStoreConfig::Remote { endpoint },
-        #[cfg(debug_assertions)]
         Some(ThreadStoreToml::InMemory { id }) => ThreadStoreConfig::InMemory { id },
         None => legacy_remote_endpoint.map_or(ThreadStoreConfig::Local, |endpoint| {
             ThreadStoreConfig::Remote { endpoint }
@@ -1962,7 +1987,10 @@ impl Config {
 
         let user_instructions = AgentsMdManager::load_global_instructions(Some(&codex_home))
             .map(|loaded| loaded.contents);
-        let mut startup_warnings = Vec::new();
+        let mut startup_warnings = config_layer_stack
+            .startup_warnings()
+            .unwrap_or_default()
+            .to_vec();
 
         // Destructure ConfigOverrides fully to ensure all overrides are applied.
         let ConfigOverrides {
@@ -2983,6 +3011,11 @@ impl Config {
                 .as_ref()
                 .map(|t| t.model_availability_nux.clone())
                 .unwrap_or_default(),
+            tui_vim_mode_default: cfg
+                .tui
+                .as_ref()
+                .map(|t| t.vim_mode_default)
+                .unwrap_or(false),
             tui_alternate_screen: cfg
                 .tui
                 .as_ref()

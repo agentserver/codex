@@ -8,7 +8,6 @@ use crate::environment_selection::selected_primary_environment;
 use crate::environment_selection::validate_environment_selections;
 use crate::file_watcher::FileWatcher;
 use crate::mcp::McpManager;
-use crate::plugins::PluginsManager;
 use crate::rollout::RolloutRecorder;
 use crate::rollout::truncation;
 use crate::session::Codex;
@@ -23,6 +22,7 @@ use crate::tasks::interrupted_turn_history_marker;
 use codex_analytics::AnalyticsEventsClient;
 use codex_app_server_protocol::ThreadHistoryBuilder;
 use codex_app_server_protocol::TurnStatus;
+use codex_core_plugins::PluginsManager;
 use codex_exec_server::EnvironmentManager;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
@@ -52,7 +52,6 @@ use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_rollout::RolloutConfig;
 use codex_state::DirectionalThreadSpawnEdgeStatus;
-#[cfg(debug_assertions)]
 use codex_thread_store::InMemoryThreadStore;
 use codex_thread_store::LocalThreadStore;
 use codex_thread_store::RemoteThreadStore;
@@ -268,7 +267,6 @@ pub fn thread_store_from_config(config: &Config) -> Arc<dyn ThreadStore> {
             Arc::new(LocalThreadStore::new(RolloutConfig::from_view(config)))
         }
         ThreadStoreConfig::Remote { endpoint } => Arc::new(RemoteThreadStore::new(endpoint)),
-        #[cfg(debug_assertions)]
         ThreadStoreConfig::InMemory { id } => InMemoryThreadStore::for_id(id),
     }
 }

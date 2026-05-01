@@ -4,8 +4,8 @@ use anyhow::bail;
 use clap::Parser;
 use codex_core::config::Config;
 use codex_core::config::find_codex_home;
-use codex_core::plugins::PluginMarketplaceUpgradeOutcome;
-use codex_core::plugins::PluginsManager;
+use codex_core_plugins::PluginMarketplaceUpgradeOutcome;
+use codex_core_plugins::PluginsManager;
 use codex_core_plugins::marketplace_add::MarketplaceAddRequest;
 use codex_core_plugins::marketplace_add::add_marketplace;
 use codex_core_plugins::marketplace_remove::MarketplaceRemoveRequest;
@@ -70,10 +70,16 @@ impl MarketplaceCli {
         let overrides = config_overrides
             .parse_overrides()
             .map_err(anyhow::Error::msg)?;
+        let loader_overrides = codex_config::LoaderOverrides {
+            strict_config: config_overrides.strict_config,
+            ..Default::default()
+        };
 
         match subcommand {
             MarketplaceSubcommand::Add(args) => run_add(args).await?,
-            MarketplaceSubcommand::Upgrade(args) => run_upgrade(overrides, args).await?,
+            MarketplaceSubcommand::Upgrade(args) => {
+                run_upgrade(overrides, loader_overrides, args).await?
+            }
             MarketplaceSubcommand::Remove(args) => run_remove(args).await?,
         }
 
@@ -120,16 +126,18 @@ async fn run_add(args: AddMarketplaceArgs) -> Result<()> {
 
 async fn run_upgrade(
     overrides: Vec<(String, toml::Value)>,
+    loader_overrides: codex_config::LoaderOverrides,
     args: UpgradeMarketplaceArgs,
 ) -> Result<()> {
     let UpgradeMarketplaceArgs { marketplace_name } = args;
-    let config = Config::load_with_cli_overrides(overrides)
+    let config = Config::load_with_cli_overrides_and_loader_overrides(overrides, loader_overrides)
         .await
         .context("failed to load configuration")?;
     let codex_home = find_codex_home().context("failed to resolve CODEX_HOME")?;
     let manager = PluginsManager::new(codex_home.to_path_buf());
+    let plugins_input = config.plugins_config_input();
     let outcome = manager
-        .upgrade_configured_marketplaces_for_config(&config, marketplace_name.as_deref())
+        .upgrade_configured_marketplaces_for_config(&plugins_input, marketplace_name.as_deref())
         .map_err(anyhow::Error::msg)?;
     print_upgrade_outcome(&outcome, marketplace_name.as_deref())
 }

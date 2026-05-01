@@ -399,6 +399,7 @@ async fn enqueue_primary_thread_session_replays_turns_before_initial_prompt_subm
         feedback: codex_feedback::CodexFeedback::new(),
         is_first_run: false,
         status_account_display: None,
+        runtime_model_provider_base_url: None,
         initial_plan_type: None,
         model: Some(model),
         startup_tooltip_override: None,
@@ -3770,6 +3771,7 @@ async fn make_test_app() -> App {
         pending_primary_events: VecDeque::new(),
         pending_app_server_requests: PendingAppServerRequests::default(),
         pending_plugin_enabled_writes: HashMap::new(),
+        pending_hook_enabled_writes: HashMap::new(),
     }
 }
 
@@ -3830,6 +3832,7 @@ async fn make_test_app_with_channels() -> (
             pending_primary_events: VecDeque::new(),
             pending_app_server_requests: PendingAppServerRequests::default(),
             pending_plugin_enabled_writes: HashMap::new(),
+            pending_hook_enabled_writes: HashMap::new(),
         },
         rx,
         op_rx,
@@ -4669,6 +4672,10 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
         feedback: app.feedback.clone(),
         is_first_run: false,
         status_account_display: app.chat_widget.status_account_display().cloned(),
+        runtime_model_provider_base_url: app
+            .chat_widget
+            .runtime_model_provider_base_url()
+            .map(str::to_string),
         initial_plan_type: app.chat_widget.current_plan_type(),
         model: Some(app.chat_widget.current_model().to_string()),
         startup_tooltip_override: None,
@@ -5070,6 +5077,32 @@ async fn clear_only_ui_reset_preserves_chat_session_state() {
     assert!(!app.backtrack_render_pending);
     assert_eq!(app.chat_widget.thread_id(), Some(thread_id));
     assert_eq!(app.chat_widget.composer_text_with_pending(), "draft prompt");
+}
+
+#[tokio::test]
+async fn backtrack_esc_does_not_steal_empty_vim_insert_escape() {
+    let mut app = make_test_app().await;
+    let esc = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Esc, KeyModifiers::NONE);
+
+    assert!(app.chat_widget.composer_is_empty());
+    assert!(app.should_handle_backtrack_esc(esc));
+
+    app.chat_widget.toggle_vim_mode_and_notify();
+    assert!(app.should_handle_backtrack_esc(esc));
+
+    app.chat_widget
+        .handle_key_event(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('i'),
+            KeyModifiers::NONE,
+        ));
+    assert!(app.chat_widget.should_handle_vim_insert_escape(esc));
+    assert!(!app.should_handle_backtrack_esc(esc));
+
+    app.chat_widget.handle_key_event(esc);
+
+    assert!(!app.backtrack.primed);
+    assert!(!app.chat_widget.should_handle_vim_insert_escape(esc));
+    assert!(app.should_handle_backtrack_esc(esc));
 }
 
 #[tokio::test]

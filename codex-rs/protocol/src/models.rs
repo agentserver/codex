@@ -1791,7 +1791,7 @@ mod tests {
                     pattern: "**/*.env".to_string(),
                 },
                 access: FileSystemAccessMode::None,
-        }]);
+            }]);
         file_system_sandbox_policy.glob_scan_max_depth = Some(2);
         file_system_sandbox_policy.preserve_deny_read_across_escalation = true;
 

@@ -374,9 +374,7 @@ impl CoreShellActionProvider {
             .preserves_deny_read_across_escalation();
         match sandbox_permissions {
             SandboxPermissions::UseDefault => EscalationExecution::TurnDefault,
-            SandboxPermissions::RequireEscalated
-                if preserve_deny_read_across_escalation =>
-            {
+            SandboxPermissions::RequireEscalated if preserve_deny_read_across_escalation => {
                 EscalationExecution::TurnDefault
             }
             SandboxPermissions::RequireEscalated => EscalationExecution::Unsandboxed,

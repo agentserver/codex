@@ -358,13 +358,14 @@ async fn prefix_rule_preserves_managed_deny_read_escalation() -> anyhow::Result<
                     .expect("/tmp/private is absolute"),
             },
             access: FileSystemAccessMode::None,
-    });
+        });
     file_system_sandbox_policy.preserve_deny_read_across_escalation = true;
     turn_context.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
     turn_context.permission_profile = PermissionProfile::from_runtime_permissions(
         &file_system_sandbox_policy,
         NetworkSandboxPolicy::Restricted,
     );
+    let permission_profile = turn_context.permission_profile.clone();
     let workdir = AbsolutePathBuf::from_absolute_path("/tmp").context("build tmp absolute path")?;
 
     let provider = CoreShellActionProvider {
@@ -374,7 +375,7 @@ async fn prefix_rule_preserves_managed_deny_read_escalation() -> anyhow::Result<
         call_id: "managed-deny-read-prefix-rule".to_string(),
         tool_name: GuardianCommandSource::Shell,
         approval_policy: AskForApproval::OnRequest,
-        permission_profile: turn_context.permission_profile.clone(),
+        permission_profile,
         file_system_sandbox_policy,
         sandbox_policy_cwd: workdir.clone(),
         sandbox_permissions: SandboxPermissions::UseDefault,

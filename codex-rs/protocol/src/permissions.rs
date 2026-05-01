@@ -432,8 +432,7 @@ impl FileSystemSandboxPolicy {
         if self.glob_scan_max_depth.is_none() {
             self.glob_scan_max_depth = existing.glob_scan_max_depth;
         }
-        self.preserve_deny_read_across_escalation |=
-            existing.preserve_deny_read_across_escalation;
+        self.preserve_deny_read_across_escalation |= existing.preserve_deny_read_across_escalation;
 
         for deny_entry in existing
             .entries

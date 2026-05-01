@@ -235,6 +235,8 @@ use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::TurnSteerParams;
 use codex_app_server_protocol::TurnSteerResponse;
 use codex_app_server_protocol::UserInput as V2UserInput;
+use codex_app_server_protocol::WindowsSandboxReadiness;
+use codex_app_server_protocol::WindowsSandboxReadinessResponse;
 use codex_app_server_protocol::WindowsSandboxSetupCompletedNotification;
 use codex_app_server_protocol::WindowsSandboxSetupMode;
 use codex_app_server_protocol::WindowsSandboxSetupStartParams;
@@ -276,8 +278,10 @@ use codex_core::path_utils;
 use codex_core::read_head_for_summary;
 use codex_core::sandboxing::SandboxPermissions;
 use codex_core::windows_sandbox::WindowsSandboxLevelExt;
+use codex_core::windows_sandbox::WindowsSandboxReadiness as CoreWindowsSandboxReadiness;
 use codex_core::windows_sandbox::WindowsSandboxSetupMode as CoreWindowsSandboxSetupMode;
 use codex_core::windows_sandbox::WindowsSandboxSetupRequest;
+use codex_core::windows_sandbox::determine_windows_sandbox_readiness;
 use codex_core_plugins::OPENAI_CURATED_MARKETPLACE_NAME;
 use codex_core_plugins::PluginInstallError as CorePluginInstallError;
 use codex_core_plugins::PluginInstallRequest;
@@ -1281,6 +1285,13 @@ impl CodexMessageProcessor {
             }
             ClientRequest::WindowsSandboxSetupStart { request_id, params } => {
                 self.windows_sandbox_setup_start(to_connection_request_id(request_id), params)
+                    .await;
+            }
+            ClientRequest::WindowsSandboxReadiness {
+                request_id,
+                params: _,
+            } => {
+                self.read_windows_sandbox_readiness(to_connection_request_id(request_id))
                     .await;
             }
             ClientRequest::LoginAccount { request_id, params } => {
@@ -8199,6 +8210,37 @@ impl CodexMessageProcessor {
                 )
                 .await;
         });
+    }
+
+    async fn read_windows_sandbox_readiness(&self, request_id: ConnectionRequestId) {
+        let config = match self
+            .config_manager
+            .load_latest_config(/*fallback_cwd*/ None)
+            .await
+        {
+            Ok(config) => config,
+            Err(err) => {
+                self.outgoing
+                    .send_error(
+                        request_id,
+                        internal_error(format!(
+                            "failed to determine Windows sandbox readiness: {err}"
+                        )),
+                    )
+                    .await;
+                return;
+            }
+        };
+
+        let status = match determine_windows_sandbox_readiness(&config) {
+            CoreWindowsSandboxReadiness::Ready => WindowsSandboxReadiness::Ready,
+            CoreWindowsSandboxReadiness::NotConfigured => WindowsSandboxReadiness::NotConfigured,
+            CoreWindowsSandboxReadiness::UpdateRequired => WindowsSandboxReadiness::UpdateRequired,
+        };
+
+        self.outgoing
+            .send_response(request_id, WindowsSandboxReadinessResponse { status })
+            .await;
     }
 
     async fn resolve_rollout_path(

@@ -38,6 +38,50 @@ fn no_flags_means_no_sandbox() {
 }
 
 #[test]
+fn windows_sandbox_readiness_is_not_configured_when_disabled() {
+    assert_eq!(
+        determine_windows_sandbox_readiness_from_state(
+            WindowsSandboxLevel::Disabled,
+            /*elevated_setup_complete*/ false,
+        ),
+        WindowsSandboxReadiness::NotConfigured
+    );
+}
+
+#[test]
+fn windows_sandbox_readiness_is_ready_when_unelevated() {
+    assert_eq!(
+        determine_windows_sandbox_readiness_from_state(
+            WindowsSandboxLevel::RestrictedToken,
+            /*elevated_setup_complete*/ false,
+        ),
+        WindowsSandboxReadiness::Ready
+    );
+}
+
+#[test]
+fn windows_sandbox_readiness_requires_update_when_elevated_setup_is_incomplete() {
+    assert_eq!(
+        determine_windows_sandbox_readiness_from_state(
+            WindowsSandboxLevel::Elevated,
+            /*elevated_setup_complete*/ false,
+        ),
+        WindowsSandboxReadiness::UpdateRequired
+    );
+}
+
+#[test]
+fn windows_sandbox_readiness_is_ready_when_elevated_setup_is_complete() {
+    assert_eq!(
+        determine_windows_sandbox_readiness_from_state(
+            WindowsSandboxLevel::Elevated,
+            /*elevated_setup_complete*/ true,
+        ),
+        WindowsSandboxReadiness::Ready
+    );
+}
+
+#[test]
 fn elevated_wins_when_both_flags_are_enabled() {
     let mut features = Features::with_defaults();
     features.enable(Feature::WindowsSandbox);

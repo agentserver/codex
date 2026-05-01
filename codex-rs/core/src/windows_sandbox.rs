@@ -56,6 +56,41 @@ pub fn windows_sandbox_level_from_features(features: &Features) -> WindowsSandbo
     WindowsSandboxLevel::from_features(features)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowsSandboxReadiness {
+    Ready,
+    NotConfigured,
+    UpdateRequired,
+}
+
+pub fn determine_windows_sandbox_readiness(config: &Config) -> WindowsSandboxReadiness {
+    if !cfg!(target_os = "windows") {
+        return WindowsSandboxReadiness::Ready;
+    }
+
+    determine_windows_sandbox_readiness_from_state(
+        WindowsSandboxLevel::from_config(config),
+        sandbox_setup_is_complete(config.codex_home.as_path()),
+    )
+}
+
+fn determine_windows_sandbox_readiness_from_state(
+    windows_sandbox_level: WindowsSandboxLevel,
+    elevated_setup_complete: bool,
+) -> WindowsSandboxReadiness {
+    match windows_sandbox_level {
+        WindowsSandboxLevel::Disabled => WindowsSandboxReadiness::NotConfigured,
+        WindowsSandboxLevel::RestrictedToken => WindowsSandboxReadiness::Ready,
+        WindowsSandboxLevel::Elevated => {
+            if elevated_setup_complete {
+                WindowsSandboxReadiness::Ready
+            } else {
+                WindowsSandboxReadiness::UpdateRequired
+            }
+        }
+    }
+}
+
 pub fn resolve_windows_sandbox_mode(
     cfg: &ConfigToml,
     profile: &ConfigProfile,

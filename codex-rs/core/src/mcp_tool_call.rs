@@ -40,27 +40,6 @@ use codex_config::types::AppToolApproval;
 use codex_features::Feature;
 use codex_hooks::PermissionRequestDecision;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
-#[cfg(test)]
-use codex_mcp::CONNECTOR_AUTH_FAILURE_AUTH_REASON_KEY;
-#[cfg(test)]
-use codex_mcp::CONNECTOR_AUTH_FAILURE_CONNECTOR_ID_KEY;
-#[cfg(test)]
-use codex_mcp::CONNECTOR_AUTH_FAILURE_CONNECTOR_NAME_KEY;
-#[cfg(test)]
-use codex_mcp::CONNECTOR_AUTH_FAILURE_ERROR_ACTION_KEY;
-#[cfg(test)]
-use codex_mcp::CONNECTOR_AUTH_FAILURE_ERROR_CODE_KEY;
-#[cfg(test)]
-use codex_mcp::CONNECTOR_AUTH_FAILURE_ERROR_HTTP_STATUS_CODE_KEY;
-#[cfg(test)]
-use codex_mcp::CONNECTOR_AUTH_FAILURE_INSTALL_URL_KEY;
-#[cfg(test)]
-use codex_mcp::CONNECTOR_AUTH_FAILURE_IS_AUTH_FAILURE_KEY;
-#[cfg(test)]
-use codex_mcp::CONNECTOR_AUTH_FAILURE_LINK_ID_KEY;
-#[cfg(test)]
-use codex_mcp::CONNECTOR_AUTH_FAILURE_META_KEY;
-use codex_mcp::CodexAppsConnectorAuthFailure;
 use codex_mcp::MCP_TOOL_CODEX_APPS_META_KEY;
 use codex_mcp::McpPermissionPromptAutoApproveContext;
 use codex_mcp::SandboxState;
@@ -633,13 +612,33 @@ async fn maybe_request_codex_apps_auth_elicitation(
         | AskForApproval::Granular(_) => {}
     }
 
-    let Some(auth_failure) = codex_apps_connector_auth_failure(&result, metadata) else {
+    let connector_id = metadata.and_then(|metadata| metadata.connector_id.as_deref());
+    let connector_name = metadata.and_then(|metadata| metadata.connector_name.as_deref());
+    let install_url = connector_id.map(|connector_id| {
+        codex_connectors::metadata::connector_install_url(
+            connector_name.unwrap_or(connector_id),
+            connector_id,
+        )
+    });
+    let Some(auth_failure) =
+        connector_auth_failure_from_tool_result(&result, connector_id, connector_name, install_url)
+    else {
         return result;
     };
 
     let request_id = rmcp::model::RequestId::String(auth_elicitation_id(call_id).into());
-    let params =
-        build_codex_apps_auth_elicitation_request(sess, turn_context, call_id, &auth_failure);
+    let auth_elicitation = build_auth_elicitation(call_id, &auth_failure);
+    let params = McpServerElicitationRequestParams {
+        thread_id: sess.conversation_id.to_string(),
+        turn_id: Some(turn_context.sub_id.clone()),
+        server_name: CODEX_APPS_MCP_SERVER_NAME.to_string(),
+        request: McpServerElicitationRequest::Url {
+            meta: Some(auth_elicitation.meta),
+            message: auth_elicitation.message,
+            url: auth_elicitation.url,
+            elicitation_id: auth_elicitation.elicitation_id,
+        },
+    };
     let response = sess
         .request_mcp_server_elicitation(turn_context, request_id, params)
         .await;
@@ -652,42 +651,6 @@ async fn maybe_request_codex_apps_auth_elicitation(
 
     refresh_codex_apps_after_connector_auth(sess, turn_context).await;
     auth_elicitation_completed_result(&auth_failure, result.meta)
-}
-
-fn codex_apps_connector_auth_failure(
-    result: &CallToolResult,
-    metadata: Option<&McpToolApprovalMetadata>,
-) -> Option<CodexAppsConnectorAuthFailure> {
-    let connector_id = metadata.and_then(|metadata| metadata.connector_id.as_deref());
-    let connector_name = metadata.and_then(|metadata| metadata.connector_name.as_deref());
-    let install_url = connector_id.map(|connector_id| {
-        codex_connectors::metadata::connector_install_url(
-            connector_name.unwrap_or(connector_id),
-            connector_id,
-        )
-    });
-    connector_auth_failure_from_tool_result(result, connector_id, connector_name, install_url)
-}
-
-fn build_codex_apps_auth_elicitation_request(
-    sess: &Session,
-    turn_context: &TurnContext,
-    call_id: &str,
-    auth_failure: &CodexAppsConnectorAuthFailure,
-) -> McpServerElicitationRequestParams {
-    let auth_elicitation = build_auth_elicitation(call_id, auth_failure);
-
-    McpServerElicitationRequestParams {
-        thread_id: sess.conversation_id.to_string(),
-        turn_id: Some(turn_context.sub_id.clone()),
-        server_name: CODEX_APPS_MCP_SERVER_NAME.to_string(),
-        request: McpServerElicitationRequest::Url {
-            meta: Some(auth_elicitation.meta),
-            message: auth_elicitation.message,
-            url: auth_elicitation.url,
-            elicitation_id: auth_elicitation.elicitation_id,
-        },
-    }
 }
 
 #[expect(

@@ -4,14 +4,13 @@
 //! connector auth failures. Session orchestration stays in `codex-core`.
 
 use codex_protocol::mcp::CallToolResult;
+use serde::Serialize;
 
 pub const MCP_TOOL_CODEX_APPS_META_KEY: &str = "_codex_apps";
 pub const CONNECTOR_AUTH_FAILURE_META_KEY: &str = "connector_auth_failure";
 pub const CONNECTOR_AUTH_FAILURE_IS_AUTH_FAILURE_KEY: &str = "is_auth_failure";
 pub const CONNECTOR_AUTH_FAILURE_AUTH_REASON_KEY: &str = "auth_reason";
 pub const CONNECTOR_AUTH_FAILURE_CONNECTOR_ID_KEY: &str = "connector_id";
-pub const CONNECTOR_AUTH_FAILURE_CONNECTOR_NAME_KEY: &str = "connector_name";
-pub const CONNECTOR_AUTH_FAILURE_INSTALL_URL_KEY: &str = "install_url";
 pub const CONNECTOR_AUTH_FAILURE_LINK_ID_KEY: &str = "link_id";
 pub const CONNECTOR_AUTH_FAILURE_ERROR_CODE_KEY: &str = "error_code";
 pub const CONNECTOR_AUTH_FAILURE_ERROR_HTTP_STATUS_CODE_KEY: &str = "error_http_status_code";
@@ -35,6 +34,24 @@ pub struct CodexAppsAuthElicitation {
     pub message: String,
     pub url: String,
     pub elicitation_id: String,
+}
+
+#[derive(Serialize)]
+struct CodexAppsConnectorAuthFailureMeta<'a> {
+    is_auth_failure: bool,
+    connector_id: &'a str,
+    connector_name: &'a str,
+    install_url: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_reason: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    link_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_code: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_http_status_code: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_action: Option<&'a str>,
 }
 
 pub fn connector_auth_failure_from_tool_result(
@@ -102,54 +119,20 @@ pub fn build_auth_elicitation(
     call_id: &str,
     auth_failure: &CodexAppsConnectorAuthFailure,
 ) -> CodexAppsAuthElicitation {
-    let mut auth_failure_meta = serde_json::Map::new();
-    auth_failure_meta.insert(
-        CONNECTOR_AUTH_FAILURE_IS_AUTH_FAILURE_KEY.to_string(),
-        serde_json::Value::Bool(true),
-    );
-    auth_failure_meta.insert(
-        CONNECTOR_AUTH_FAILURE_CONNECTOR_ID_KEY.to_string(),
-        serde_json::Value::String(auth_failure.connector_id.clone()),
-    );
-    auth_failure_meta.insert(
-        CONNECTOR_AUTH_FAILURE_CONNECTOR_NAME_KEY.to_string(),
-        serde_json::Value::String(auth_failure.connector_name.clone()),
-    );
-    auth_failure_meta.insert(
-        CONNECTOR_AUTH_FAILURE_INSTALL_URL_KEY.to_string(),
-        serde_json::Value::String(auth_failure.install_url.clone()),
-    );
-    insert_optional_string_meta(
-        &mut auth_failure_meta,
-        CONNECTOR_AUTH_FAILURE_AUTH_REASON_KEY,
-        auth_failure.auth_reason.as_deref(),
-    );
-    insert_optional_string_meta(
-        &mut auth_failure_meta,
-        CONNECTOR_AUTH_FAILURE_LINK_ID_KEY,
-        auth_failure.link_id.as_deref(),
-    );
-    insert_optional_string_meta(
-        &mut auth_failure_meta,
-        CONNECTOR_AUTH_FAILURE_ERROR_CODE_KEY,
-        auth_failure.error_code.as_deref(),
-    );
-    if let Some(error_http_status_code) = auth_failure.error_http_status_code {
-        auth_failure_meta.insert(
-            CONNECTOR_AUTH_FAILURE_ERROR_HTTP_STATUS_CODE_KEY.to_string(),
-            serde_json::Value::Number(error_http_status_code.into()),
-        );
-    }
-    insert_optional_string_meta(
-        &mut auth_failure_meta,
-        CONNECTOR_AUTH_FAILURE_ERROR_ACTION_KEY,
-        auth_failure.error_action.as_deref(),
-    );
-
     CodexAppsAuthElicitation {
         meta: serde_json::json!({
             MCP_TOOL_CODEX_APPS_META_KEY: {
-                CONNECTOR_AUTH_FAILURE_META_KEY: auth_failure_meta,
+                CONNECTOR_AUTH_FAILURE_META_KEY: CodexAppsConnectorAuthFailureMeta {
+                    is_auth_failure: true,
+                    connector_id: &auth_failure.connector_id,
+                    connector_name: &auth_failure.connector_name,
+                    install_url: &auth_failure.install_url,
+                    auth_reason: auth_failure.auth_reason.as_deref(),
+                    link_id: auth_failure.link_id.as_deref(),
+                    error_code: auth_failure.error_code.as_deref(),
+                    error_http_status_code: auth_failure.error_http_status_code,
+                    error_action: auth_failure.error_action.as_deref(),
+                },
             },
         }),
         message: auth_elicitation_message(auth_failure),
@@ -192,19 +175,6 @@ fn string_auth_failure_field(
         .map(ToString::to_string)
 }
 
-fn insert_optional_string_meta(
-    meta: &mut serde_json::Map<String, serde_json::Value>,
-    key: &str,
-    value: Option<&str>,
-) {
-    if let Some(value) = value {
-        meta.insert(
-            key.to_string(),
-            serde_json::Value::String(value.to_string()),
-        );
-    }
-}
-
 fn auth_elicitation_message(auth_failure: &CodexAppsConnectorAuthFailure) -> String {
     match auth_failure.auth_reason.as_deref() {
         Some("oauth_upgrade_required") => format!(
@@ -245,7 +215,7 @@ mod tests {
                         CONNECTOR_AUTH_FAILURE_IS_AUTH_FAILURE_KEY: true,
                         CONNECTOR_AUTH_FAILURE_AUTH_REASON_KEY: "reauthentication_required",
                         CONNECTOR_AUTH_FAILURE_CONNECTOR_ID_KEY: "connector_calendar",
-                        CONNECTOR_AUTH_FAILURE_CONNECTOR_NAME_KEY: "Untrusted Calendar",
+                        "connector_name": "Untrusted Calendar",
                         CONNECTOR_AUTH_FAILURE_LINK_ID_KEY: "link_123",
                         CONNECTOR_AUTH_FAILURE_ERROR_CODE_KEY: "UNAUTHORIZED",
                         CONNECTOR_AUTH_FAILURE_ERROR_HTTP_STATUS_CODE_KEY: 401,
@@ -319,8 +289,8 @@ mod tests {
                         CONNECTOR_AUTH_FAILURE_META_KEY: {
                             CONNECTOR_AUTH_FAILURE_IS_AUTH_FAILURE_KEY: true,
                             CONNECTOR_AUTH_FAILURE_CONNECTOR_ID_KEY: "connector_calendar",
-                            CONNECTOR_AUTH_FAILURE_CONNECTOR_NAME_KEY: "Google Calendar",
-                            CONNECTOR_AUTH_FAILURE_INSTALL_URL_KEY:
+                            "connector_name": "Google Calendar",
+                            "install_url":
                                 "https://chatgpt.com/apps/google-calendar/connector_calendar",
                             CONNECTOR_AUTH_FAILURE_AUTH_REASON_KEY: "reauthentication_required",
                             CONNECTOR_AUTH_FAILURE_LINK_ID_KEY: "link_123",

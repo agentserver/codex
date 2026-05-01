@@ -37,8 +37,6 @@ use codex_app_server_protocol::FileChangeRequestApprovalParams;
 use codex_app_server_protocol::FileUpdateChange;
 use codex_app_server_protocol::ItemStartedNotification;
 use codex_app_server_protocol::JSONRPCErrorError;
-use codex_app_server_protocol::McpServerElicitationRequest;
-use codex_app_server_protocol::McpServerElicitationRequestParams;
 use codex_app_server_protocol::McpServerStartupState;
 use codex_app_server_protocol::McpServerStatusUpdatedNotification;
 use codex_app_server_protocol::NetworkApprovalContext as AppServerNetworkApprovalContext;
@@ -2703,47 +2701,6 @@ async fn inactive_thread_permissions_approval_preserves_file_system_permissions(
             )),
         }
     );
-}
-
-#[tokio::test]
-async fn inactive_thread_custom_server_url_elicitation_uses_generic_approval() {
-    let app = make_test_app().await;
-    let thread_id = ThreadId::new();
-    let request = ServerRequest::McpServerElicitationRequest {
-        request_id: AppServerRequestId::Integer(9),
-        params: McpServerElicitationRequestParams {
-            thread_id: thread_id.to_string(),
-            turn_id: Some("turn-auth".to_string()),
-            server_name: "github_mcp".to_string(),
-            request: McpServerElicitationRequest::Url {
-                meta: None,
-                message: "Sign in to GitHub to continue.".to_string(),
-                url: "https://github.example/login/device".to_string(),
-                elicitation_id: "github-auth-123".to_string(),
-            },
-        },
-    };
-
-    let Some(ThreadInteractiveRequest::Approval(ApprovalRequest::McpElicitation {
-        thread_id: actual_thread_id,
-        thread_label,
-        server_name,
-        request_id,
-        message,
-        url,
-    })) = app
-        .interactive_request_for_thread_request(thread_id, &request)
-        .await
-    else {
-        panic!("expected generic MCP elicitation approval request");
-    };
-
-    assert_eq!(actual_thread_id, thread_id);
-    assert!(thread_label.is_some());
-    assert_eq!(server_name, "github_mcp");
-    assert_eq!(request_id, codex_app_server_protocol::RequestId::Integer(9));
-    assert_eq!(message, "Sign in to GitHub to continue.");
-    assert_eq!(url.as_deref(), Some("https://github.example/login/device"));
 }
 
 #[tokio::test]

@@ -244,7 +244,6 @@ impl Session {
             config.codex_home.to_path_buf(),
             codex_apps_tools_cache_key(auth.as_ref()),
             tool_plugin_provenance,
-            auth_elicitation_support(&turn_context.features),
             auth.as_ref(),
         )
         .await;

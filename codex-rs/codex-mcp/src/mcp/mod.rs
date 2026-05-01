@@ -38,7 +38,6 @@ use serde_json::Value;
 
 use crate::codex_apps::codex_apps_tools_cache_key;
 use crate::connection_manager::McpConnectionManager;
-use crate::elicitation::AuthElicitationSupport;
 use crate::runtime::McpRuntimeEnvironment;
 
 pub const CODEX_APPS_MCP_SERVER_NAME: &str = "codex_apps";
@@ -124,8 +123,6 @@ pub struct McpConfig {
     pub mcp_oauth_callback_url: Option<String>,
     /// Whether skill MCP dependency installation prompts are enabled.
     pub skill_mcp_dependency_install_enabled: bool,
-    /// Whether URL-mode auth elicitations are enabled for MCP servers.
-    pub auth_elicitation_support: AuthElicitationSupport,
     /// Approval policy used for MCP tool calls and MCP elicitation requests.
     pub approval_policy: Constrained<AskForApproval>,
     /// Optional path to `codex-linux-sandbox` for sandboxed MCP tool execution.
@@ -262,7 +259,6 @@ pub async fn read_mcp_resource(
         config.codex_home.clone(),
         codex_apps_tools_cache_key(auth),
         tool_plugin_provenance(config),
-        config.auth_elicitation_support,
         auth,
     )
     .await;
@@ -328,7 +324,6 @@ pub async fn collect_mcp_server_status_snapshot_with_detail(
         config.codex_home.clone(),
         codex_apps_tools_cache_key(auth),
         tool_plugin_provenance,
-        config.auth_elicitation_support,
         auth,
     )
     .await;

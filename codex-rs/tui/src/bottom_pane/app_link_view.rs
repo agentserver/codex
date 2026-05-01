@@ -3,8 +3,6 @@ use crate::app_command::AppCommand as Op;
 use codex_app_server_protocol::McpServerElicitationAction;
 use codex_app_server_protocol::RequestId as AppServerRequestId;
 use codex_protocol::ThreadId;
-#[cfg(test)]
-use codex_protocol::approvals::ElicitationRequest;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
@@ -57,13 +55,6 @@ pub(crate) enum AppLinkSuggestionType {
     Auth,
 }
 
-struct AuthUrlParts<'a> {
-    meta: Option<&'a serde_json::Value>,
-    message: &'a str,
-    url: &'a str,
-    elicitation_id: &'a str,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AppLinkElicitationTarget {
     pub(crate) thread_id: ThreadId,
@@ -86,35 +77,6 @@ pub(crate) struct AppLinkViewParams {
 }
 
 impl AppLinkViewParams {
-    #[cfg(test)]
-    pub(crate) fn from_auth_url_elicitation(
-        thread_id: ThreadId,
-        server_name: &str,
-        request_id: AppServerRequestId,
-        request: &ElicitationRequest,
-    ) -> Option<Self> {
-        let ElicitationRequest::Url {
-            meta,
-            message,
-            url,
-            elicitation_id,
-        } = request
-        else {
-            return None;
-        };
-        Self::from_auth_url_parts(
-            thread_id,
-            server_name,
-            request_id,
-            AuthUrlParts {
-                meta: meta.as_ref(),
-                message,
-                url,
-                elicitation_id,
-            },
-        )
-    }
-
     pub(crate) fn from_auth_url_app_server_request(
         thread_id: ThreadId,
         server_name: &str,
@@ -130,38 +92,18 @@ impl AppLinkViewParams {
         else {
             return None;
         };
-        Self::from_auth_url_parts(
-            thread_id,
-            server_name,
-            request_id,
-            AuthUrlParts {
-                meta: meta.as_ref(),
-                message,
-                url,
-                elicitation_id,
-            },
-        )
-    }
-
-    fn from_auth_url_parts(
-        thread_id: ThreadId,
-        server_name: &str,
-        request_id: AppServerRequestId,
-        parts: AuthUrlParts<'_>,
-    ) -> Option<Self> {
         if server_name != MCP_CODEX_APPS_SERVER_NAME {
             return None;
         }
-
-        let url = validate_auth_url(parts.url)?;
+        let url = validate_auth_url(url)?;
         Self::from_codex_apps_auth_url_parts(
             thread_id,
             server_name,
             request_id,
-            parts.meta,
-            parts.message,
+            meta.as_ref(),
+            message,
             url.as_str(),
-            parts.elicitation_id,
+            elicitation_id,
         )
     }
 
@@ -352,7 +294,7 @@ impl AppLinkView {
         self.complete = true;
     }
 
-    fn open_external_url(&mut self) {
+    fn open_chatgpt_link(&mut self) {
         self.app_event_tx.send(AppEvent::OpenUrlInBrowser {
             url: self.url.clone(),
         });
@@ -365,16 +307,10 @@ impl AppLinkView {
         }
     }
 
-    fn complete_external_flow_and_close(&mut self) {
-        let should_refresh_connectors = self
-            .elicitation_target
-            .as_ref()
-            .is_none_or(|target| target.server_name == MCP_CODEX_APPS_SERVER_NAME);
-        if should_refresh_connectors {
-            self.app_event_tx.send(AppEvent::RefreshConnectors {
-                force_refetch: true,
-            });
-        }
+    fn refresh_connectors_and_close(&mut self) {
+        self.app_event_tx.send(AppEvent::RefreshConnectors {
+            force_refetch: true,
+        });
         if self.is_tool_suggestion() {
             self.resolve_elicitation(McpServerElicitationAction::Accept);
         }
@@ -403,32 +339,32 @@ impl AppLinkView {
             match self.suggestion_type {
                 Some(AppLinkSuggestionType::Enable) => match self.screen {
                     AppLinkScreen::Link => match self.selected_action {
-                        0 => self.open_external_url(),
+                        0 => self.open_chatgpt_link(),
                         1 if self.is_installed => self.toggle_enabled(),
                         _ => self.decline_tool_suggestion(),
                     },
                     AppLinkScreen::InstallConfirmation => match self.selected_action {
-                        0 => self.complete_external_flow_and_close(),
+                        0 => self.refresh_connectors_and_close(),
                         _ => self.decline_tool_suggestion(),
                     },
                 },
                 Some(AppLinkSuggestionType::Auth) => match self.screen {
                     AppLinkScreen::Link => match self.selected_action {
-                        0 => self.open_external_url(),
+                        0 => self.open_chatgpt_link(),
                         _ => self.decline_tool_suggestion(),
                     },
                     AppLinkScreen::InstallConfirmation => match self.selected_action {
-                        0 => self.complete_external_flow_and_close(),
+                        0 => self.refresh_connectors_and_close(),
                         _ => self.decline_tool_suggestion(),
                     },
                 },
                 Some(AppLinkSuggestionType::Install) | None => match self.screen {
                     AppLinkScreen::Link => match self.selected_action {
-                        0 => self.open_external_url(),
+                        0 => self.open_chatgpt_link(),
                         _ => self.decline_tool_suggestion(),
                     },
                     AppLinkScreen::InstallConfirmation => match self.selected_action {
-                        0 => self.complete_external_flow_and_close(),
+                        0 => self.refresh_connectors_and_close(),
                         _ => self.decline_tool_suggestion(),
                     },
                 },
@@ -438,12 +374,12 @@ impl AppLinkView {
 
         match self.screen {
             AppLinkScreen::Link => match self.selected_action {
-                0 => self.open_external_url(),
+                0 => self.open_chatgpt_link(),
                 1 if self.is_installed => self.toggle_enabled(),
                 _ => self.complete = true,
             },
             AppLinkScreen::InstallConfirmation => match self.selected_action {
-                0 => self.complete_external_flow_and_close(),
+                0 => self.refresh_connectors_and_close(),
                 _ => self.back_to_link_screen(),
             },
         }
@@ -534,18 +470,9 @@ impl AppLinkView {
 
         let is_auth_suggestion =
             self.is_tool_suggestion() && self.suggestion_type == Some(AppLinkSuggestionType::Auth);
-        let is_codex_apps_auth = is_auth_suggestion
-            && self
-                .elicitation_target
-                .as_ref()
-                .is_some_and(|target| target.server_name == MCP_CODEX_APPS_SERVER_NAME);
         lines.push(Line::from(
             if is_auth_suggestion {
-                if is_codex_apps_auth {
-                    "Finish App Sign In"
-                } else {
-                    "Finish MCP Sign In"
-                }
+                "Finish App Sign In"
             } else {
                 "Finish App Setup"
             }
@@ -555,11 +482,7 @@ impl AppLinkView {
 
         if is_auth_suggestion {
             for line in wrap(
-                if is_codex_apps_auth {
-                    "Sign in to the app on ChatGPT in the browser window that just opened."
-                } else {
-                    "Complete the MCP sign-in flow in the browser window that just opened."
-                },
+                "Sign in to the app on ChatGPT in the browser window that just opened.",
                 usable_width,
             ) {
                 lines.push(Line::from(line.into_owned()));
@@ -855,10 +778,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn codex_apps_auth_url_elicitation_builds_auth_app_link_params() {
-        let target = suggestion_target();
-        let request = ElicitationRequest::Url {
+    fn auth_url_request(url: &str) -> codex_app_server_protocol::McpServerElicitationRequest {
+        codex_app_server_protocol::McpServerElicitationRequest::Url {
             meta: Some(serde_json::json!({
                 "_codex_apps": {
                     "connector_auth_failure": {
@@ -869,11 +790,18 @@ mod tests {
                 },
             })),
             message: "Reconnect Google Calendar on ChatGPT.".to_string(),
-            url: "https://chatgpt.com/apps/google-calendar/connector_calendar".to_string(),
+            url: url.to_string(),
             elicitation_id: "codex_apps_auth_call_123".to_string(),
-        };
+        }
+    }
 
-        let params = AppLinkViewParams::from_auth_url_elicitation(
+    #[test]
+    fn codex_apps_auth_url_elicitation_builds_auth_app_link_params() {
+        let target = suggestion_target();
+        let request =
+            auth_url_request("https://chatgpt.com/apps/google-calendar/connector_calendar");
+
+        let params = AppLinkViewParams::from_auth_url_app_server_request(
             target.thread_id,
             &target.server_name,
             target.request_id.clone(),
@@ -894,26 +822,6 @@ mod tests {
     #[test]
     fn non_codex_apps_auth_url_elicitation_is_ignored() {
         let target = generic_auth_target();
-        let request = ElicitationRequest::Url {
-            meta: None,
-            message: "Sign in to GitHub to continue.".to_string(),
-            url: "https://github.example/login/device".to_string(),
-            elicitation_id: "github-auth-123".to_string(),
-        };
-
-        let params = AppLinkViewParams::from_auth_url_elicitation(
-            target.thread_id,
-            &target.server_name,
-            target.request_id.clone(),
-            &request,
-        );
-
-        assert!(params.is_none());
-    }
-
-    #[test]
-    fn non_codex_apps_app_server_auth_url_elicitation_is_ignored() {
-        let target = generic_auth_target();
         let request = codex_app_server_protocol::McpServerElicitationRequest::Url {
             meta: None,
             message: "Sign in to GitHub to continue.".to_string(),
@@ -932,117 +840,23 @@ mod tests {
     }
 
     #[test]
-    fn codex_apps_app_server_auth_url_elicitation_rejects_non_https_urls() {
+    fn codex_apps_auth_url_elicitation_rejects_untrusted_urls() {
         let target = suggestion_target();
-        let request = codex_app_server_protocol::McpServerElicitationRequest::Url {
-            meta: Some(serde_json::json!({
-                "_codex_apps": {
-                    "connector_auth_failure": {
-                        "is_auth_failure": true,
-                        "connector_id": "connector_calendar",
-                        "connector_name": "Google Calendar",
-                    },
-                },
-            })),
-            message: "Reconnect Google Calendar on ChatGPT.".to_string(),
-            url: "http://chatgpt.com/apps/google-calendar/connector_calendar".to_string(),
-            elicitation_id: "codex_apps_auth_call_123".to_string(),
-        };
-
-        let params = AppLinkViewParams::from_auth_url_app_server_request(
-            target.thread_id,
-            &target.server_name,
-            target.request_id.clone(),
-            &request,
-        );
-
-        assert!(params.is_none());
-    }
-
-    #[test]
-    fn codex_apps_app_server_auth_url_elicitation_rejects_embedded_credentials() {
-        let target = suggestion_target();
-        let request = codex_app_server_protocol::McpServerElicitationRequest::Url {
-            meta: Some(serde_json::json!({
-                "_codex_apps": {
-                    "connector_auth_failure": {
-                        "is_auth_failure": true,
-                        "connector_id": "connector_calendar",
-                        "connector_name": "Google Calendar",
-                    },
-                },
-            })),
-            message: "Reconnect Google Calendar on ChatGPT.".to_string(),
-            url: "https://user:pass@chatgpt.com/apps/google-calendar/connector_calendar"
-                .to_string(),
-            elicitation_id: "codex_apps_auth_call_123".to_string(),
-        };
-
-        let params = AppLinkViewParams::from_auth_url_app_server_request(
-            target.thread_id,
-            &target.server_name,
-            target.request_id.clone(),
-            &request,
-        );
-
-        assert!(params.is_none());
-    }
-
-    #[test]
-    fn codex_apps_auth_url_elicitation_rejects_non_chatgpt_hosts() {
-        let target = suggestion_target();
-        let request = ElicitationRequest::Url {
-            meta: Some(serde_json::json!({
-                "_codex_apps": {
-                    "connector_auth_failure": {
-                        "is_auth_failure": true,
-                        "connector_id": "connector_calendar",
-                        "connector_name": "Google Calendar",
-                    },
-                },
-            })),
-            message: "Reconnect Google Calendar on ChatGPT.".to_string(),
-            url: "https://chatgpt.com.evil.example/apps/google-calendar/connector_calendar"
-                .to_string(),
-            elicitation_id: "codex_apps_auth_call_123".to_string(),
-        };
-
-        let params = AppLinkViewParams::from_auth_url_elicitation(
-            target.thread_id,
-            &target.server_name,
-            target.request_id.clone(),
-            &request,
-        );
-
-        assert!(params.is_none());
-    }
-
-    #[test]
-    fn codex_apps_app_server_auth_url_elicitation_rejects_non_chatgpt_hosts() {
-        let target = suggestion_target();
-        let request = codex_app_server_protocol::McpServerElicitationRequest::Url {
-            meta: Some(serde_json::json!({
-                "_codex_apps": {
-                    "connector_auth_failure": {
-                        "is_auth_failure": true,
-                        "connector_id": "connector_calendar",
-                        "connector_name": "Google Calendar",
-                    },
-                },
-            })),
-            message: "Reconnect Google Calendar on ChatGPT.".to_string(),
-            url: "https://evilchatgpt.com/apps/google-calendar/connector_calendar".to_string(),
-            elicitation_id: "codex_apps_auth_call_123".to_string(),
-        };
-
-        let params = AppLinkViewParams::from_auth_url_app_server_request(
-            target.thread_id,
-            &target.server_name,
-            target.request_id.clone(),
-            &request,
-        );
-
-        assert!(params.is_none());
+        for url in [
+            "http://chatgpt.com/apps/google-calendar/connector_calendar",
+            "https://user:pass@chatgpt.com/apps/google-calendar/connector_calendar",
+            "https://chatgpt.com.evil.example/apps/google-calendar/connector_calendar",
+            "https://evilchatgpt.com/apps/google-calendar/connector_calendar",
+        ] {
+            let request = auth_url_request(url);
+            let params = AppLinkViewParams::from_auth_url_app_server_request(
+                target.thread_id,
+                &target.server_name,
+                target.request_id.clone(),
+                &request,
+            );
+            assert!(params.is_none(), "expected {url} to be rejected");
+        }
     }
 
     fn render_snapshot(view: &AppLinkView, area: Rect) -> String {
@@ -1529,6 +1343,36 @@ mod tests {
 
         assert_snapshot!(
             "app_link_view_enable_suggestion_with_reason",
+            render_snapshot(
+                &view,
+                Rect::new(0, 0, 72, view.desired_height(/*width*/ 72))
+            )
+        );
+    }
+
+    #[test]
+    fn auth_suggestion_with_reason_snapshot() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let view = AppLinkView::new(
+            AppLinkViewParams {
+                app_id: "connector_google_calendar".to_string(),
+                title: "Google Calendar".to_string(),
+                description: None,
+                instructions: "Sign in to this app in your browser, then return here.".to_string(),
+                url: "https://chatgpt.com/apps/google-calendar/connector_google_calendar"
+                    .to_string(),
+                is_installed: true,
+                is_enabled: true,
+                suggest_reason: Some("Reconnect Google Calendar on ChatGPT.".to_string()),
+                suggestion_type: Some(AppLinkSuggestionType::Auth),
+                elicitation_target: Some(suggestion_target()),
+            },
+            tx,
+        );
+
+        assert_snapshot!(
+            "app_link_view_auth_suggestion_with_reason",
             render_snapshot(
                 &view,
                 Rect::new(0, 0, 72, view.desired_height(/*width*/ 72))

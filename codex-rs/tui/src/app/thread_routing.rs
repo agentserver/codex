@@ -278,31 +278,20 @@ impl App {
                 {
                     Some(ThreadInteractiveRequest::McpServerElicitation(request))
                 } else {
+                    let codex_app_server_protocol::McpServerElicitationRequest::Form {
+                        message,
+                        ..
+                    } = &params.request
+                    else {
+                        return None;
+                    };
                     Some(ThreadInteractiveRequest::Approval(
                         ApprovalRequest::McpElicitation {
                             thread_id,
                             thread_label,
                             server_name: params.server_name.clone(),
                             request_id: request_id.clone(),
-                            message: match &params.request {
-                                codex_app_server_protocol::McpServerElicitationRequest::Form {
-                                    message,
-                                    ..
-                                }
-                                | codex_app_server_protocol::McpServerElicitationRequest::Url {
-                                    message,
-                                    ..
-                                } => message.clone(),
-                            },
-                            url: match &params.request {
-                                codex_app_server_protocol::McpServerElicitationRequest::Form {
-                                    ..
-                                } => None,
-                                codex_app_server_protocol::McpServerElicitationRequest::Url {
-                                    url,
-                                    ..
-                                } => Some(url.clone()),
-                            },
+                            message: message.clone(),
                         },
                     ))
                 }

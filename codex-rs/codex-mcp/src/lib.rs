@@ -4,23 +4,12 @@ pub use runtime::McpRuntimeEnvironment;
 pub use runtime::SandboxState;
 pub use tools::ToolInfo;
 
-pub use elicitation::AuthElicitationSupport;
 pub use mcp::CODEX_APPS_MCP_SERVER_NAME;
 pub use mcp::McpConfig;
 pub use mcp::ToolPluginProvenance;
 
 pub use codex_apps::CodexAppsToolsCacheKey;
 pub use codex_apps::codex_apps_tools_cache_key;
-pub use codex_apps_auth::CONNECTOR_AUTH_FAILURE_AUTH_REASON_KEY;
-pub use codex_apps_auth::CONNECTOR_AUTH_FAILURE_CONNECTOR_ID_KEY;
-pub use codex_apps_auth::CONNECTOR_AUTH_FAILURE_CONNECTOR_NAME_KEY;
-pub use codex_apps_auth::CONNECTOR_AUTH_FAILURE_ERROR_ACTION_KEY;
-pub use codex_apps_auth::CONNECTOR_AUTH_FAILURE_ERROR_CODE_KEY;
-pub use codex_apps_auth::CONNECTOR_AUTH_FAILURE_ERROR_HTTP_STATUS_CODE_KEY;
-pub use codex_apps_auth::CONNECTOR_AUTH_FAILURE_INSTALL_URL_KEY;
-pub use codex_apps_auth::CONNECTOR_AUTH_FAILURE_IS_AUTH_FAILURE_KEY;
-pub use codex_apps_auth::CONNECTOR_AUTH_FAILURE_LINK_ID_KEY;
-pub use codex_apps_auth::CONNECTOR_AUTH_FAILURE_META_KEY;
 pub use codex_apps_auth::CodexAppsAuthElicitation;
 pub use codex_apps_auth::CodexAppsConnectorAuthFailure;
 pub use codex_apps_auth::MCP_TOOL_CODEX_APPS_META_KEY;

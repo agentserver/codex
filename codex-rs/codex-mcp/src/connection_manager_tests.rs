@@ -5,13 +5,12 @@ use crate::codex_apps::load_startup_cached_codex_apps_tools_snapshot;
 use crate::codex_apps::read_cached_codex_apps_tools;
 use crate::codex_apps::write_cached_codex_apps_tools;
 use crate::declared_openai_file_input_param_names;
-use crate::elicitation::AuthElicitationSupport;
 use crate::elicitation::ElicitationRequestManager;
 use crate::elicitation::elicitation_is_rejected_by_policy;
 use crate::rmcp_client::AsyncManagedClient;
 use crate::rmcp_client::ManagedClient;
 use crate::rmcp_client::StartupOutcomeError;
-use crate::rmcp_client::elicitation_capability;
+use crate::rmcp_client::elicitation_capability_for_server;
 use crate::tools::ToolFilter;
 use crate::tools::ToolInfo;
 use crate::tools::filter_tools;
@@ -19,11 +18,7 @@ use crate::tools::qualify_tools;
 use crate::tools::tool_with_model_visible_input_schema;
 use codex_config::Constrained;
 use codex_protocol::ToolName;
-use codex_protocol::approvals::ElicitationRequest;
-use codex_protocol::approvals::ElicitationRequestEvent;
-use codex_protocol::mcp::RequestId as ProtocolRequestId;
 use codex_protocol::models::PermissionProfile;
-use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::GranularApprovalConfig;
 use codex_protocol::protocol::McpAuthStatus;
 use futures::FutureExt;
@@ -36,7 +31,6 @@ use rmcp::model::JsonObject;
 use rmcp::model::Meta;
 use rmcp::model::NumberOrString;
 use rmcp::model::Tool;
-use rmcp::model::UrlElicitationCapability;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tempfile::tempdir;
@@ -211,11 +205,8 @@ fn elicitation_granular_policy_respects_never_and_config() {
 
 #[tokio::test]
 async fn disabled_permissions_auto_accept_elicitation_with_empty_form_schema() {
-    let manager = ElicitationRequestManager::new(
-        AskForApproval::Never,
-        PermissionProfile::Disabled,
-        AuthElicitationSupport::Disabled,
-    );
+    let manager =
+        ElicitationRequestManager::new(AskForApproval::Never, PermissionProfile::Disabled);
     let (tx_event, _rx_event) = async_channel::bounded(1);
     let sender = manager.make_sender("server".to_string(), tx_event);
 
@@ -244,11 +235,8 @@ async fn disabled_permissions_auto_accept_elicitation_with_empty_form_schema() {
 
 #[tokio::test]
 async fn disabled_permissions_do_not_auto_accept_elicitation_with_requested_fields() {
-    let manager = ElicitationRequestManager::new(
-        AskForApproval::Never,
-        PermissionProfile::Disabled,
-        AuthElicitationSupport::Disabled,
-    );
+    let manager =
+        ElicitationRequestManager::new(AskForApproval::Never, PermissionProfile::Disabled);
     let (tx_event, _rx_event) = async_channel::bounded(1);
     let sender = manager.make_sender("server".to_string(), tx_event);
 
@@ -273,176 +261,6 @@ async fn disabled_permissions_do_not_auto_accept_elicitation_with_requested_fiel
         response,
         ElicitationResponse {
             action: ElicitationAction::Decline,
-            content: None,
-            meta: None,
-        }
-    );
-}
-
-#[tokio::test]
-async fn url_elicitations_are_declined_when_auth_elicitation_is_disabled() {
-    let manager = ElicitationRequestManager::new(
-        AskForApproval::OnRequest,
-        PermissionProfile::default(),
-        AuthElicitationSupport::Disabled,
-    );
-    let (tx_event, rx_event) = async_channel::bounded(1);
-    let sender = manager.make_sender("custom_mcp".to_string(), tx_event);
-
-    let response = sender(
-        NumberOrString::String("url-1".into()),
-        CreateElicitationRequestParams::UrlElicitationParams {
-            meta: None,
-            message: "Sign in to continue.".to_string(),
-            url: "https://example.com/login".to_string(),
-            elicitation_id: "custom-auth".to_string(),
-        },
-    )
-    .await
-    .expect("url elicitation should be declined");
-
-    assert_eq!(
-        response,
-        ElicitationResponse {
-            action: ElicitationAction::Decline,
-            content: None,
-            meta: None,
-        }
-    );
-    assert!(rx_event.try_recv().is_err());
-}
-
-#[tokio::test]
-async fn url_elicitations_are_surfaced_for_custom_servers_when_auth_elicitation_is_enabled() {
-    let manager = ElicitationRequestManager::new(
-        AskForApproval::OnRequest,
-        PermissionProfile::default(),
-        AuthElicitationSupport::Enabled,
-    );
-    let (tx_event, rx_event) = async_channel::bounded(1);
-    let sender = manager.make_sender("custom_mcp".to_string(), tx_event);
-    let send_task = tokio::spawn(sender(
-        NumberOrString::String("url-1".into()),
-        CreateElicitationRequestParams::UrlElicitationParams {
-            meta: None,
-            message: "Sign in to continue.".to_string(),
-            url: "https://example.com/login".to_string(),
-            elicitation_id: "custom-auth".to_string(),
-        },
-    ));
-
-    let event = rx_event
-        .recv()
-        .await
-        .expect("url elicitation should be surfaced");
-    let EventMsg::ElicitationRequest(ElicitationRequestEvent {
-        turn_id,
-        server_name,
-        id,
-        request,
-    }) = event.msg
-    else {
-        panic!("expected elicitation request event");
-    };
-    assert_eq!(turn_id, None);
-    assert_eq!(server_name, "custom_mcp");
-    assert_eq!(id, ProtocolRequestId::String("url-1".to_string()));
-    assert_eq!(
-        request,
-        ElicitationRequest::Url {
-            meta: None,
-            message: "Sign in to continue.".to_string(),
-            url: "https://example.com/login".to_string(),
-            elicitation_id: "custom-auth".to_string(),
-        }
-    );
-    manager
-        .resolve(
-            "custom_mcp".to_string(),
-            NumberOrString::String("url-1".into()),
-            ElicitationResponse {
-                action: ElicitationAction::Accept,
-                content: None,
-                meta: None,
-            },
-        )
-        .await
-        .expect("elicitation should resolve");
-    assert_eq!(
-        send_task.await.expect("sender task should finish").unwrap(),
-        ElicitationResponse {
-            action: ElicitationAction::Accept,
-            content: None,
-            meta: None,
-        }
-    );
-}
-
-#[tokio::test]
-async fn url_elicitations_are_surfaced_for_codex_apps_when_auth_elicitation_is_enabled() {
-    let manager = ElicitationRequestManager::new(
-        AskForApproval::OnRequest,
-        PermissionProfile::default(),
-        AuthElicitationSupport::Enabled,
-    );
-    let (tx_event, rx_event) = async_channel::bounded(1);
-    let sender = manager.make_sender(CODEX_APPS_MCP_SERVER_NAME.to_string(), tx_event);
-    let send_task = tokio::spawn(sender(
-        NumberOrString::String("url-1".into()),
-        CreateElicitationRequestParams::UrlElicitationParams {
-            meta: None,
-            message: "Reconnect Calendar.".to_string(),
-            url: "https://chatgpt.com/apps/calendar".to_string(),
-            elicitation_id: "codex_apps_auth_call_123".to_string(),
-        },
-    ));
-
-    let event = rx_event
-        .recv()
-        .await
-        .expect("url elicitation should be surfaced");
-    let EventMsg::ElicitationRequest(ElicitationRequestEvent {
-        turn_id,
-        server_name,
-        id,
-        request,
-    }) = event.msg
-    else {
-        panic!("expected elicitation request event");
-    };
-    assert_eq!(turn_id, None);
-    assert_eq!(server_name, CODEX_APPS_MCP_SERVER_NAME);
-    assert_eq!(id, ProtocolRequestId::String("url-1".to_string()));
-    assert_eq!(
-        request,
-        ElicitationRequest::Url {
-            meta: None,
-            message: "Reconnect Calendar.".to_string(),
-            url: "https://chatgpt.com/apps/calendar".to_string(),
-            elicitation_id: "codex_apps_auth_call_123".to_string(),
-        }
-    );
-
-    manager
-        .resolve(
-            CODEX_APPS_MCP_SERVER_NAME.to_string(),
-            NumberOrString::String("url-1".into()),
-            ElicitationResponse {
-                action: ElicitationAction::Accept,
-                content: None,
-                meta: None,
-            },
-        )
-        .await
-        .expect("request should resolve");
-    let response = send_task
-        .await
-        .expect("sender task should complete")
-        .expect("elicitation should resolve");
-    assert_eq!(
-        response,
-        ElicitationResponse {
-            action: ElicitationAction::Accept,
             content: None,
             meta: None,
         }
@@ -835,11 +653,8 @@ async fn list_all_tools_uses_startup_snapshot_while_client_is_pending() {
         .shared();
     let approval_policy = Constrained::allow_any(AskForApproval::OnFailure);
     let permission_profile = Constrained::allow_any(PermissionProfile::default());
-    let mut manager = McpConnectionManager::new_uninitialized(
-        &approval_policy,
-        &permission_profile,
-        AuthElicitationSupport::Disabled,
-    );
+    let mut manager =
+        McpConnectionManager::new_uninitialized(&approval_policy, &permission_profile);
     manager.clients.insert(
         CODEX_APPS_MCP_SERVER_NAME.to_string(),
         AsyncManagedClient {
@@ -867,11 +682,8 @@ async fn resolve_tool_info_accepts_canonical_namespaced_tool_names() {
         .shared();
     let approval_policy = Constrained::allow_any(AskForApproval::OnFailure);
     let permission_profile = Constrained::allow_any(PermissionProfile::default());
-    let mut manager = McpConnectionManager::new_uninitialized(
-        &approval_policy,
-        &permission_profile,
-        AuthElicitationSupport::Disabled,
-    );
+    let mut manager =
+        McpConnectionManager::new_uninitialized(&approval_policy, &permission_profile);
     manager.clients.insert(
         "rmcp".to_string(),
         AsyncManagedClient {
@@ -907,11 +719,8 @@ async fn list_all_tools_blocks_while_client_is_pending_without_startup_snapshot(
         .shared();
     let approval_policy = Constrained::allow_any(AskForApproval::OnFailure);
     let permission_profile = Constrained::allow_any(PermissionProfile::default());
-    let mut manager = McpConnectionManager::new_uninitialized(
-        &approval_policy,
-        &permission_profile,
-        AuthElicitationSupport::Disabled,
-    );
+    let mut manager =
+        McpConnectionManager::new_uninitialized(&approval_policy, &permission_profile);
     manager.clients.insert(
         CODEX_APPS_MCP_SERVER_NAME.to_string(),
         AsyncManagedClient {
@@ -935,11 +744,8 @@ async fn list_all_tools_does_not_block_when_startup_snapshot_cache_hit_is_empty(
         .shared();
     let approval_policy = Constrained::allow_any(AskForApproval::OnFailure);
     let permission_profile = Constrained::allow_any(PermissionProfile::default());
-    let mut manager = McpConnectionManager::new_uninitialized(
-        &approval_policy,
-        &permission_profile,
-        AuthElicitationSupport::Disabled,
-    );
+    let mut manager =
+        McpConnectionManager::new_uninitialized(&approval_policy, &permission_profile);
     manager.clients.insert(
         CODEX_APPS_MCP_SERVER_NAME.to_string(),
         AsyncManagedClient {
@@ -972,11 +778,8 @@ async fn list_all_tools_uses_startup_snapshot_when_client_startup_fails() {
     .shared();
     let approval_policy = Constrained::allow_any(AskForApproval::OnFailure);
     let permission_profile = Constrained::allow_any(PermissionProfile::default());
-    let mut manager = McpConnectionManager::new_uninitialized(
-        &approval_policy,
-        &permission_profile,
-        AuthElicitationSupport::Disabled,
-    );
+    let mut manager =
+        McpConnectionManager::new_uninitialized(&approval_policy, &permission_profile);
     let startup_complete = Arc::new(std::sync::atomic::AtomicBool::new(true));
     manager.clients.insert(
         CODEX_APPS_MCP_SERVER_NAME.to_string(),
@@ -998,31 +801,19 @@ async fn list_all_tools_uses_startup_snapshot_when_client_startup_fails() {
 }
 
 #[test]
-fn elicitation_capability_omits_url_mode_when_auth_elicitation_is_disabled() {
-    let capability = elicitation_capability(AuthElicitationSupport::Disabled);
-    assert!(matches!(
-        capability,
-        Some(ElicitationCapability {
-            form: Some(FormElicitationCapability {
-                schema_validation: None
-            }),
-            url: None,
-        })
-    ));
-}
-
-#[test]
-fn elicitation_capability_includes_url_mode_when_auth_elicitation_is_enabled() {
-    let capability = elicitation_capability(AuthElicitationSupport::Enabled);
-    assert!(matches!(
-        capability,
-        Some(ElicitationCapability {
-            form: Some(FormElicitationCapability {
-                schema_validation: None
-            }),
-            url: Some(UrlElicitationCapability {}),
-        })
-    ));
+fn elicitation_capability_enabled_for_custom_servers() {
+    for server_name in [CODEX_APPS_MCP_SERVER_NAME, "custom_mcp"] {
+        let capability = elicitation_capability_for_server(server_name);
+        assert!(matches!(
+            capability,
+            Some(ElicitationCapability {
+                form: Some(FormElicitationCapability {
+                    schema_validation: None
+                }),
+                url: None,
+            })
+        ));
+    }
 }
 
 #[test]

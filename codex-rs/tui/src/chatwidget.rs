@@ -4508,9 +4508,8 @@ impl ChatWidget {
             self.bottom_pane
                 .push_mcp_server_elicitation_request(request);
         } else {
-            let (message, url) = match params.request {
-                McpServerElicitationRequest::Form { message, .. } => (message, None),
-                McpServerElicitationRequest::Url { message, url, .. } => (message, Some(url)),
+            let McpServerElicitationRequest::Form { message, .. } = params.request else {
+                return;
             };
             let request = ApprovalRequest::McpElicitation {
                 thread_id,
@@ -4518,7 +4517,6 @@ impl ChatWidget {
                 server_name: params.server_name,
                 request_id,
                 message,
-                url,
             };
             self.bottom_pane
                 .push_approval_request(request, &self.config.features);

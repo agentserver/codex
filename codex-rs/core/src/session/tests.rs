@@ -3489,6 +3489,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         /*analytics_events_client*/ None,
         Arc::new(codex_thread_store::LocalThreadStore::new(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
+            /*state_db*/ None,
         )),
         codex_rollout_trace::ThreadTraceContext::disabled(),
     )
@@ -3636,6 +3637,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         live_thread: None,
         thread_store: Arc::new(codex_thread_store::LocalThreadStore::new(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
+            /*state_db*/ None,
         )),
         model_client: ModelClient::new(
             Some(auth_manager.clone()),
@@ -3807,6 +3809,7 @@ async fn make_session_with_config_and_rx(
         /*analytics_events_client*/ None,
         Arc::new(codex_thread_store::LocalThreadStore::new(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
+            /*state_db*/ None,
         )),
         codex_rollout_trace::ThreadTraceContext::disabled(),
     )
@@ -4988,6 +4991,18 @@ where
     let codex_home = tempfile::tempdir().expect("create temp dir");
     let mut config = build_test_config(codex_home.path()).await;
     configure_config(&mut config);
+    let state_db = if config.features.enabled(Feature::Goals) {
+        Some(
+            codex_state::StateRuntime::init(
+                config.sqlite_home.clone(),
+                config.model_provider_id.clone(),
+            )
+            .await
+            .expect("goal tests should initialize sqlite state db"),
+        )
+    } else {
+        None
+    };
     let config = Arc::new(config);
     let conversation_id = ThreadId::default();
     let auth_manager = AuthManager::from_auth_for_testing(auth);
@@ -5113,10 +5128,11 @@ where
         agent_control,
         network_proxy: None,
         network_approval: Arc::clone(&network_approval),
-        state_db: None,
+        state_db: state_db.clone(),
         live_thread: None,
         thread_store: Arc::new(codex_thread_store::LocalThreadStore::new(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
+            state_db,
         )),
         model_client: ModelClient::new(
             Some(Arc::clone(&auth_manager)),
@@ -5229,9 +5245,9 @@ async fn make_goal_session_and_context_with_rx() -> (
 
 async fn upsert_goal_test_thread(session: &Session) {
     let config = session.get_config().await;
-    let state_db = goal_test_state_db(session)
-        .await
-        .expect("goal test state db should initialize");
+    let state_db = session
+        .state_db()
+        .expect("goal test session should have a state db");
     let mut builder = codex_state::ThreadMetadataBuilder::new(
         session.conversation_id,
         config
@@ -7302,6 +7318,9 @@ fn post_goal_token_usage() -> TokenUsage {
 }
 
 async fn goal_test_state_db(sess: &Session) -> anyhow::Result<crate::StateDbHandle> {
+    if let Some(state_db) = sess.state_db() {
+        return Ok(state_db);
+    }
     let config = sess.get_config().await;
     codex_state::StateRuntime::init(config.sqlite_home.clone(), config.model_provider_id.clone())
         .await

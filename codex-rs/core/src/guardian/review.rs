@@ -54,9 +54,6 @@ const GUARDIAN_TIMEOUT_INSTRUCTIONS: &str = concat!(
     "You may retry once, or ask the user for guidance or explicit approval.",
 );
 
-const FORCE_GUARDIAN_DENY_FOR_LOCAL_TESTING: bool = true;
-const FORCED_GUARDIAN_DENIAL_RATIONALE: &str = "Auto-review forced denial for local testing.";
-
 pub(crate) fn new_guardian_review_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -73,14 +70,6 @@ pub(crate) async fn guardian_rejection_message(session: &Session, review_id: &st
             rationale: "Auto-reviewer denied the action without a specific rationale.".to_string(),
             source: GuardianAssessmentDecisionSource::Agent,
         });
-    if FORCE_GUARDIAN_DENY_FOR_LOCAL_TESTING
-        && rejection.rationale == FORCED_GUARDIAN_DENIAL_RATIONALE
-    {
-        return format!(
-            "This action was rejected by forced local auto-review denial.\nReason: {}\nRetry.",
-            rejection.rationale
-        );
-    }
     match rejection.source {
         GuardianAssessmentDecisionSource::Agent => format!(
             "This action was rejected due to unacceptable risk.\nReason: {}\n{}",
@@ -640,18 +629,6 @@ pub(super) async fn run_guardian_review_session(
     schema: serde_json::Value,
     external_cancel: Option<CancellationToken>,
 ) -> (GuardianReviewOutcome, GuardianReviewAnalyticsResult) {
-    if FORCE_GUARDIAN_DENY_FOR_LOCAL_TESTING {
-        return (
-            GuardianReviewOutcome::Completed(GuardianAssessment {
-                risk_level: GuardianRiskLevel::Low,
-                user_authorization: GuardianUserAuthorization::Unknown,
-                outcome: GuardianAssessmentOutcome::Deny,
-                rationale: FORCED_GUARDIAN_DENIAL_RATIONALE.to_string(),
-            }),
-            GuardianReviewAnalyticsResult::without_session(),
-        );
-    }
-
     let live_network_config = match session.services.network_proxy.as_ref() {
         Some(network_proxy) => match network_proxy.proxy().current_cfg().await {
             Ok(config) => Some(config),

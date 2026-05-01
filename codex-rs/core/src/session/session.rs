@@ -207,7 +207,17 @@ impl SessionConfiguration {
             .unwrap_or_else(|| self.cwd.clone());
 
         let cwd_changed = absolute_cwd.as_path() != self.cwd.as_path();
-        next_configuration.cwd = absolute_cwd;
+        next_configuration.cwd = absolute_cwd.clone();
+        if let Some(environments) = updates.environments.clone() {
+            next_configuration.environments = environments;
+        }
+        if updates.environments.is_none()
+            && cwd_changed
+            && next_configuration.environments.len() == 1
+            && let Some(turn_environment) = next_configuration.environments.first_mut()
+        {
+            turn_environment.cwd = absolute_cwd;
+        }
 
         if let Some(permission_profile) = updates.permission_profile.clone() {
             let active_permission_profile =
@@ -305,9 +315,8 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) reasoning_summary: Option<ReasoningSummaryConfig>,
     pub(crate) service_tier: Option<Option<ServiceTier>>,
     pub(crate) final_output_json_schema: Option<Option<Value>>,
-    /// Turn-local environment override. `None` inherits the sticky thread
-    /// environments stored on `SessionConfiguration`; `Some([])` explicitly
-    /// disables environments for this turn.
+    /// Sticky environment selections for subsequent turns. `None` inherits
+    /// the current thread environments; `Some([])` explicitly disables them.
     pub(crate) environments: Option<Vec<TurnEnvironmentSelection>>,
     pub(crate) personality: Option<Personality>,
     pub(crate) app_server_client_name: Option<String>,

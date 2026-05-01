@@ -414,9 +414,15 @@ fn start_uninitialized(args: InProcessStartArgs) -> InProcessClientHandle {
             let state_db = match &args.config.experimental_thread_store {
                 ThreadStoreConfig::Local => init_state_db_from_config(args.config.as_ref()).await,
                 ThreadStoreConfig::Remote { .. } | ThreadStoreConfig::InMemory { .. } => {
-                    let sqlite_home = tempfile::tempdir()
-                        .expect("create isolated in-process sqlite home")
-                        .keep();
+                    let sqlite_home = match tempfile::tempdir() {
+                        Ok(dir) => dir.keep(),
+                        Err(err) => {
+                            warn!(
+                                "in-process app-server failed to create isolated sqlite home; shutting down processor task: {err}"
+                            );
+                            return;
+                        }
+                    };
                     match codex_state::StateRuntime::init(
                         sqlite_home,
                         args.config.model_provider_id.clone(),

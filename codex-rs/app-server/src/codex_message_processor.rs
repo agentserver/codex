@@ -1,7 +1,6 @@
 use crate::bespoke_event_handling::apply_bespoke_event_handling;
 use crate::bespoke_event_handling::maybe_emit_hook_prompt_item_completed;
 use crate::command_exec::CommandExecManager;
-use crate::command_exec::ProcessProtocol;
 use crate::command_exec::StartCommandExecParams;
 use crate::config_manager::ConfigManager;
 use crate::error_code::INPUT_TOO_LARGE_ERROR_CODE;
@@ -18,6 +17,8 @@ use crate::outgoing_message::ConnectionRequestId;
 use crate::outgoing_message::OutgoingMessageSender;
 use crate::outgoing_message::RequestContext;
 use crate::outgoing_message::ThreadScopedOutgoingMessageSender;
+use crate::process_exec::ProcessExecManager;
+use crate::process_exec::StartProcessParams;
 use crate::thread_status::ThreadWatchManager;
 use crate::thread_status::resolve_thread_status;
 use chrono::DateTime;
@@ -549,6 +550,7 @@ pub(crate) struct CodexMessageProcessor {
     /// concurrently against mostly append-only storage.
     thread_list_state_permit: Arc<Semaphore>,
     command_exec_manager: CommandExecManager,
+    process_exec_manager: ProcessExecManager,
     workspace_settings_cache: Arc<workspace_settings::WorkspaceSettingsCache>,
     pending_fuzzy_searches: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
     fuzzy_search_sessions: Arc<Mutex<HashMap<String, FuzzyFileSearchSession>>>,
@@ -900,6 +902,7 @@ impl CodexMessageProcessor {
             thread_watch_manager: ThreadWatchManager::new_with_outgoing(outgoing),
             thread_list_state_permit: Arc::new(Semaphore::new(/*permits*/ 1)),
             command_exec_manager: CommandExecManager::default(),
+            process_exec_manager: ProcessExecManager::default(),
             workspace_settings_cache: Arc::new(
                 workspace_settings::WorkspaceSettingsCache::default(),
             ),
@@ -2372,7 +2375,7 @@ impl CodexMessageProcessor {
             None => ExecExpiration::DefaultTimeout,
         };
         let output_bytes_cap = Some(output_bytes_cap.unwrap_or(DEFAULT_OUTPUT_BYTES_CAP));
-        let size = match size.map(crate::command_exec::process_terminal_size_from_protocol) {
+        let size = match size.map(crate::process_exec::terminal_size_from_protocol) {
             Some(Ok(size)) => Some(size),
             Some(Err(error)) => return Err(error),
             None => None,
@@ -2391,14 +2394,12 @@ impl CodexMessageProcessor {
             /*arg0*/ None,
         );
 
-        self.command_exec_manager
-            .start(StartCommandExecParams {
+        self.process_exec_manager
+            .start(StartProcessParams {
                 outgoing: self.outgoing.clone(),
                 request_id,
-                protocol: ProcessProtocol::Process,
-                process_id: Some(process_handle),
+                process_handle,
                 exec_request,
-                started_network_proxy: None,
                 tty,
                 stream_stdin,
                 stream_stdout_stderr,
@@ -2516,7 +2517,7 @@ impl CodexMessageProcessor {
         };
         let outgoing = self.outgoing.clone();
         let request_for_task = request.clone();
-        let size = match size.map(crate::command_exec::command_terminal_size_from_protocol) {
+        let size = match size.map(crate::command_exec::terminal_size_from_protocol) {
             Some(Ok(size)) => Some(size),
             Some(Err(error)) => return Err(error),
             None => None,
@@ -2637,7 +2638,6 @@ impl CodexMessageProcessor {
             .start(StartCommandExecParams {
                 outgoing,
                 request_id: request_for_task,
-                protocol: ProcessProtocol::CommandExec,
                 process_id,
                 exec_request,
                 started_network_proxy,
@@ -2702,8 +2702,8 @@ impl CodexMessageProcessor {
         params: ProcessWriteStdinParams,
     ) {
         let result = self
-            .command_exec_manager
-            .process_write_stdin(request_id.clone(), params)
+            .process_exec_manager
+            .write_stdin(request_id.clone(), params)
             .await;
         self.outgoing.send_result(request_id, result).await;
     }
@@ -2714,16 +2714,16 @@ impl CodexMessageProcessor {
         params: ProcessResizePtyParams,
     ) {
         let result = self
-            .command_exec_manager
-            .process_resize_pty(request_id.clone(), params)
+            .process_exec_manager
+            .resize_pty(request_id.clone(), params)
             .await;
         self.outgoing.send_result(request_id, result).await;
     }
 
     async fn process_kill(&self, request_id: ConnectionRequestId, params: ProcessKillParams) {
         let result = self
-            .command_exec_manager
-            .process_kill(request_id.clone(), params)
+            .process_exec_manager
+            .kill(request_id.clone(), params)
             .await;
         self.outgoing.send_result(request_id, result).await;
     }
@@ -4486,6 +4486,9 @@ impl CodexMessageProcessor {
 
     pub(crate) async fn connection_closed(&self, connection_id: ConnectionId) {
         self.command_exec_manager
+            .connection_closed(connection_id)
+            .await;
+        self.process_exec_manager
             .connection_closed(connection_id)
             .await;
         let thread_ids = self

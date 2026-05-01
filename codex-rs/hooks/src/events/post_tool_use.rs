@@ -31,7 +31,6 @@ pub struct PostToolUseRequest {
     pub tool_use_id: String,
     pub tool_input: Value,
     pub tool_response: Value,
-    pub is_mcp_tool: bool,
 }
 
 #[derive(Debug)]
@@ -118,7 +117,7 @@ pub(crate) async fn run(
 
     let mut results = results;
     let updated_tool_output =
-        select_updated_tool_output(&mut results, request.is_mcp_tool, &request.tool_response);
+        select_updated_tool_output(&mut results, &request.tool_name, &request.tool_response);
     let additional_contexts = common::flatten_additional_contexts(
         results
             .iter()
@@ -332,11 +331,18 @@ fn serialization_failure_outcome(hook_events: Vec<HookCompletedEvent>) -> PostTo
     }
 }
 
+/// Selects the final hook-provided replacement that the model should see.
+///
+/// For each handler, `updatedToolOutput` takes precedence over
+/// `updatedMCPToolOutput`. MCP-specific replacements only apply to MCP tools,
+/// MCP outputs bypass built-in shape checks, and later valid replacements win
+/// over earlier ones in configured hook order.
 fn select_updated_tool_output(
     results: &mut [dispatcher::ParsedHandler<PostToolUseHandlerData>],
-    is_mcp_tool: bool,
+    tool_name: &str,
     original_tool_response: &Value,
 ) -> Option<Value> {
+    let is_mcp_tool = tool_name.starts_with("mcp__");
     let mut selected = None;
 
     for result in results {
@@ -648,11 +654,7 @@ mod tests {
         ];
 
         assert_eq!(
-            super::select_updated_tool_output(
-                &mut results,
-                /*is_mcp_tool*/ false,
-                &json!("old")
-            ),
+            super::select_updated_tool_output(&mut results, "Bash", &json!("old")),
             Some(json!("second"))
         );
     }
@@ -670,11 +672,7 @@ mod tests {
         )];
 
         assert_eq!(
-            super::select_updated_tool_output(
-                &mut results,
-                /*is_mcp_tool*/ false,
-                &json!("old")
-            ),
+            super::select_updated_tool_output(&mut results, "Bash", &json!("old")),
             None
         );
         assert_eq!(
@@ -700,7 +698,7 @@ mod tests {
         )];
 
         assert_eq!(
-            super::select_updated_tool_output(&mut results, /*is_mcp_tool*/ true, &json!({})),
+            super::select_updated_tool_output(&mut results, "mcp__memory__lookup", &json!({})),
             Some(json!({"source": "generic"}))
         );
     }
@@ -718,7 +716,7 @@ mod tests {
         )];
 
         assert_eq!(
-            super::select_updated_tool_output(&mut results, /*is_mcp_tool*/ true, &json!({})),
+            super::select_updated_tool_output(&mut results, "mcp__memory__lookup", &json!({})),
             Some(json!({"source": "mcp"}))
         );
     }
@@ -762,7 +760,6 @@ mod tests {
             tool_use_id: tool_use_id.to_string(),
             tool_input: json!({ "command": "echo hello" }),
             tool_response: json!({"ok": true}),
-            is_mcp_tool: false,
         }
     }
 }

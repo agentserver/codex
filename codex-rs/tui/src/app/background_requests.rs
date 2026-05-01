@@ -114,7 +114,7 @@ impl App {
                         .filter(|hook| {
                             matches!(
                                 hook.trust_status,
-                                HookTrustStatus::Untrusted | HookTrustStatus::Changed
+                                HookTrustStatus::Untrusted | HookTrustStatus::Modified
                             )
                         })
                         .count()

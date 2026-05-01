@@ -5,7 +5,9 @@
 //! sandboxing enforced by the explicit filesystem sandbox context.
 use crate::exec::is_likely_sandbox_denied;
 use crate::guardian::GuardianApprovalRequest;
+use crate::guardian::reset_auto_review_rejection_circuit_breaker;
 use crate::guardian::review_approval_request;
+use crate::guardian::take_pending_auto_review_escalation;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::sandboxing::Approvable;
 use crate::tools::sandboxing::ApprovalCtx;
@@ -130,16 +132,24 @@ impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
         let turn = ctx.turn;
         let call_id = ctx.call_id.to_string();
         let retry_reason = ctx.retry_reason.clone();
-        let approval_keys = self.approval_keys(req);
+        let mut approval_keys = self.approval_keys(req);
         let changes = req.changes.clone();
         let guardian_review_id = ctx.guardian_review_id.clone();
         Box::pin(async move {
+            let mut escalated_from_guardian = false;
             if let Some(review_id) = guardian_review_id {
                 let action = ApplyPatchRuntime::build_guardian_review_request(req, ctx.call_id);
-                return review_approval_request(session, turn, review_id, action, retry_reason)
-                    .await;
+                let decision =
+                    review_approval_request(session, turn, review_id, action, retry_reason.clone())
+                        .await;
+                escalated_from_guardian = matches!(decision, ReviewDecision::Denied)
+                    && take_pending_auto_review_escalation(session, &turn.sub_id).await;
+                if !escalated_from_guardian {
+                    return decision;
+                }
+                approval_keys.clear();
             }
-            if req.permissions_preapproved && retry_reason.is_none() {
+            if req.permissions_preapproved && retry_reason.is_none() && !escalated_from_guardian {
                 return ReviewDecision::Approved;
             }
             if let Some(reason) = retry_reason {
@@ -152,10 +162,14 @@ impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
                         /*grant_root*/ None,
                     )
                     .await;
-                return rx_approve.await.unwrap_or_default();
+                let decision = rx_approve.await.unwrap_or_default();
+                if escalated_from_guardian {
+                    reset_auto_review_rejection_circuit_breaker(session, &turn.sub_id).await;
+                }
+                return decision;
             }
 
-            with_cached_approval(
+            let decision = with_cached_approval(
                 &session.services,
                 "apply_patch",
                 approval_keys,
@@ -168,7 +182,11 @@ impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
                     rx_approve.await.unwrap_or_default()
                 },
             )
-            .await
+            .await;
+            if escalated_from_guardian {
+                reset_auto_review_rejection_circuit_breaker(session, &turn.sub_id).await;
+            }
+            decision
         })
     }
 

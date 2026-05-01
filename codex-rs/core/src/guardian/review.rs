@@ -16,7 +16,6 @@ use codex_protocol::protocol::GuardianRiskLevel;
 use codex_protocol::protocol::GuardianUserAuthorization;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::SubAgentSource;
-use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::WarningEvent;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -55,6 +54,9 @@ const GUARDIAN_TIMEOUT_INSTRUCTIONS: &str = concat!(
     "You may retry once, or ask the user for guidance or explicit approval.",
 );
 
+const FORCE_GUARDIAN_DENY_FOR_LOCAL_TESTING: bool = true;
+const FORCED_GUARDIAN_DENIAL_RATIONALE: &str = "Auto-review forced denial for local testing.";
+
 pub(crate) fn new_guardian_review_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -71,6 +73,14 @@ pub(crate) async fn guardian_rejection_message(session: &Session, review_id: &st
             rationale: "Auto-reviewer denied the action without a specific rationale.".to_string(),
             source: GuardianAssessmentDecisionSource::Agent,
         });
+    if FORCE_GUARDIAN_DENY_FOR_LOCAL_TESTING
+        && rejection.rationale == FORCED_GUARDIAN_DENIAL_RATIONALE
+    {
+        return format!(
+            "This action was rejected by forced local auto-review denial.\nReason: {}\nRetry.",
+            rejection.rationale
+        );
+    }
     match rejection.source {
         GuardianAssessmentDecisionSource::Agent => format!(
             "This action was rejected due to unacceptable risk.\nReason: {}\n{}",
@@ -202,20 +212,35 @@ async fn record_guardian_denial(session: &Arc<Session>, turn: &Arc<TurnContext>,
             turn.as_ref(),
             EventMsg::GuardianWarning(WarningEvent {
                 message: format!(
-                    "Automatic approval review rejected too many approval requests for this turn ({consecutive_denials} consecutive, {total_denials} total); interrupting the turn."
+                    "Auto-review rejected too many approval requests for this turn ({consecutive_denials} consecutive, {total_denials} total); requesting manual approval for the current request."
                 ),
             }),
         )
         .await;
+}
 
-    let runtime_handle = session.services.runtime_handle.clone();
-    let session = Arc::clone(session);
-    let turn_id = turn_id.to_string();
-    let _abort_task = runtime_handle.spawn(async move {
-        session
-            .abort_turn_if_active(&turn_id, TurnAbortReason::Interrupted)
-            .await;
-    });
+pub(crate) async fn reset_auto_review_rejection_circuit_breaker(
+    session: &Arc<Session>,
+    turn_id: &str,
+) {
+    session
+        .services
+        .guardian_rejection_circuit_breaker
+        .lock()
+        .await
+        .clear_turn(turn_id);
+}
+
+pub(crate) async fn take_pending_auto_review_escalation(
+    session: &Arc<Session>,
+    turn_id: &str,
+) -> bool {
+    session
+        .services
+        .guardian_rejection_circuit_breaker
+        .lock()
+        .await
+        .take_pending_auto_review_escalation(turn_id)
 }
 
 #[cfg(test)]
@@ -615,6 +640,18 @@ pub(super) async fn run_guardian_review_session(
     schema: serde_json::Value,
     external_cancel: Option<CancellationToken>,
 ) -> (GuardianReviewOutcome, GuardianReviewAnalyticsResult) {
+    if FORCE_GUARDIAN_DENY_FOR_LOCAL_TESTING {
+        return (
+            GuardianReviewOutcome::Completed(GuardianAssessment {
+                risk_level: GuardianRiskLevel::Low,
+                user_authorization: GuardianUserAuthorization::Unknown,
+                outcome: GuardianAssessmentOutcome::Deny,
+                rationale: FORCED_GUARDIAN_DENIAL_RATIONALE.to_string(),
+            }),
+            GuardianReviewAnalyticsResult::without_session(),
+        );
+    }
+
     let live_network_config = match session.services.network_proxy.as_ref() {
         Some(network_proxy) => match network_proxy.proxy().current_cfg().await {
             Ok(config) => Some(config),

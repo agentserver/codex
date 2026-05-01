@@ -33,11 +33,13 @@ pub(crate) use review::is_guardian_reviewer_source;
 pub(crate) use review::new_guardian_review_id;
 #[cfg(test)]
 pub(crate) use review::record_guardian_denial_for_test;
+pub(crate) use review::reset_auto_review_rejection_circuit_breaker;
 pub(crate) use review::review_approval_request;
 #[cfg(test)]
 pub(crate) use review::review_approval_request_with_cancel;
 pub(crate) use review::routes_approval_to_guardian;
 pub(crate) use review::spawn_approval_request_review;
+pub(crate) use review::take_pending_auto_review_escalation;
 pub(crate) use review_session::GuardianReviewSessionManager;
 
 const GUARDIAN_PREFERRED_MODEL: &str = "codex-auto-review";
@@ -117,6 +119,12 @@ impl GuardianRejectionCircuitBreaker {
     pub(crate) fn record_non_denial(&mut self, turn_id: &str) {
         let turn = self.turns.entry(turn_id.to_string()).or_default();
         turn.consecutive_denials = 0;
+    }
+
+    pub(crate) fn take_pending_auto_review_escalation(&mut self, turn_id: &str) -> bool {
+        self.turns
+            .get_mut(turn_id)
+            .is_some_and(|turn| std::mem::take(&mut turn.interrupt_triggered))
     }
 }
 

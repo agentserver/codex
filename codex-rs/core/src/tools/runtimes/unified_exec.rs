@@ -9,7 +9,9 @@ use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
 use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::GuardianNetworkAccessTrigger;
+use crate::guardian::reset_auto_review_rejection_circuit_breaker;
 use crate::guardian::review_approval_request;
+use crate::guardian::take_pending_auto_review_escalation;
 use crate::sandboxing::ExecOptions;
 use crate::sandboxing::ExecServerEnvConfig;
 use crate::sandboxing::SandboxPermissions;
@@ -140,7 +142,7 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
         req: &'b UnifiedExecRequest,
         ctx: ApprovalCtx<'b>,
     ) -> BoxFuture<'b, ReviewDecision> {
-        let keys = self.approval_keys(req);
+        let mut keys = self.approval_keys(req);
         let session = ctx.session;
         let turn = ctx.turn;
         let call_id = ctx.call_id.to_string();
@@ -150,44 +152,56 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
         let reason = retry_reason.clone().or_else(|| req.justification.clone());
         let guardian_review_id = ctx.guardian_review_id.clone();
         Box::pin(async move {
+            let mut escalated_from_guardian = false;
             if let Some(review_id) = guardian_review_id {
-                return review_approval_request(
+                let decision = review_approval_request(
                     session,
                     turn,
                     review_id,
                     GuardianApprovalRequest::ExecCommand {
-                        id: call_id,
-                        command,
+                        id: call_id.clone(),
+                        command: command.clone(),
                         cwd: cwd.clone(),
                         sandbox_permissions: req.sandbox_permissions,
                         additional_permissions: req.additional_permissions.clone(),
                         justification: req.justification.clone(),
                         tty: req.tty,
                     },
-                    retry_reason,
+                    retry_reason.clone(),
                 )
                 .await;
+                escalated_from_guardian = matches!(decision, ReviewDecision::Denied)
+                    && take_pending_auto_review_escalation(session, &turn.sub_id).await;
+                if !escalated_from_guardian {
+                    return decision;
+                }
+                keys.clear();
             }
-            with_cached_approval(&session.services, "unified_exec", keys, || async move {
-                let available_decisions = None;
-                session
-                    .request_command_approval(
-                        turn,
-                        call_id,
-                        /*approval_id*/ None,
-                        command,
-                        cwd.clone(),
-                        reason,
-                        ctx.network_approval_context.clone(),
-                        req.exec_approval_requirement
-                            .proposed_execpolicy_amendment()
-                            .cloned(),
-                        req.additional_permissions.clone(),
-                        available_decisions,
-                    )
-                    .await
-            })
-            .await
+            let decision =
+                with_cached_approval(&session.services, "unified_exec", keys, || async move {
+                    let available_decisions = None;
+                    session
+                        .request_command_approval(
+                            turn,
+                            call_id,
+                            /*approval_id*/ None,
+                            command,
+                            cwd.clone(),
+                            reason,
+                            ctx.network_approval_context.clone(),
+                            req.exec_approval_requirement
+                                .proposed_execpolicy_amendment()
+                                .cloned(),
+                            req.additional_permissions.clone(),
+                            available_decisions,
+                        )
+                        .await
+                })
+                .await;
+            if escalated_from_guardian {
+                reset_auto_review_rejection_circuit_breaker(session, &turn.sub_id).await;
+            }
+            decision
         })
     }
 

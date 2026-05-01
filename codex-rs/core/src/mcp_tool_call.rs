@@ -23,8 +23,10 @@ use crate::guardian::guardian_approval_request_to_json;
 use crate::guardian::guardian_rejection_message;
 use crate::guardian::guardian_timeout_message;
 use crate::guardian::new_guardian_review_id;
+use crate::guardian::reset_auto_review_rejection_circuit_breaker;
 use crate::guardian::review_approval_request;
 use crate::guardian::routes_approval_to_guardian;
+use crate::guardian::take_pending_auto_review_escalation;
 use crate::hook_runtime::run_permission_request_hooks;
 use crate::mcp_openai_file::rewrite_mcp_tool_arguments_for_openai_files;
 use crate::mcp_tool_approval_templates::RenderedMcpToolApprovalParam;
@@ -958,6 +960,7 @@ async fn maybe_request_mcp_tool_approval(
         .features
         .enabled(Feature::ToolCallMcpElicitation);
 
+    let mut escalated_from_guardian = false;
     if routes_approval_to_guardian(turn_context) {
         let review_id = new_guardian_review_id();
         let decision = review_approval_request(
@@ -968,16 +971,21 @@ async fn maybe_request_mcp_tool_approval(
             monitor_reason.clone(),
         )
         .await;
-        let decision = mcp_tool_approval_decision_from_guardian(sess, &review_id, decision).await;
-        apply_mcp_tool_approval_decision(
-            sess,
-            turn_context,
-            &decision,
-            session_approval_key,
-            persistent_approval_key,
-        )
-        .await;
-        return Some(decision);
+        escalated_from_guardian = matches!(decision, ReviewDecision::Denied)
+            && take_pending_auto_review_escalation(sess, &turn_context.sub_id).await;
+        if !escalated_from_guardian {
+            let decision =
+                mcp_tool_approval_decision_from_guardian(sess, &review_id, decision).await;
+            apply_mcp_tool_approval_decision(
+                sess,
+                turn_context,
+                &decision,
+                session_approval_key,
+                persistent_approval_key,
+            )
+            .await;
+            return Some(decision);
+        }
     }
 
     let prompt_options = mcp_tool_approval_prompt_options(
@@ -1039,6 +1047,9 @@ async fn maybe_request_mcp_tool_approval(
             &question_id,
         );
         let decision = normalize_approval_decision_for_mode(decision, approval_mode);
+        if escalated_from_guardian {
+            reset_auto_review_rejection_circuit_breaker(sess, &turn_context.sub_id).await;
+        }
         apply_mcp_tool_approval_decision(
             sess,
             turn_context,
@@ -1060,6 +1071,9 @@ async fn maybe_request_mcp_tool_approval(
         parse_mcp_tool_approval_response(response, &question_id),
         approval_mode,
     );
+    if escalated_from_guardian {
+        reset_auto_review_rejection_circuit_breaker(sess, &turn_context.sub_id).await;
+    }
     apply_mcp_tool_approval_decision(
         sess,
         turn_context,

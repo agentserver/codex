@@ -508,51 +508,6 @@ impl Session {
         }
     }
 
-    pub(crate) async fn abort_turn_if_active(
-        self: &Arc<Self>,
-        turn_id: &str,
-        reason: TurnAbortReason,
-    ) -> bool {
-        let active_turn = {
-            let mut active = self.active_turn.lock().await;
-            if active
-                .as_ref()
-                .is_some_and(|active_turn| active_turn.tasks.contains_key(turn_id))
-            {
-                active.take()
-            } else {
-                None
-            }
-        };
-        let Some(mut active_turn) = active_turn else {
-            return false;
-        };
-
-        let tasks = active_turn.drain_tasks();
-        let turn_context = tasks.first().map(|task| Arc::clone(&task.turn_context));
-        for task in tasks {
-            self.handle_task_abort(task, reason.clone()).await;
-        }
-        if let Err(err) = self
-            .goal_runtime_apply(GoalRuntimeEvent::TaskAborted {
-                turn_context: turn_context.as_deref(),
-                reason: reason.clone(),
-            })
-            .await
-        {
-            warn!("failed to apply goal runtime abort event: {err}");
-        }
-        // Let interrupted tasks observe cancellation before dropping pending approvals, or an
-        // in-flight approval wait can surface as a model-visible rejection before TurnAborted.
-        active_turn.clear_pending().await;
-
-        if reason == TurnAbortReason::Interrupted {
-            self.maybe_start_turn_for_pending_work().await;
-        }
-
-        true
-    }
-
     pub async fn on_task_finished(
         self: &Arc<Self>,
         turn_context: Arc<TurnContext>,

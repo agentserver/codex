@@ -1988,7 +1988,9 @@ impl Session {
         }
 
         let requested_permissions = args.permissions;
+        let request_reason = args.reason;
 
+        let mut escalated_from_guardian = false;
         if crate::guardian::routes_approval_to_guardian(turn_context.as_ref()) {
             let originating_turn_state = {
                 let active = self.active_turn.lock().await;
@@ -1998,9 +2000,9 @@ impl Session {
             let session = Arc::clone(self);
             let turn = Arc::clone(turn_context);
             let request = crate::guardian::GuardianApprovalRequest::RequestPermissions {
-                id: call_id,
+                id: call_id.clone(),
                 turn_id: turn_context.sub_id.clone(),
-                reason: args.reason,
+                reason: request_reason.clone(),
                 permissions: requested_permissions.clone(),
             };
             let review_rx = crate::guardian::spawn_approval_request_review(
@@ -2017,52 +2019,58 @@ impl Session {
                 _ = cancellation_token.cancelled() => return None,
                 decision = review_rx => decision.unwrap_or(ReviewDecision::Denied),
             };
-            let response = match decision {
-                ReviewDecision::Approved | ReviewDecision::ApprovedExecpolicyAmendment { .. } => {
-                    RequestPermissionsResponse {
-                        permissions: requested_permissions.clone(),
-                        scope: PermissionGrantScope::Turn,
-                        strict_auto_review: false,
+            escalated_from_guardian = matches!(decision, ReviewDecision::Denied)
+                && crate::guardian::take_pending_auto_review_escalation(self, &turn_context.sub_id)
+                    .await;
+            if !escalated_from_guardian {
+                let response = match decision {
+                    ReviewDecision::Approved
+                    | ReviewDecision::ApprovedExecpolicyAmendment { .. } => {
+                        RequestPermissionsResponse {
+                            permissions: requested_permissions.clone(),
+                            scope: PermissionGrantScope::Turn,
+                            strict_auto_review: false,
+                        }
                     }
-                }
-                ReviewDecision::ApprovedForSession => RequestPermissionsResponse {
-                    permissions: requested_permissions.clone(),
-                    scope: PermissionGrantScope::Session,
-                    strict_auto_review: false,
-                },
-                ReviewDecision::NetworkPolicyAmendment {
-                    network_policy_amendment,
-                } => match network_policy_amendment.action {
-                    NetworkPolicyRuleAction::Allow => RequestPermissionsResponse {
+                    ReviewDecision::ApprovedForSession => RequestPermissionsResponse {
                         permissions: requested_permissions.clone(),
-                        scope: PermissionGrantScope::Turn,
+                        scope: PermissionGrantScope::Session,
                         strict_auto_review: false,
                     },
-                    NetworkPolicyRuleAction::Deny => RequestPermissionsResponse {
-                        permissions: RequestPermissionProfile::default(),
-                        scope: PermissionGrantScope::Turn,
-                        strict_auto_review: false,
+                    ReviewDecision::NetworkPolicyAmendment {
+                        network_policy_amendment,
+                    } => match network_policy_amendment.action {
+                        NetworkPolicyRuleAction::Allow => RequestPermissionsResponse {
+                            permissions: requested_permissions.clone(),
+                            scope: PermissionGrantScope::Turn,
+                            strict_auto_review: false,
+                        },
+                        NetworkPolicyRuleAction::Deny => RequestPermissionsResponse {
+                            permissions: RequestPermissionProfile::default(),
+                            scope: PermissionGrantScope::Turn,
+                            strict_auto_review: false,
+                        },
                     },
-                },
-                ReviewDecision::Abort | ReviewDecision::Denied | ReviewDecision::TimedOut => {
-                    RequestPermissionsResponse {
-                        permissions: RequestPermissionProfile::default(),
-                        scope: PermissionGrantScope::Turn,
-                        strict_auto_review: false,
+                    ReviewDecision::Abort | ReviewDecision::Denied | ReviewDecision::TimedOut => {
+                        RequestPermissionsResponse {
+                            permissions: RequestPermissionProfile::default(),
+                            scope: PermissionGrantScope::Turn,
+                            strict_auto_review: false,
+                        }
                     }
-                }
-            };
-            let response = Self::normalize_request_permissions_response(
-                requested_permissions,
-                response,
-                cwd.as_path(),
-            );
-            self.record_granted_request_permissions_for_turn(
-                &response,
-                originating_turn_state.as_ref(),
-            )
-            .await;
-            return Some(response);
+                };
+                let response = Self::normalize_request_permissions_response(
+                    requested_permissions,
+                    response,
+                    cwd.as_path(),
+                );
+                self.record_granted_request_permissions_for_turn(
+                    &response,
+                    originating_turn_state.as_ref(),
+                )
+                .await;
+                return Some(response);
+            }
         }
 
         let (tx_response, rx_response) = oneshot::channel();
@@ -2090,12 +2098,12 @@ impl Session {
         let event = EventMsg::RequestPermissions(RequestPermissionsEvent {
             call_id: call_id.clone(),
             turn_id: turn_context.sub_id.clone(),
-            reason: args.reason,
+            reason: request_reason,
             permissions: requested_permissions,
             cwd: Some(cwd),
         });
         self.send_event(turn_context.as_ref(), event).await;
-        tokio::select! {
+        let response = tokio::select! {
             biased;
             _ = cancellation_token.cancelled() => {
                 let mut active = self.active_turn.lock().await;
@@ -2106,7 +2114,15 @@ impl Session {
                 None
             }
             response = rx_response => response.ok(),
+        };
+        if escalated_from_guardian {
+            crate::guardian::reset_auto_review_rejection_circuit_breaker(
+                self,
+                &turn_context.sub_id,
+            )
+            .await;
         }
+        response
     }
 
     #[expect(

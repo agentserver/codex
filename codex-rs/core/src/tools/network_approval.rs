@@ -3,8 +3,10 @@ use crate::guardian::GuardianNetworkAccessTrigger;
 use crate::guardian::guardian_rejection_message;
 use crate::guardian::guardian_timeout_message;
 use crate::guardian::new_guardian_review_id;
+use crate::guardian::reset_auto_review_rejection_circuit_breaker;
 use crate::guardian::review_approval_request;
 use crate::guardian::routes_approval_to_guardian;
+use crate::guardian::take_pending_auto_review_escalation;
 use crate::hook_runtime::run_permission_request_hooks;
 use crate::network_policy_decision::denied_network_policy_message;
 use crate::session::session::Session;
@@ -498,8 +500,9 @@ impl NetworkApprovalService {
         }
         let use_guardian = routes_approval_to_guardian(&turn_context);
         let guardian_review_id = use_guardian.then(new_guardian_review_id);
+        let mut escalated_from_guardian = false;
         let approval_decision = if let Some(review_id) = guardian_review_id.clone() {
-            review_approval_request(
+            let decision = review_approval_request(
                 &session,
                 &turn_context,
                 review_id,
@@ -516,7 +519,28 @@ impl NetworkApprovalService {
                 },
                 Some(policy_denial_message.clone()),
             )
-            .await
+            .await;
+            escalated_from_guardian = matches!(decision, ReviewDecision::Denied)
+                && take_pending_auto_review_escalation(&session, &turn_context.sub_id).await;
+            if escalated_from_guardian {
+                let available_decisions = None;
+                session
+                    .request_command_approval(
+                        turn_context.as_ref(),
+                        guardian_approval_id,
+                        /*approval_id*/ None,
+                        prompt_command,
+                        turn_context.cwd.clone(),
+                        Some(prompt_reason),
+                        Some(network_approval_context.clone()),
+                        /*proposed_execpolicy_amendment*/ None,
+                        /*additional_permissions*/ None,
+                        available_decisions,
+                    )
+                    .await
+            } else {
+                decision
+            }
         } else {
             let available_decisions = None;
             session
@@ -534,6 +558,9 @@ impl NetworkApprovalService {
                 )
                 .await
         };
+        if escalated_from_guardian {
+            reset_auto_review_rejection_circuit_breaker(&session, &turn_context.sub_id).await;
+        }
 
         let mut cache_session_deny = false;
         let resolved = match approval_decision {

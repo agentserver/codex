@@ -7,8 +7,10 @@ use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::guardian_rejection_message;
 use crate::guardian::guardian_timeout_message;
 use crate::guardian::new_guardian_review_id;
+use crate::guardian::reset_auto_review_rejection_circuit_breaker;
 use crate::guardian::review_approval_request;
 use crate::guardian::routes_approval_to_guardian;
+use crate::guardian::take_pending_auto_review_escalation;
 use crate::hook_runtime::run_permission_request_hooks;
 use crate::sandboxing::ExecOptions;
 use crate::sandboxing::ExecRequest;
@@ -449,16 +451,20 @@ impl CoreShellActionProvider {
                             program: program.to_string_lossy().into_owned(),
                             argv: argv.to_vec(),
                             cwd: workdir.clone(),
-                            additional_permissions,
+                            additional_permissions: additional_permissions.clone(),
                         },
                         /*retry_reason*/ None,
                     )
                     .await;
-                    return PromptDecision {
-                        decision,
-                        guardian_review_id,
-                        rejection_message: None,
-                    };
+                    let escalated_from_guardian = matches!(decision, ReviewDecision::Denied)
+                        && take_pending_auto_review_escalation(&session, &turn.sub_id).await;
+                    if !escalated_from_guardian {
+                        return PromptDecision {
+                            decision,
+                            guardian_review_id,
+                            rejection_message: None,
+                        };
+                    }
                 }
 
                 // 3) Fall back to regular user prompt
@@ -476,6 +482,9 @@ impl CoreShellActionProvider {
                         Some(vec![ReviewDecision::Approved, ReviewDecision::Abort]),
                     )
                     .await;
+                if guardian_review_id.is_some() {
+                    reset_auto_review_rejection_circuit_breaker(&session, &turn.sub_id).await;
+                }
                 PromptDecision {
                     decision,
                     guardian_review_id: None,

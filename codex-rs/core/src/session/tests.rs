@@ -3486,7 +3486,6 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         tool_approvals: Mutex::new(ApprovalStore::default()),
         guardian_rejections: Mutex::new(std::collections::HashMap::new()),
         guardian_rejection_circuit_breaker: Mutex::new(Default::default()),
-        runtime_handle: tokio::runtime::Handle::current(),
         skills_manager,
         plugins_manager,
         mcp_manager,
@@ -4912,7 +4911,6 @@ where
         tool_approvals: Mutex::new(ApprovalStore::default()),
         guardian_rejections: Mutex::new(std::collections::HashMap::new()),
         guardian_rejection_circuit_breaker: Mutex::new(Default::default()),
-        runtime_handle: tokio::runtime::Handle::current(),
         skills_manager,
         plugins_manager,
         mcp_manager,
@@ -6315,7 +6313,7 @@ impl SessionTask for GuardianDeniedApprovalTask {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn guardian_auto_review_interrupts_after_three_consecutive_denials() {
+async fn guardian_auto_review_warns_after_three_consecutive_denials() {
     let (sess, tc, rx) = make_session_and_context_with_rx().await;
     let input = vec![UserInput::Text {
         text: "trigger guardian denials".to_string(),
@@ -6325,12 +6323,12 @@ async fn guardian_auto_review_interrupts_after_three_consecutive_denials() {
         .await;
 
     let mut observed = Vec::new();
-    let aborted = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    let warning = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             let event = rx.recv().await.expect("event");
-            if let EventMsg::TurnAborted(event) = &event.msg {
+            if let EventMsg::GuardianWarning(event) = &event.msg {
                 let event = event.clone();
-                observed.push(EventMsg::TurnAborted(event.clone()));
+                observed.push(EventMsg::GuardianWarning(event.clone()));
                 break event;
             }
             observed.push(event.msg);
@@ -6339,14 +6337,18 @@ async fn guardian_auto_review_interrupts_after_three_consecutive_denials() {
     .await
     .unwrap_or_else(|_| {
         panic!(
-            "guardian denial circuit breaker should interrupt the turn; observed events: {observed:?}"
+            "guardian denial circuit breaker should warn about escalation; observed events: {observed:?}"
         )
     });
-    assert_eq!(aborted.reason, TurnAbortReason::Interrupted);
+    assert!(
+        warning
+            .message
+            .contains("requesting manual approval for the current request")
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn guardian_helper_review_interrupts_after_three_consecutive_denials() {
+async fn guardian_helper_review_warns_after_three_consecutive_denials() {
     let (sess, tc, rx) = make_session_and_context_with_rx().await;
     let input = vec![UserInput::Text {
         text: "keep turn active for helper reviews".to_string(),
@@ -6384,12 +6386,12 @@ async fn guardian_helper_review_interrupts_after_three_consecutive_denials() {
     review_thread.join().expect("helper review thread");
 
     let mut observed = Vec::new();
-    let aborted = timeout(StdDuration::from_secs(5), async {
+    let warning = timeout(StdDuration::from_secs(5), async {
         loop {
             let event = rx.recv().await.expect("event");
-            if let EventMsg::TurnAborted(event) = &event.msg {
+            if let EventMsg::GuardianWarning(event) = &event.msg {
                 let event = event.clone();
-                observed.push(EventMsg::TurnAborted(event.clone()));
+                observed.push(EventMsg::GuardianWarning(event.clone()));
                 break event;
             }
             observed.push(event.msg);
@@ -6398,10 +6400,14 @@ async fn guardian_helper_review_interrupts_after_three_consecutive_denials() {
     .await
     .unwrap_or_else(|_| {
         panic!(
-            "helper review circuit breaker should interrupt the turn; observed events: {observed:?}"
+            "helper review circuit breaker should warn about escalation; observed events: {observed:?}"
         )
     });
-    assert_eq!(aborted.reason, TurnAbortReason::Interrupted);
+    assert!(
+        warning
+            .message
+            .contains("escalating the current request to the user")
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

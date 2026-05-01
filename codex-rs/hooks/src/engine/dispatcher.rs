@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::path::Path;
+use std::sync::Mutex;
 
 use futures::future::join_all;
 
@@ -82,12 +84,22 @@ pub(crate) fn running_summary(handler: &ConfiguredHandler) -> HookRunSummary {
 
 pub(crate) async fn execute_handlers<T>(
     shell: &CommandShell,
+    fired_once_hook_keys: &Mutex<HashSet<String>>,
     handlers: Vec<ConfiguredHandler>,
     input_json: String,
     cwd: &Path,
     turn_id: Option<String>,
     parse: fn(&ConfiguredHandler, CommandRunResult, Option<String>) -> ParsedHandler<T>,
 ) -> Vec<ParsedHandler<T>> {
+    let handlers = {
+        let mut fired_once_hook_keys = fired_once_hook_keys
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        handlers
+            .into_iter()
+            .filter(|handler| !handler.once || fired_once_hook_keys.insert(handler.key.clone()))
+            .collect::<Vec<_>>()
+    };
     let results = join_all(
         handlers
             .iter()
@@ -155,6 +167,7 @@ mod tests {
         display_order: i64,
     ) -> ConfiguredHandler {
         ConfiguredHandler {
+            key: format!("test:{display_order}"),
             event_name,
             matcher: matcher.map(str::to_owned),
             command: command.to_string(),
@@ -165,6 +178,7 @@ mod tests {
             display_order,
             env: std::collections::HashMap::new(),
             execution_cwd: None,
+            once: false,
         }
     }
 

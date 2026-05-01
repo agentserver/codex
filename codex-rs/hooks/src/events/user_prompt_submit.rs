@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::HookCompletedEvent;
@@ -61,6 +63,7 @@ pub(crate) fn preview(
 pub(crate) async fn run(
     handlers: &[ConfiguredHandler],
     shell: &CommandShell,
+    fired_once_hook_keys: &Mutex<HashSet<String>>,
     request: UserPromptSubmitRequest,
 ) -> UserPromptSubmitOutcome {
     let matched = dispatcher::select_handlers(
@@ -99,6 +102,7 @@ pub(crate) async fn run(
 
     let results = dispatcher::execute_handlers(
         shell,
+        fired_once_hook_keys,
         matched,
         input_json,
         request.cwd.as_path(),
@@ -413,6 +417,7 @@ mod tests {
 
     fn handler() -> ConfiguredHandler {
         ConfiguredHandler {
+            key: "test".to_string(),
             event_name: HookEventName::UserPromptSubmit,
             matcher: None,
             command: "echo hook".to_string(),
@@ -423,6 +428,7 @@ mod tests {
             display_order: 0,
             env: std::collections::HashMap::new(),
             execution_cwd: None,
+            once: false,
         }
     }
 

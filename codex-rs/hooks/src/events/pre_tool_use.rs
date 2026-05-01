@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::HookCompletedEvent;
@@ -65,6 +67,7 @@ pub(crate) fn preview(
 pub(crate) async fn run(
     handlers: &[ConfiguredHandler],
     shell: &CommandShell,
+    fired_once_hook_keys: &Mutex<HashSet<String>>,
     request: PreToolUseRequest,
 ) -> PreToolUseOutcome {
     let matcher_inputs = common::matcher_inputs(&request.tool_name, &request.matcher_aliases);
@@ -96,6 +99,7 @@ pub(crate) async fn run(
 
     let results = dispatcher::execute_handlers(
         shell,
+        fired_once_hook_keys,
         matched,
         input_json,
         request.cwd.as_path(),
@@ -533,6 +537,7 @@ mod tests {
 
     fn handler() -> ConfiguredHandler {
         ConfiguredHandler {
+            key: "test".to_string(),
             event_name: HookEventName::PreToolUse,
             matcher: Some("^Bash$".to_string()),
             command: "echo hook".to_string(),
@@ -543,6 +548,7 @@ mod tests {
             display_order: 0,
             env: std::collections::HashMap::new(),
             execution_cwd: None,
+            once: false,
         }
     }
 

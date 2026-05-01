@@ -2134,6 +2134,167 @@ hooks:
 }
 
 #[tokio::test]
+async fn skill_pre_tool_use_once_runs_only_once_across_turns() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let first_call_id = "skill-pretooluse-once-first-shell-command";
+    let second_call_id = "skill-pretooluse-once-second-shell-command";
+    let first_marker =
+        std::env::temp_dir().join("skill-pretooluse-once-first-shell-command-marker");
+    let second_marker =
+        std::env::temp_dir().join("skill-pretooluse-once-second-shell-command-marker");
+    let first_command = format!("printf blocked > {}", first_marker.display());
+    let second_command = format!("printf allowed > {}", second_marker.display());
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                core_test_support::responses::ev_function_call(
+                    first_call_id,
+                    "shell_command",
+                    &serde_json::to_string(&serde_json::json!({ "command": first_command }))?,
+                ),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-1", "skill hook blocked it"),
+                ev_completed("resp-2"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-3"),
+                core_test_support::responses::ev_function_call(
+                    second_call_id,
+                    "shell_command",
+                    &serde_json::to_string(&serde_json::json!({ "command": second_command }))?,
+                ),
+                ev_completed("resp-3"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-4"),
+                ev_assistant_message("msg-2", "once hook already fired"),
+                ev_completed("resp-4"),
+            ]),
+        ],
+    )
+    .await;
+
+    let home = Arc::new(TempDir::new()?);
+    let skill_dir = home.path().join("skills/secure-operations");
+    fs::create_dir_all(&skill_dir).context("create skill dir")?;
+    let script_path = skill_dir.join("pre_tool_use_hook.py");
+    let log_path = skill_dir.join("pre_tool_use_hook_log.jsonl");
+    fs::write(
+        &script_path,
+        format!(
+            r#"import json
+from pathlib import Path
+import sys
+
+payload = json.load(sys.stdin)
+with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(payload) + "\n")
+
+print(json.dumps({{
+    "hookSpecificOutput": {{
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": "blocked by skill hook"
+    }}
+}}))
+"#,
+            log_path = log_path.display(),
+        ),
+    )
+    .context("write skill pre tool use hook script")?;
+    fs::write(
+        skill_dir.join("SKILL.md"),
+        r#"---
+name: secure-operations
+description: Perform operations with security checks
+hooks:
+  PreToolUse:
+    - matcher: "^Bash$"
+      hooks:
+        - type: command
+          command: "python3 ./pre_tool_use_hook.py"
+          once: true
+---
+
+# Body
+"#,
+    )
+    .context("write skill")?;
+
+    let mut builder = test_codex()
+        .with_home(Arc::clone(&home))
+        .with_config(|config| {
+            config
+                .features
+                .enable(Feature::CodexHooks)
+                .expect("test config should allow feature update");
+        });
+    let test = builder.build(&server).await?;
+
+    for marker in [&first_marker, &second_marker] {
+        if marker.exists() {
+            fs::remove_file(marker).context("remove leftover once skill pre tool use marker")?;
+        }
+    }
+
+    test.submit_turn_with_policy(
+        "use $secure-operations and run the shell command",
+        codex_protocol::protocol::SandboxPolicy::DangerFullAccess,
+    )
+    .await?;
+    test.submit_turn_with_policy(
+        "use $secure-operations and run the shell command again",
+        codex_protocol::protocol::SandboxPolicy::DangerFullAccess,
+    )
+    .await?;
+
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 4);
+    let first_output_item = requests[1].function_call_output(first_call_id);
+    let first_output = first_output_item
+        .get("output")
+        .and_then(Value::as_str)
+        .expect("first shell command output string");
+    assert!(
+        first_output.contains("Command blocked by PreToolUse hook: blocked by skill hook"),
+        "once skill hook should block the first shell command",
+    );
+    let second_output_item = requests[3].function_call_output(second_call_id);
+    let second_output = second_output_item
+        .get("output")
+        .and_then(Value::as_str)
+        .expect("second shell command output string");
+    assert!(
+        !second_output.contains("Command blocked by PreToolUse hook"),
+        "once skill hook should not block later turns",
+    );
+    assert!(
+        !first_marker.exists(),
+        "once skill hook should block the first command"
+    );
+    assert!(
+        second_marker.exists(),
+        "once skill hook should allow the second command",
+    );
+
+    let hook_inputs = read_hook_inputs_from_log(&log_path)?;
+    assert_eq!(hook_inputs.len(), 1);
+    assert_eq!(hook_inputs[0]["hook_event_name"], "PreToolUse");
+    assert_eq!(hook_inputs[0]["tool_name"], "Bash");
+    assert_eq!(hook_inputs[0]["tool_use_id"], first_call_id);
+    assert_eq!(hook_inputs[0]["tool_input"]["command"], first_command);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn pre_tool_use_blocks_shell_when_defined_in_config_toml() -> Result<()> {
     skip_if_no_network!(Ok(()));
 

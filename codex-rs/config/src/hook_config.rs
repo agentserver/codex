@@ -114,6 +114,8 @@ pub enum HookHandlerConfig {
         timeout_sec: Option<u64>,
         #[serde(default)]
         r#async: bool,
+        #[serde(default)]
+        once: bool,
         #[serde(default, rename = "statusMessage")]
         status_message: Option<String>,
     },

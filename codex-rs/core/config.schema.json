@@ -898,6 +898,10 @@
             "command": {
               "type": "string"
             },
+            "once": {
+              "default": false,
+              "type": "boolean"
+            },
             "statusMessage": {
               "default": null,
               "type": "string"

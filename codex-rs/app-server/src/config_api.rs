@@ -348,6 +348,7 @@ fn map_hook_handler_to_api(handler: CoreHookHandlerConfig) -> ConfiguredHookHand
             command,
             timeout_sec,
             r#async,
+            once: _,
             status_message,
         } => ConfiguredHookHandler::Command {
             command,
@@ -535,6 +536,7 @@ mod tests {
                             command: "python3 /enterprise/hooks/pre.py".to_string(),
                             timeout_sec: Some(10),
                             r#async: false,
+                            once: false,
                             status_message: Some("checking".to_string()),
                         }],
                     }],

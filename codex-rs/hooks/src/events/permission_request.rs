@@ -13,7 +13,9 @@
 //!    decision.
 //! 4. Fold the decisions conservatively: any deny wins, otherwise the last
 //!    allow wins, otherwise there is no hook verdict.
+use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use super::common;
 use crate::engine::CommandShell;
@@ -85,6 +87,7 @@ pub(crate) fn preview(
 pub(crate) async fn run(
     handlers: &[ConfiguredHandler],
     shell: &CommandShell,
+    fired_once_hook_keys: &Mutex<HashSet<String>>,
     request: PermissionRequestRequest,
 ) -> PermissionRequestOutcome {
     let matcher_inputs = common::matcher_inputs(&request.tool_name, &request.matcher_aliases);
@@ -118,6 +121,7 @@ pub(crate) async fn run(
 
     let results = dispatcher::execute_handlers(
         shell,
+        fired_once_hook_keys,
         matched,
         input_json,
         request.cwd.as_path(),

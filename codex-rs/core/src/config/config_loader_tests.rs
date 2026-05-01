@@ -1159,6 +1159,7 @@ async fn load_config_layers_includes_cloud_hook_requirements() -> anyhow::Result
                         command: format!("python3 {}/pre.py", managed_dir.display()),
                         timeout_sec: Some(10),
                         r#async: false,
+                        once: false,
                         status_message: Some("checking".to_string()),
                     }],
                 }],

@@ -932,6 +932,7 @@ approval_policy = "never"
                                 command: "python3 /enterprise/hooks/pre.py".to_string(),
                                 timeout_sec: Some(10),
                                 r#async: false,
+                                once: false,
                                 status_message: Some("checking".to_string()),
                             }],
                         }],

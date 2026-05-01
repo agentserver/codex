@@ -344,6 +344,7 @@ hooks:
       hooks:
         - type: command
           command: "./scripts/security-check.sh"
+          once: true
 ---
 
 # Body
@@ -363,6 +364,16 @@ hooks:
         .expect("skill hooks should be retained");
     assert_eq!(hooks.pre_tool_use.len(), 1);
     assert_eq!(hooks.pre_tool_use[0].matcher.as_deref(), Some("Bash"));
+    assert_eq!(
+        hooks.pre_tool_use[0].hooks,
+        vec![codex_config::HookHandlerConfig::Command {
+            command: "./scripts/security-check.sh".to_string(),
+            timeout_sec: None,
+            r#async: false,
+            once: true,
+            status_message: None,
+        }]
+    );
     assert_eq!(hooks.handler_count(), 1);
 
     Ok(())

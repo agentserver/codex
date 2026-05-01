@@ -424,6 +424,7 @@ fn append_matcher_groups(
                     command,
                     timeout_sec,
                     r#async,
+                    once,
                     status_message,
                 } => {
                     if r#async {
@@ -454,8 +455,15 @@ fn append_matcher_groups(
                     );
                     let enabled =
                         source.source.is_managed() || !source.disabled_hook_keys.contains(&key);
+                    if once && source.source != HookSource::Skill {
+                        warnings.push(format!(
+                            "ignoring once hook option in {}: once is only supported for skill hooks",
+                            source.path.display()
+                        ));
+                    }
+                    let once = once && source.source == HookSource::Skill;
                     hook_entries.push(HookListEntry {
-                        key,
+                        key: key.clone(),
                         event_name,
                         handler_type: HookHandlerType::Command,
                         matcher: matcher.map(ToOwned::to_owned),
@@ -471,6 +479,7 @@ fn append_matcher_groups(
                     });
                     if enabled {
                         handlers.push(ConfiguredHandler {
+                            key,
                             event_name,
                             matcher: matcher.map(ToOwned::to_owned),
                             command,
@@ -481,6 +490,7 @@ fn append_matcher_groups(
                             display_order: *display_order,
                             env: source.env.clone(),
                             execution_cwd: source.execution_cwd.clone(),
+                            once,
                         });
                     }
                     *display_order += 1;
@@ -586,6 +596,7 @@ mod tests {
                 command: "echo hello".to_string(),
                 timeout_sec: None,
                 r#async: false,
+                once: false,
                 status_message: None,
             }],
         }
@@ -613,6 +624,7 @@ mod tests {
         assert_eq!(
             handlers,
             vec![ConfiguredHandler {
+                key: format!("{}:user_prompt_submit:0:0", source_path.display()),
                 event_name: HookEventName::UserPromptSubmit,
                 matcher: None,
                 command: "echo hello".to_string(),
@@ -623,6 +635,7 @@ mod tests {
                 display_order: 0,
                 env: std::collections::HashMap::new(),
                 execution_cwd: None,
+                once: false,
             }]
         );
     }
@@ -649,6 +662,7 @@ mod tests {
         assert_eq!(
             handlers,
             vec![ConfiguredHandler {
+                key: format!("{}:pre_tool_use:0:0", source_path.display()),
                 event_name: HookEventName::PreToolUse,
                 matcher: Some("^Bash$".to_string()),
                 command: "echo hello".to_string(),
@@ -659,6 +673,7 @@ mod tests {
                 display_order: 0,
                 env: std::collections::HashMap::new(),
                 execution_cwd: None,
+                once: false,
             }]
         );
     }
@@ -733,6 +748,7 @@ mod tests {
                         command: "echo hello".to_string(),
                         timeout_sec: None,
                         r#async: false,
+                        once: false,
                         status_message: None,
                     }],
                 }],

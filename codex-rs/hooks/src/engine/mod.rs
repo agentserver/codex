@@ -5,6 +5,9 @@ pub(crate) mod output_parser;
 pub(crate) mod schema_loader;
 
 use std::collections::HashMap;
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use crate::registry::SkillHookSource;
 use codex_config::ConfigLayerStack;
@@ -36,6 +39,7 @@ pub(crate) struct CommandShell {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConfiguredHandler {
+    pub key: String,
     pub event_name: codex_protocol::protocol::HookEventName,
     pub matcher: Option<String>,
     pub command: String,
@@ -46,6 +50,7 @@ pub(crate) struct ConfiguredHandler {
     pub display_order: i64,
     pub env: HashMap<String, String>,
     pub execution_cwd: Option<AbsolutePathBuf>,
+    pub once: bool,
 }
 
 impl ConfiguredHandler {
@@ -93,6 +98,7 @@ pub(crate) struct ClaudeHooksEngine {
     handlers: Vec<ConfiguredHandler>,
     warnings: Vec<String>,
     shell: CommandShell,
+    fired_once_hook_keys: Arc<Mutex<HashSet<String>>>,
 }
 
 impl ClaudeHooksEngine {
@@ -109,6 +115,7 @@ impl ClaudeHooksEngine {
                 handlers: Vec::new(),
                 warnings: Vec::new(),
                 shell,
+                fired_once_hook_keys: Arc::new(Mutex::new(HashSet::new())),
             };
         }
 
@@ -123,11 +130,24 @@ impl ClaudeHooksEngine {
             handlers: discovered.handlers,
             warnings: discovered.warnings,
             shell,
+            fired_once_hook_keys: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
     pub(crate) fn warnings(&self) -> &[String] {
         &self.warnings
+    }
+
+    fn handlers_for_preview(&self) -> Vec<ConfiguredHandler> {
+        let fired_once_hook_keys = self
+            .fired_once_hook_keys
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.handlers
+            .iter()
+            .filter(|handler| !handler.once || !fired_once_hook_keys.contains(&handler.key))
+            .cloned()
+            .collect()
     }
 
     pub(crate) fn with_skill_hook_sources(&self, skill_hook_sources: Vec<SkillHookSource>) -> Self {
@@ -156,6 +176,7 @@ impl ClaudeHooksEngine {
             handlers,
             warnings,
             shell: self.shell.clone(),
+            fired_once_hook_keys: Arc::clone(&self.fired_once_hook_keys),
         }
     }
 
@@ -163,25 +184,25 @@ impl ClaudeHooksEngine {
         &self,
         request: &SessionStartRequest,
     ) -> Vec<HookRunSummary> {
-        crate::events::session_start::preview(&self.handlers, request)
+        crate::events::session_start::preview(&self.handlers_for_preview(), request)
     }
 
     pub(crate) fn preview_pre_tool_use(&self, request: &PreToolUseRequest) -> Vec<HookRunSummary> {
-        crate::events::pre_tool_use::preview(&self.handlers, request)
+        crate::events::pre_tool_use::preview(&self.handlers_for_preview(), request)
     }
 
     pub(crate) fn preview_permission_request(
         &self,
         request: &PermissionRequestRequest,
     ) -> Vec<HookRunSummary> {
-        crate::events::permission_request::preview(&self.handlers, request)
+        crate::events::permission_request::preview(&self.handlers_for_preview(), request)
     }
 
     pub(crate) fn preview_post_tool_use(
         &self,
         request: &PostToolUseRequest,
     ) -> Vec<HookRunSummary> {
-        crate::events::post_tool_use::preview(&self.handlers, request)
+        crate::events::post_tool_use::preview(&self.handlers_for_preview(), request)
     }
 
     pub(crate) async fn run_session_start(
@@ -189,47 +210,84 @@ impl ClaudeHooksEngine {
         request: SessionStartRequest,
         turn_id: Option<String>,
     ) -> SessionStartOutcome {
-        crate::events::session_start::run(&self.handlers, &self.shell, request, turn_id).await
+        crate::events::session_start::run(
+            &self.handlers,
+            &self.shell,
+            &self.fired_once_hook_keys,
+            request,
+            turn_id,
+        )
+        .await
     }
 
     pub(crate) async fn run_pre_tool_use(&self, request: PreToolUseRequest) -> PreToolUseOutcome {
-        crate::events::pre_tool_use::run(&self.handlers, &self.shell, request).await
+        crate::events::pre_tool_use::run(
+            &self.handlers,
+            &self.shell,
+            &self.fired_once_hook_keys,
+            request,
+        )
+        .await
     }
 
     pub(crate) async fn run_permission_request(
         &self,
         request: PermissionRequestRequest,
     ) -> PermissionRequestOutcome {
-        crate::events::permission_request::run(&self.handlers, &self.shell, request).await
+        crate::events::permission_request::run(
+            &self.handlers,
+            &self.shell,
+            &self.fired_once_hook_keys,
+            request,
+        )
+        .await
     }
 
     pub(crate) async fn run_post_tool_use(
         &self,
         request: PostToolUseRequest,
     ) -> PostToolUseOutcome {
-        crate::events::post_tool_use::run(&self.handlers, &self.shell, request).await
+        crate::events::post_tool_use::run(
+            &self.handlers,
+            &self.shell,
+            &self.fired_once_hook_keys,
+            request,
+        )
+        .await
     }
 
     pub(crate) fn preview_user_prompt_submit(
         &self,
         request: &UserPromptSubmitRequest,
     ) -> Vec<HookRunSummary> {
-        crate::events::user_prompt_submit::preview(&self.handlers, request)
+        crate::events::user_prompt_submit::preview(&self.handlers_for_preview(), request)
     }
 
     pub(crate) async fn run_user_prompt_submit(
         &self,
         request: UserPromptSubmitRequest,
     ) -> UserPromptSubmitOutcome {
-        crate::events::user_prompt_submit::run(&self.handlers, &self.shell, request).await
+        crate::events::user_prompt_submit::run(
+            &self.handlers,
+            &self.shell,
+            &self.fired_once_hook_keys,
+            request,
+        )
+        .await
     }
 
     pub(crate) fn preview_stop(&self, request: &StopRequest) -> Vec<HookRunSummary> {
-        crate::events::stop::preview(&self.handlers, request)
+        crate::events::stop::preview(&self.handlers_for_preview(), request)
     }
 
     pub(crate) async fn run_stop(&self, request: StopRequest) -> StopOutcome {
-        crate::events::stop::run(&self.handlers, &self.shell, request).await
+        crate::events::stop::run(
+            &self.handlers,
+            &self.shell,
+            &self.fired_once_hook_keys,
+            request,
+        )
+        .await
     }
 }
 

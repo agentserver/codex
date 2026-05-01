@@ -1,6 +1,7 @@
 use crate::bespoke_event_handling::apply_bespoke_event_handling;
 use crate::bespoke_event_handling::maybe_emit_hook_prompt_item_completed;
 use crate::command_exec::CommandExecManager;
+use crate::command_exec::ProcessProtocol;
 use crate::command_exec::StartCommandExecParams;
 use crate::config_manager::ConfigManager;
 use crate::error_code::INPUT_TOO_LARGE_ERROR_CODE;
@@ -49,7 +50,6 @@ use codex_app_server_protocol::CollaborationModeListResponse;
 use codex_app_server_protocol::CommandExecParams;
 use codex_app_server_protocol::CommandExecResizeParams;
 use codex_app_server_protocol::CommandExecTerminateParams;
-use codex_app_server_protocol::CommandExecUnsandboxedParams;
 use codex_app_server_protocol::CommandExecWriteParams;
 use codex_app_server_protocol::ConversationGitInfo;
 use codex_app_server_protocol::ConversationSummary;
@@ -134,6 +134,10 @@ use codex_app_server_protocol::PluginSource;
 use codex_app_server_protocol::PluginSummary;
 use codex_app_server_protocol::PluginUninstallParams;
 use codex_app_server_protocol::PluginUninstallResponse;
+use codex_app_server_protocol::ProcessKillParams;
+use codex_app_server_protocol::ProcessResizePtyParams;
+use codex_app_server_protocol::ProcessSpawnParams;
+use codex_app_server_protocol::ProcessWriteStdinParams;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ReviewDelivery as ApiReviewDelivery;
 use codex_app_server_protocol::ReviewStartParams;
@@ -726,7 +730,6 @@ enum CommandExecMode {
         sandbox_policy: Option<codex_app_server_protocol::SandboxPolicy>,
         permission_profile: Option<codex_app_server_protocol::PermissionProfile>,
     },
-    Unsandboxed,
 }
 
 impl CodexMessageProcessor {
@@ -1354,10 +1357,6 @@ impl CodexMessageProcessor {
                 self.exec_one_off_command(to_connection_request_id(request_id), params)
                     .await;
             }
-            ClientRequest::CommandExecUnsandboxed { request_id, params } => {
-                self.exec_unsandboxed_command(to_connection_request_id(request_id), params)
-                    .await;
-            }
             ClientRequest::CommandExecWrite { request_id, params } => {
                 self.command_exec_write(to_connection_request_id(request_id), params)
                     .await;
@@ -1368,6 +1367,22 @@ impl CodexMessageProcessor {
             }
             ClientRequest::CommandExecTerminate { request_id, params } => {
                 self.command_exec_terminate(to_connection_request_id(request_id), params)
+                    .await;
+            }
+            ClientRequest::ProcessSpawn { request_id, params } => {
+                self.process_spawn(to_connection_request_id(request_id), params)
+                    .await;
+            }
+            ClientRequest::ProcessWriteStdin { request_id, params } => {
+                self.process_write_stdin(to_connection_request_id(request_id), params)
+                    .await;
+            }
+            ClientRequest::ProcessKill { request_id, params } => {
+                self.process_kill(to_connection_request_id(request_id), params)
+                    .await;
+            }
+            ClientRequest::ProcessResizePty { request_id, params } => {
+                self.process_resize_pty(to_connection_request_id(request_id), params)
                     .await;
             }
             ClientRequest::DeviceKeyCreate { .. }
@@ -2292,56 +2307,107 @@ impl CodexMessageProcessor {
         .await
     }
 
-    async fn exec_unsandboxed_command(
-        &self,
-        request_id: ConnectionRequestId,
-        params: CommandExecUnsandboxedParams,
-    ) {
-        let result = self
-            .exec_unsandboxed_command_inner(request_id.clone(), params)
-            .await
-            .map(|()| None::<ClientResponsePayload>);
+    async fn process_spawn(&self, request_id: ConnectionRequestId, params: ProcessSpawnParams) {
+        let result = self.process_spawn_inner(request_id.clone(), params).await;
         self.send_optional_result(request_id, result).await;
     }
 
-    async fn exec_unsandboxed_command_inner(
+    async fn process_spawn_inner(
         &self,
         request_id: ConnectionRequestId,
-        params: CommandExecUnsandboxedParams,
-    ) -> Result<(), JSONRPCErrorError> {
-        let CommandExecUnsandboxedParams {
+        params: ProcessSpawnParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let ProcessSpawnParams {
             command,
-            process_id,
+            process_handle,
+            cwd,
             tty,
             stream_stdin,
             stream_stdout_stderr,
             output_bytes_cap,
-            disable_output_cap,
-            disable_timeout,
             timeout_ms,
-            cwd,
             env: env_overrides,
             size,
         } = params;
-        self.exec_command(
-            request_id,
-            CommandExecRequestParams {
-                command,
-                process_id,
+        let method_name = "process/spawn";
+        tracing::debug!("{method_name} command: {command:?}");
+        if command.is_empty() {
+            return Err(invalid_request("command must not be empty"));
+        }
+        if process_handle.is_empty() {
+            return Err(invalid_request("processHandle must not be empty"));
+        }
+        if size.is_some() && !tty {
+            return Err(invalid_params("process/spawn size requires tty: true"));
+        }
+        let mut env = create_env(
+            &self.config.permissions.shell_environment_policy,
+            /*thread_id*/ None,
+        );
+        if let Some(env_overrides) = env_overrides {
+            for (key, value) in env_overrides {
+                match value {
+                    Some(value) => {
+                        env.insert(key, value);
+                    }
+                    None => {
+                        env.remove(&key);
+                    }
+                }
+            }
+        }
+        let timeout_ms = match timeout_ms {
+            Some(timeout_ms) => match u64::try_from(timeout_ms) {
+                Ok(timeout_ms) => Some(timeout_ms),
+                Err(_) => {
+                    return Err(invalid_params(format!(
+                        "{method_name} timeoutMs must be non-negative, got {timeout_ms}"
+                    )));
+                }
+            },
+            None => None,
+        };
+        let expiration = match timeout_ms {
+            Some(timeout_ms) => timeout_ms.into(),
+            None => ExecExpiration::DefaultTimeout,
+        };
+        let output_bytes_cap = Some(output_bytes_cap.unwrap_or(DEFAULT_OUTPUT_BYTES_CAP));
+        let size = match size.map(crate::command_exec::process_terminal_size_from_protocol) {
+            Some(Ok(size)) => Some(size),
+            Some(Err(error)) => return Err(error),
+            None => None,
+        };
+        let exec_request = codex_core::sandboxing::ExecRequest::new(
+            command,
+            cwd,
+            env,
+            /*network*/ None,
+            expiration,
+            ExecCapturePolicy::ShellTool,
+            codex_sandboxing::SandboxType::None,
+            WindowsSandboxLevel::Disabled,
+            /*windows_sandbox_private_desktop*/ false,
+            codex_protocol::models::PermissionProfile::Disabled,
+            /*arg0*/ None,
+        );
+
+        self.command_exec_manager
+            .start(StartCommandExecParams {
+                outgoing: self.outgoing.clone(),
+                request_id,
+                protocol: ProcessProtocol::Process,
+                process_id: Some(process_handle),
+                exec_request,
+                started_network_proxy: None,
                 tty,
                 stream_stdin,
                 stream_stdout_stderr,
                 output_bytes_cap,
-                disable_output_cap,
-                disable_timeout,
-                timeout_ms,
-                cwd,
-                env_overrides,
                 size,
-            },
-            CommandExecMode::Unsandboxed,
-        )
-        .await
+            })
+            .await?;
+
+        Ok(None)
     }
 
     async fn exec_command(
@@ -2350,10 +2416,7 @@ impl CodexMessageProcessor {
         params: CommandExecRequestParams,
         mode: CommandExecMode,
     ) -> Result<(), JSONRPCErrorError> {
-        let method_name = match &mode {
-            CommandExecMode::Sandboxed { .. } => "command/exec",
-            CommandExecMode::Unsandboxed => "command/execUnsandboxed",
-        };
+        let method_name = "command/exec";
         tracing::debug!("{method_name} params: {params:?}");
 
         let request = request_id.clone();
@@ -2377,13 +2440,11 @@ impl CodexMessageProcessor {
             size,
         } = params;
 
-        if let CommandExecMode::Sandboxed {
+        let CommandExecMode::Sandboxed {
             sandbox_policy,
             permission_profile,
-        } = &mode
-            && sandbox_policy.is_some()
-            && permission_profile.is_some()
-        {
+        } = &mode;
+        if sandbox_policy.is_some() && permission_profile.is_some() {
             return Err(invalid_request(
                 "`permissionProfile` cannot be combined with `sandboxPolicy`",
             ));
@@ -2455,150 +2516,128 @@ impl CodexMessageProcessor {
         };
         let outgoing = self.outgoing.clone();
         let request_for_task = request.clone();
-        let size = match size.map(crate::command_exec::terminal_size_from_protocol) {
+        let size = match size.map(crate::command_exec::command_terminal_size_from_protocol) {
             Some(Ok(size)) => Some(size),
             Some(Err(error)) => return Err(error),
             None => None,
         };
 
-        let (exec_request, started_network_proxy) = match mode {
-            CommandExecMode::Sandboxed {
-                sandbox_policy,
-                permission_profile,
-            } => {
-                let managed_network_requirements_enabled =
-                    self.config.managed_network_requirements_enabled();
-                let started_network_proxy = match self.config.permissions.network.as_ref() {
-                    Some(spec) => match spec
-                        .start_proxy(
-                            self.config.permissions.permission_profile.get(),
-                            /*policy_decider*/ None,
-                            /*blocked_request_observer*/ None,
-                            managed_network_requirements_enabled,
-                            NetworkProxyAuditMetadata::default(),
-                        )
-                        .await
-                    {
-                        Ok(started) => Some(started),
-                        Err(err) => {
-                            return Err(internal_error(format!(
-                                "failed to start managed network proxy: {err}"
-                            )));
-                        }
-                    },
-                    None => None,
-                };
-                let sandbox_cwd = if permission_profile.is_some() {
-                    cwd.clone()
-                } else {
-                    self.config.cwd.clone()
-                };
-                let exec_params = ExecParams {
-                    command,
-                    cwd: cwd.clone(),
-                    expiration,
-                    capture_policy,
-                    env,
-                    network: started_network_proxy
-                        .as_ref()
-                        .map(codex_core::config::StartedNetworkProxy::proxy),
-                    sandbox_permissions: SandboxPermissions::UseDefault,
-                    windows_sandbox_level: WindowsSandboxLevel::from_config(&self.config),
-                    windows_sandbox_private_desktop: self
-                        .config
-                        .permissions
-                        .windows_sandbox_private_desktop,
-                    justification: None,
-                    arg0: None,
-                };
-
-                let effective_permission_profile = if let Some(permission_profile) =
-                    permission_profile
-                {
-                    let permission_profile =
-                        codex_protocol::models::PermissionProfile::from(permission_profile);
-                    let (mut file_system_sandbox_policy, network_sandbox_policy) =
-                        permission_profile.to_runtime_permissions();
-                    let configured_file_system_sandbox_policy =
-                        self.config.permissions.file_system_sandbox_policy();
-                    Self::preserve_configured_deny_read_restrictions(
-                        &mut file_system_sandbox_policy,
-                        &configured_file_system_sandbox_policy,
-                    );
-                    let effective_permission_profile =
-                        codex_protocol::models::PermissionProfile::from_runtime_permissions_with_enforcement(
-                            permission_profile.enforcement(),
-                            &file_system_sandbox_policy,
-                            network_sandbox_policy,
-                        );
-                    self.config
-                        .permissions
-                        .permission_profile
-                        .can_set(&effective_permission_profile)
-                        .map_err(|err| {
-                            invalid_request(format!("invalid permission profile: {err}"))
-                        })?;
-                    effective_permission_profile
-                } else if let Some(policy) = sandbox_policy.map(|policy| policy.to_core()) {
-                    self.config
-                        .permissions
-                        .can_set_legacy_sandbox_policy(&policy, &sandbox_cwd)
-                        .map_err(|err| invalid_request(format!("invalid sandbox policy: {err}")))?;
-                    let file_system_sandbox_policy =
-                        codex_protocol::permissions::FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(&policy, &sandbox_cwd);
-                    let network_sandbox_policy =
-                        codex_protocol::permissions::NetworkSandboxPolicy::from(&policy);
-                    let permission_profile =
-                        codex_protocol::models::PermissionProfile::from_runtime_permissions_with_enforcement(
-                            codex_protocol::models::SandboxEnforcement::from_legacy_sandbox_policy(&policy),
-                            &file_system_sandbox_policy,
-                            network_sandbox_policy,
-                        );
-                    self.config
-                        .permissions
-                        .permission_profile
-                        .can_set(&permission_profile)
-                        .map_err(|err| invalid_request(format!("invalid sandbox policy: {err}")))?;
-                    permission_profile
-                } else {
-                    self.config.permissions.permission_profile()
-                };
-
-                match codex_core::exec::build_exec_request(
-                    exec_params,
-                    &effective_permission_profile,
-                    &sandbox_cwd,
-                    &self.arg0_paths.codex_linux_sandbox_exe,
-                    self.config.features.use_legacy_landlock(),
-                ) {
-                    Ok(exec_request) => (exec_request, started_network_proxy),
-                    Err(err) => {
-                        return Err(internal_error(format!("exec failed: {err}")));
-                    }
+        let CommandExecMode::Sandboxed {
+            sandbox_policy,
+            permission_profile,
+        } = mode;
+        let managed_network_requirements_enabled =
+            self.config.managed_network_requirements_enabled();
+        let started_network_proxy = match self.config.permissions.network.as_ref() {
+            Some(spec) => match spec
+                .start_proxy(
+                    self.config.permissions.permission_profile.get(),
+                    /*policy_decider*/ None,
+                    /*blocked_request_observer*/ None,
+                    managed_network_requirements_enabled,
+                    NetworkProxyAuditMetadata::default(),
+                )
+                .await
+            {
+                Ok(started) => Some(started),
+                Err(err) => {
+                    return Err(internal_error(format!(
+                        "failed to start managed network proxy: {err}"
+                    )));
                 }
+            },
+            None => None,
+        };
+        let sandbox_cwd = if permission_profile.is_some() {
+            cwd.clone()
+        } else {
+            self.config.cwd.clone()
+        };
+        let exec_params = ExecParams {
+            command,
+            cwd: cwd.clone(),
+            expiration,
+            capture_policy,
+            env,
+            network: started_network_proxy
+                .as_ref()
+                .map(codex_core::config::StartedNetworkProxy::proxy),
+            sandbox_permissions: SandboxPermissions::UseDefault,
+            windows_sandbox_level: WindowsSandboxLevel::from_config(&self.config),
+            windows_sandbox_private_desktop: self
+                .config
+                .permissions
+                .windows_sandbox_private_desktop,
+            justification: None,
+            arg0: None,
+        };
+
+        let effective_permission_profile = if let Some(permission_profile) = permission_profile {
+            let permission_profile =
+                codex_protocol::models::PermissionProfile::from(permission_profile);
+            let (mut file_system_sandbox_policy, network_sandbox_policy) =
+                permission_profile.to_runtime_permissions();
+            let configured_file_system_sandbox_policy =
+                self.config.permissions.file_system_sandbox_policy();
+            Self::preserve_configured_deny_read_restrictions(
+                &mut file_system_sandbox_policy,
+                &configured_file_system_sandbox_policy,
+            );
+            let effective_permission_profile =
+                codex_protocol::models::PermissionProfile::from_runtime_permissions_with_enforcement(
+                    permission_profile.enforcement(),
+                    &file_system_sandbox_policy,
+                    network_sandbox_policy,
+                );
+            self.config
+                .permissions
+                .permission_profile
+                .can_set(&effective_permission_profile)
+                .map_err(|err| invalid_request(format!("invalid permission profile: {err}")))?;
+            effective_permission_profile
+        } else if let Some(policy) = sandbox_policy.map(|policy| policy.to_core()) {
+            self.config
+                .permissions
+                .can_set_legacy_sandbox_policy(&policy, &sandbox_cwd)
+                .map_err(|err| invalid_request(format!("invalid sandbox policy: {err}")))?;
+            let file_system_sandbox_policy =
+                codex_protocol::permissions::FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(&policy, &sandbox_cwd);
+            let network_sandbox_policy =
+                codex_protocol::permissions::NetworkSandboxPolicy::from(&policy);
+            let permission_profile =
+                codex_protocol::models::PermissionProfile::from_runtime_permissions_with_enforcement(
+                    codex_protocol::models::SandboxEnforcement::from_legacy_sandbox_policy(&policy),
+                    &file_system_sandbox_policy,
+                    network_sandbox_policy,
+                );
+            self.config
+                .permissions
+                .permission_profile
+                .can_set(&permission_profile)
+                .map_err(|err| invalid_request(format!("invalid sandbox policy: {err}")))?;
+            permission_profile
+        } else {
+            self.config.permissions.permission_profile()
+        };
+
+        let exec_request = match codex_core::exec::build_exec_request(
+            exec_params,
+            &effective_permission_profile,
+            &sandbox_cwd,
+            &self.arg0_paths.codex_linux_sandbox_exe,
+            self.config.features.use_legacy_landlock(),
+        ) {
+            Ok(exec_request) => exec_request,
+            Err(err) => {
+                return Err(internal_error(format!("exec failed: {err}")));
             }
-            CommandExecMode::Unsandboxed => (
-                codex_core::sandboxing::ExecRequest::new(
-                    command,
-                    cwd,
-                    env,
-                    /*network*/ None,
-                    expiration,
-                    capture_policy,
-                    codex_sandboxing::SandboxType::None,
-                    WindowsSandboxLevel::Disabled,
-                    /*windows_sandbox_private_desktop*/ false,
-                    codex_protocol::models::PermissionProfile::Disabled,
-                    /*arg0*/ None,
-                ),
-                None,
-            ),
         };
 
         self.command_exec_manager
             .start(StartCommandExecParams {
                 outgoing,
                 request_id: request_for_task,
+                protocol: ProcessProtocol::CommandExec,
                 process_id,
                 exec_request,
                 started_network_proxy,
@@ -2653,6 +2692,38 @@ impl CodexMessageProcessor {
         let result = self
             .command_exec_manager
             .terminate(request_id.clone(), params)
+            .await;
+        self.outgoing.send_result(request_id, result).await;
+    }
+
+    async fn process_write_stdin(
+        &self,
+        request_id: ConnectionRequestId,
+        params: ProcessWriteStdinParams,
+    ) {
+        let result = self
+            .command_exec_manager
+            .process_write_stdin(request_id.clone(), params)
+            .await;
+        self.outgoing.send_result(request_id, result).await;
+    }
+
+    async fn process_resize_pty(
+        &self,
+        request_id: ConnectionRequestId,
+        params: ProcessResizePtyParams,
+    ) {
+        let result = self
+            .command_exec_manager
+            .process_resize_pty(request_id.clone(), params)
+            .await;
+        self.outgoing.send_result(request_id, result).await;
+    }
+
+    async fn process_kill(&self, request_id: ConnectionRequestId, params: ProcessKillParams) {
+        let result = self
+            .command_exec_manager
+            .process_kill(request_id.clone(), params)
             .await;
         self.outgoing.send_result(request_id, result).await;
     }

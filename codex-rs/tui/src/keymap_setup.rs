@@ -703,6 +703,9 @@ fn key_parts_to_config_key_spec(
     code: KeyCode,
     mut modifiers: KeyModifiers,
 ) -> Result<String, String> {
+    let (code, normalized_modifiers) = crate::key_hint::normalize_key_parts(code, modifiers);
+    modifiers = normalized_modifiers;
+
     let supported_modifiers = KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT;
     if !modifiers.difference(supported_modifiers).is_empty() {
         return Err(
@@ -1434,6 +1437,24 @@ mod tests {
         assert_eq!(
             key_event_to_config_key_spec(KeyEvent::new(KeyCode::PageDown, KeyModifiers::SHIFT)),
             Ok("shift-page-down".to_string())
+        );
+    }
+
+    #[test]
+    fn key_capture_serializes_c0_control_chars_as_ctrl_bindings() {
+        assert_eq!(
+            key_event_to_config_key_spec(KeyEvent::new(
+                KeyCode::Char('\u{000a}'),
+                KeyModifiers::NONE,
+            )),
+            Ok("ctrl-j".to_string())
+        );
+        assert_eq!(
+            key_event_to_config_key_spec(KeyEvent::new(
+                KeyCode::Char('\u{0015}'),
+                KeyModifiers::NONE,
+            )),
+            Ok("ctrl-u".to_string())
         );
     }
 

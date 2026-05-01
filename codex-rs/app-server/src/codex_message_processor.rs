@@ -2931,6 +2931,7 @@ impl CodexMessageProcessor {
             );
 
             let response = ThreadStartResponse {
+                session_id: session_configured.session_id.to_string(),
                 thread: thread.clone(),
                 model: config_snapshot.model,
                 model_provider: config_snapshot.model_provider_id,
@@ -4472,6 +4473,7 @@ impl CodexMessageProcessor {
                 );
 
                 let response = ThreadResumeResponse {
+                    session_id: session_configured.session_id.to_string(),
                     thread,
                     model: session_configured.model,
                     model_provider: session_configured.model_provider_id,
@@ -8477,8 +8479,10 @@ async fn handle_pending_thread_resume_request(
     let sandbox = thread_response_sandbox_policy(&permission_profile, cwd.as_path());
     let active_permission_profile =
         thread_response_active_permission_profile(active_permission_profile);
+    let session_id = conversation.session_configured().session_id.to_string();
 
     let response = ThreadResumeResponse {
+        session_id,
         thread,
         model,
         model_provider: model_provider_id,

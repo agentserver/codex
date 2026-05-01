@@ -148,6 +148,7 @@ fn sample_thread_start_response(
     model: &str,
 ) -> ClientResponsePayload {
     ClientResponsePayload::ThreadStart(ThreadStartResponse {
+        session_id: format!("session-{thread_id}"),
         thread: sample_thread(thread_id, ephemeral),
         model: model.to_string(),
         model_provider: "openai".to_string(),
@@ -202,6 +203,7 @@ fn sample_thread_resume_response_with_source(
     source: AppServerSessionSource,
 ) -> ClientResponsePayload {
     ClientResponsePayload::ThreadResume(ThreadResumeResponse {
+        session_id: format!("session-{thread_id}"),
         thread: sample_thread_with_source(thread_id, ephemeral, source),
         model: model.to_string(),
         model_provider: "openai".to_string(),

@@ -296,7 +296,7 @@ mod tests {
         let event = Event {
             id: "1".to_string(),
             msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
-                session_id: codex_protocol::SessionId::from(thread_id),
+                session_id: codex_protocol::SessionId::new(),
                 thread_id,
                 forked_from_id: None,
                 thread_name: None,
@@ -342,7 +342,7 @@ mod tests {
         let thread_id = ThreadId::new();
         let rollout_file = NamedTempFile::new()?;
         let session_configured_event = SessionConfiguredEvent {
-            session_id: codex_protocol::SessionId::from(thread_id),
+            session_id: codex_protocol::SessionId::new(),
             thread_id,
             forked_from_id: None,
             thread_name: None,
@@ -412,7 +412,7 @@ mod tests {
         let thread_id = ThreadId::new();
         let rollout_file = NamedTempFile::new()?;
         let session_configured_event = SessionConfiguredEvent {
-            session_id: codex_protocol::SessionId::from(thread_id),
+            session_id: codex_protocol::SessionId::new(),
             thread_id,
             forked_from_id: None,
             thread_name: None,

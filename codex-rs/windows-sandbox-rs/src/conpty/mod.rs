@@ -67,7 +67,6 @@ impl ConptyInstance {
     pub fn take_output_read(&mut self) -> HANDLE {
         std::mem::replace(&mut self.output_read, 0)
     }
-
 }
 
 /// Create a ConPTY with backing pipes.

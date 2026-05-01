@@ -45,6 +45,7 @@ pub(crate) struct ConfiguredHandler {
     pub source: HookSource,
     pub display_order: i64,
     pub env: HashMap<String, String>,
+    pub execution_cwd: Option<AbsolutePathBuf>,
 }
 
 impl ConfiguredHandler {

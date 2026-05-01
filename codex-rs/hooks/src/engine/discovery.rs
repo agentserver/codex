@@ -39,6 +39,7 @@ struct HookHandlerSource<'a> {
     source: HookSource,
     disabled_hook_keys: &'a HashSet<String>,
     env: HashMap<String, String>,
+    execution_cwd: Option<AbsolutePathBuf>,
     plugin_id: Option<String>,
 }
 
@@ -95,6 +96,7 @@ pub(crate) fn discover_handlers(
                         source: hook_source,
                         disabled_hook_keys: &disabled_hook_keys,
                         env: HashMap::new(),
+                        execution_cwd: None,
                         plugin_id: None,
                     },
                     hook_events,
@@ -146,6 +148,7 @@ fn append_managed_requirement_handlers(
             source: hook_source_for_requirement_source(managed_hooks.source.as_ref()),
             disabled_hook_keys,
             env: HashMap::new(),
+            execution_cwd: None,
             plugin_id: None,
         },
         managed_hooks.get().hooks.clone(),
@@ -191,6 +194,7 @@ fn append_plugin_hook_sources(
                 source: HookSource::Plugin,
                 disabled_hook_keys,
                 env,
+                execution_cwd: None,
                 plugin_id: Some(plugin_id),
             },
             hooks,
@@ -229,6 +233,7 @@ pub(crate) fn append_skill_hook_sources(
                 source: HookSource::Skill,
                 disabled_hook_keys: &disabled_hook_keys,
                 env: HashMap::new(),
+                execution_cwd: source_path.parent(),
                 plugin_id: None,
             },
             hooks,
@@ -475,6 +480,7 @@ fn append_matcher_groups(
                             source: source.source,
                             display_order: *display_order,
                             env: source.env.clone(),
+                            execution_cwd: source.execution_cwd.clone(),
                         });
                     }
                     *display_order += 1;
@@ -568,6 +574,7 @@ mod tests {
             source: hook_source(),
             disabled_hook_keys,
             env: std::collections::HashMap::new(),
+            execution_cwd: None,
             plugin_id: None,
         }
     }
@@ -615,6 +622,7 @@ mod tests {
                 source: hook_source(),
                 display_order: 0,
                 env: std::collections::HashMap::new(),
+                execution_cwd: None,
             }]
         );
     }
@@ -650,6 +658,7 @@ mod tests {
                 source: hook_source(),
                 display_order: 0,
                 env: std::collections::HashMap::new(),
+                execution_cwd: None,
             }]
         );
     }

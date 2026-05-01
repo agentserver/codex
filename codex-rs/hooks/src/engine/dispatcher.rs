@@ -164,6 +164,7 @@ mod tests {
             source: HookSource::User,
             display_order,
             env: std::collections::HashMap::new(),
+            execution_cwd: None,
         }
     }
 

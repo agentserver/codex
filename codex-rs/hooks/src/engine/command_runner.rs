@@ -29,10 +29,11 @@ pub(crate) async fn run_command(
 ) -> CommandRunResult {
     let started_at = chrono::Utc::now().timestamp();
     let started = Instant::now();
+    let execution_cwd = handler.execution_cwd.as_deref().unwrap_or(cwd);
 
     let mut command = build_command(shell, handler);
     command
-        .current_dir(cwd)
+        .current_dir(execution_cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

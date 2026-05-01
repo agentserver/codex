@@ -2051,8 +2051,7 @@ print(json.dumps({{
     .context("write skill pre tool use hook script")?;
     fs::write(
         skill_dir.join("SKILL.md"),
-        format!(
-            r#"---
+        r#"---
 name: secure-operations
 description: Perform operations with security checks
 hooks:
@@ -2060,13 +2059,11 @@ hooks:
     - matcher: "^Bash$"
       hooks:
         - type: command
-          command: "python3 {script_path}"
+          command: "python3 ./pre_tool_use_hook.py"
 ---
 
 # Body
 "#,
-            script_path = script_path.display(),
-        ),
     )
     .context("write skill")?;
 

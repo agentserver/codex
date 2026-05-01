@@ -161,6 +161,7 @@ pub(super) async fn user_input_or_turn_inner(
                     approvals_reviewer,
                     sandbox_policy: Some(sandbox_policy),
                     permission_profile,
+                    active_permission_profile: None,
                     windows_sandbox_level: None,
                     collaboration_mode,
                     reasoning_summary: summary,
@@ -180,6 +181,7 @@ pub(super) async fn user_input_or_turn_inner(
             approvals_reviewer,
             sandbox_policy,
             permission_profile,
+            active_permission_profile,
             windows_sandbox_level,
             model,
             effort,
@@ -211,6 +213,7 @@ pub(super) async fn user_input_or_turn_inner(
                     approvals_reviewer,
                     sandbox_policy,
                     permission_profile,
+                    active_permission_profile,
                     windows_sandbox_level,
                     collaboration_mode,
                     reasoning_summary: summary,
@@ -617,8 +620,9 @@ pub async fn list_skills(sess: &Session, sub_id: String, cwds: Vec<PathBuf>, for
                 continue;
             }
         };
+        let plugins_input = config.plugins_config_input();
         let effective_skill_roots = plugins_manager
-            .effective_skill_roots_for_layer_stack(&config_layer_stack, &config)
+            .effective_skill_roots_for_layer_stack(&config_layer_stack, &plugins_input)
             .await;
         let skills_input = crate::SkillsLoadInput::new(
             cwd_abs.clone(),

@@ -35,3 +35,5 @@ pub use pty::conpty_supported;
 pub use pty::spawn_process as spawn_pty_process;
 #[cfg(windows)]
 pub use win::conpty::RawConPty;
+#[cfg(windows)]
+pub use win::PsuedoCon;

@@ -50,6 +50,7 @@ mod psuedocon;
 
 pub use conpty::ConPtySystem;
 pub use psuedocon::conpty_supported;
+pub use psuedocon::PsuedoCon;
 
 #[derive(Debug)]
 pub struct WinChild {

@@ -610,11 +610,12 @@ mod tests {
         path: &'a AbsolutePathBuf,
         hook_states: &'a std::collections::HashMap<String, HookStateToml>,
     ) -> super::HookHandlerSource<'a> {
+        let source = hook_source();
         super::HookHandlerSource {
             path,
             key_source: path.display().to_string(),
-            source: hook_source(),
-            is_managed: hook_source().is_managed(),
+            source,
+            is_managed: source.is_managed(),
             hook_states,
             env: std::collections::HashMap::new(),
             plugin_id: None,

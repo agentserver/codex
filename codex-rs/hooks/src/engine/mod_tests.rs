@@ -123,7 +123,7 @@ with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
 
     assert!(engine.warnings().is_empty());
     assert_eq!(engine.handlers.len(), 1);
-    assert!(engine.handlers[0].source.is_managed());
+    assert_eq!(engine.handlers[0].source, HookSource::CloudRequirements);
     let listed = crate::list_hooks(crate::HooksConfig {
         legacy_notify_argv: None,
         feature_enabled: true,
@@ -293,7 +293,7 @@ fn user_disablement_filters_non_managed_hooks_but_not_managed_hooks() {
     );
 
     assert_eq!(engine.handlers.len(), 1);
-    assert!(engine.handlers[0].source.is_managed());
+    assert_eq!(engine.handlers[0].source, HookSource::CloudRequirements);
     let discovered =
         super::discovery::discover_handlers(Some(&config_layer_stack), Vec::new(), Vec::new());
     assert_eq!(discovered.hook_entries.len(), 2);
@@ -350,7 +350,10 @@ fn user_disablement_does_not_filter_managed_layer_hooks() {
     );
 
     assert_eq!(engine.handlers.len(), 1);
-    assert!(engine.handlers[0].source.is_managed());
+    assert_eq!(
+        engine.handlers[0].source,
+        HookSource::LegacyManagedConfigFile
+    );
     let discovered =
         super::discovery::discover_handlers(Some(&config_layer_stack), Vec::new(), Vec::new());
     assert_eq!(discovered.hook_entries.len(), 1);
@@ -732,11 +735,13 @@ fn discovers_hooks_from_json_and_toml_in_the_same_layer() {
         tool_input: serde_json::json!({ "command": "echo hello" }),
     });
     assert_eq!(preview.len(), 2);
-    assert!(
+    assert_eq!(
         engine
             .handlers
             .iter()
-            .all(|handler| handler.source.is_managed())
+            .map(|handler| handler.source)
+            .collect::<Vec<_>>(),
+        vec![HookSource::System, HookSource::System]
     );
     assert_eq!(preview[0].source_path, hooks_json_path);
     assert_eq!(preview[1].source_path, config_path);

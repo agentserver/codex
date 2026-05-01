@@ -1548,7 +1548,6 @@ fn build_mcp_tool_approval_elicitation_request(
         server_name: request.server.to_string(),
         request: McpServerElicitationRequest::Form {
             meta: build_mcp_tool_approval_elicitation_meta(
-                request.server,
                 request.is_host_owned_codex_apps_server,
                 request.metadata,
                 request.tool_params,
@@ -1567,7 +1566,6 @@ fn build_mcp_tool_approval_elicitation_request(
 }
 
 fn build_mcp_tool_approval_elicitation_meta(
-    _server: &str,
     is_host_owned_codex_apps_server: bool,
     metadata: Option<&McpToolApprovalMetadata>,
     tool_params: Option<&serde_json::Value>,

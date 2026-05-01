@@ -1135,7 +1135,6 @@ fn accepted_elicitation_content_converts_to_request_user_input_response() {
 fn approval_elicitation_meta_marks_tool_approvals() {
     assert_eq!(
         build_mcp_tool_approval_elicitation_meta(
-            "custom_server",
             /*is_host_owned_codex_apps_server*/ false,
             /*metadata*/ None,
             /*tool_params*/ None,
@@ -1154,7 +1153,6 @@ fn approval_elicitation_meta_marks_tool_approvals() {
 fn approval_elicitation_meta_merges_session_and_always_persist_for_custom_servers() {
     assert_eq!(
         build_mcp_tool_approval_elicitation_meta(
-            "custom_server",
             /*is_host_owned_codex_apps_server*/ false,
             Some(&approval_metadata(
                 /*connector_id*/ None,
@@ -1367,7 +1365,6 @@ async fn guardian_review_decision_maps_to_mcp_tool_decision() {
 fn approval_elicitation_meta_includes_connector_source_for_codex_apps() {
     assert_eq!(
         build_mcp_tool_approval_elicitation_meta(
-            CODEX_APPS_MCP_SERVER_NAME,
             /*is_host_owned_codex_apps_server*/ true,
             Some(&approval_metadata(
                 Some("calendar"),
@@ -1403,7 +1400,6 @@ fn approval_elicitation_meta_includes_connector_source_for_codex_apps() {
 fn approval_elicitation_meta_merges_session_and_always_persist_with_connector_source() {
     assert_eq!(
         build_mcp_tool_approval_elicitation_meta(
-            CODEX_APPS_MCP_SERVER_NAME,
             /*is_host_owned_codex_apps_server*/ true,
             Some(&approval_metadata(
                 Some("calendar"),

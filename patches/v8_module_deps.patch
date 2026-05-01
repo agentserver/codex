@@ -3,9 +3,9 @@
 # Scope: upstream MODULE.bazel only; affects external repo resolution and Bazel
 # module wiring, not V8 source files.
 
-diff --git a/orig/v8-14.6.202.11/MODULE.bazel b/mod/v8-14.6.202.11/MODULE.bazel
---- a/orig/v8-14.6.202.11/MODULE.bazel
-+++ b/mod/v8-14.6.202.11/MODULE.bazel
+diff --git a/orig/v8-14.8.178.14/MODULE.bazel b/mod/v8-14.8.178.14/MODULE.bazel
+--- a/orig/v8-14.8.178.14/MODULE.bazel
++++ b/mod/v8-14.8.178.14/MODULE.bazel
 @@ -8,7 +8,65 @@
  bazel_dep(name = "rules_python", version = "1.0.0")
  bazel_dep(name = "platforms", version = "1.0.0")
@@ -238,10 +238,10 @@ diff --git a/orig/v8-14.6.202.11/MODULE.bazel b/mod/v8-14.6.202.11/MODULE.bazel
 -libcxx_repository(
 -    name = "libcxx",
 -)
-diff --git a/orig/v8-14.6.202.11/bazel/highway.patch b/mod/v8-14.6.202.11/bazel/highway.patch
+diff --git a/orig/v8-14.8.178.14/bazel/highway.patch b/mod/v8-14.8.178.14/bazel/highway.patch
 new file mode 100644
 --- /dev/null
-+++ b/mod/v8-14.6.202.11/bazel/highway.patch
++++ b/mod/v8-14.8.178.14/bazel/highway.patch
 @@ -0,0 +1,25 @@
 +diff --git a/BUILD b/BUILD
 +--- a/BUILD

@@ -14,7 +14,7 @@ select source-built local archives for its consumer builds.
 Current pinned versions:
 
 - Rust crate: `v8 = =146.4.0`
-- Embedded upstream V8 source for musl release builds: `14.6.202.9`
+- Embedded upstream V8 source for musl release builds: `14.8.178.14`
 
 When bumping the Rust crate version, keep the checked-in checksum manifest and
 `MODULE.bazel` in sync:

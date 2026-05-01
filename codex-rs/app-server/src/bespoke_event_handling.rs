@@ -1,6 +1,5 @@
-use crate::codex_message_processor::read_rollout_items_from_rollout;
-use crate::codex_message_processor::read_summary_from_rollout;
-use crate::codex_message_processor::summary_to_thread;
+use crate::codex_message_processor::populate_thread_turns_from_history;
+use crate::codex_message_processor::thread_from_stored_thread;
 use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
 use crate::outgoing_message::ClientRequestResult;
@@ -81,12 +80,10 @@ use codex_app_server_protocol::TurnStartedNotification;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::WarningNotification;
 use codex_app_server_protocol::build_item_from_guardian_event;
-use codex_app_server_protocol::build_turns_from_rollout_items;
 use codex_app_server_protocol::guardian_auto_approval_review_notification;
 use codex_app_server_protocol::item_event_to_server_notification;
 use codex_core::CodexThread;
 use codex_core::ThreadManager;
-use codex_core::find_thread_name_by_id;
 use codex_core::review_format::format_review_findings_block;
 use codex_core::review_prompts;
 use codex_protocol::ThreadId;
@@ -114,12 +111,10 @@ use codex_sandboxing::policy_transforms::intersect_permission_profiles;
 use codex_shell_command::parse_command::shlex_join;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::oneshot;
 use tracing::error;
-use tracing::warn;
 
 enum CommandExecutionApprovalPresentation {
     Network(V2NetworkApprovalContext),
@@ -145,7 +140,6 @@ pub(crate) async fn apply_bespoke_event_handling(
     thread_watch_manager: ThreadWatchManager,
     thread_list_state_permit: Arc<tokio::sync::Semaphore>,
     fallback_model_provider: String,
-    codex_home: &Path,
 ) {
     let Event {
         id: event_turn_id,
@@ -1157,69 +1151,61 @@ pub(crate) async fn apply_bespoke_event_handling(
                         return;
                     }
                 };
-                let Some(rollout_path) = conversation.rollout_path() else {
-                    outgoing
-                        .send_error(
-                            request_id,
-                            invalid_request("thread has no persisted rollout"),
-                        )
-                        .await;
-                    return;
-                };
-                let response = match read_summary_from_rollout(
-                    rollout_path.as_path(),
-                    fallback_model_provider.as_str(),
-                )
-                .await
+                let fallback_cwd = conversation.config_snapshot().await.cwd;
+                let stored_thread = match conversation
+                    .read_thread(
+                        /*include_archived*/ true, /*include_history*/ true,
+                    )
+                    .await
                 {
-                    Ok(summary) => {
-                        let fallback_cwd = conversation.config_snapshot().await.cwd;
-                        let mut thread = summary_to_thread(summary, &fallback_cwd);
-                        match read_rollout_items_from_rollout(rollout_path.as_path()).await {
-                            Ok(items) => {
-                                thread.turns = build_turns_from_rollout_items(&items);
-                                thread.status = thread_watch_manager
-                                    .loaded_status_for_thread(&thread.id)
-                                    .await;
-                                match find_thread_name_by_id(codex_home, &conversation_id).await {
-                                    Ok(name) => {
-                                        thread.name = name;
-                                    }
-                                    Err(err) => {
-                                        warn!(
-                                            "Failed to read thread name for {conversation_id}: {err}"
-                                        );
-                                    }
-                                }
-                                ThreadRollbackResponse { thread }
-                            }
-                            Err(err) => {
-                                outgoing
-                                    .send_error(
-                                        request_id.clone(),
-                                        internal_error(format!(
-                                            "failed to load rollout `{}`: {err}",
-                                            rollout_path.display()
-                                        )),
-                                    )
-                                    .await;
-                                return;
-                            }
-                        }
-                    }
+                    Ok(stored_thread) => stored_thread,
                     Err(err) => {
                         outgoing
                             .send_error(
                                 request_id.clone(),
                                 internal_error(format!(
-                                    "failed to load rollout `{}`: {err}",
-                                    rollout_path.display()
+                                    "failed to read thread {conversation_id} after rollback: {err}"
                                 )),
                             )
                             .await;
                         return;
                     }
                 };
+                let (mut thread, history) = thread_from_stored_thread(
+                    stored_thread,
+                    fallback_model_provider.as_str(),
+                    &fallback_cwd,
+                );
+                let Some(history) = history else {
+                    outgoing
+                        .send_error(
+                            request_id.clone(),
+                            internal_error(format!(
+                                "thread {conversation_id} did not include persisted history after rollback"
+                            )),
+                        )
+                        .await;
+                    return;
+                };
+                if let Err(err) = populate_thread_turns_from_history(
+                    &mut thread,
+                    &history.items,
+                    /*active_turn*/ None,
+                ) {
+                    outgoing
+                        .send_error(
+                            request_id.clone(),
+                            internal_error(format!(
+                                "failed to rebuild thread {conversation_id} after rollback: {err}"
+                            )),
+                        )
+                        .await;
+                    return;
+                }
+                thread.status = thread_watch_manager
+                    .loaded_status_for_thread(&thread.id)
+                    .await;
+                let response = ThreadRollbackResponse { thread };
 
                 outgoing.send_response(request_id, response).await;
             }
@@ -2115,7 +2101,6 @@ mod tests {
     use core_test_support::load_default_config_for_test;
     use pretty_assertions::assert_eq;
     use serde_json::json;
-    use std::path::PathBuf;
     use tempfile::TempDir;
     use tokio::sync::Mutex;
     use tokio::sync::mpsc;
@@ -2222,7 +2207,6 @@ mod tests {
         thread_state: Arc<Mutex<ThreadState>>,
         thread_watch_manager: ThreadWatchManager,
         analytics_events_client: AnalyticsEventsClient,
-        codex_home: PathBuf,
     }
 
     impl GuardianAssessmentTestContext {
@@ -2242,7 +2226,6 @@ mod tests {
                 self.thread_watch_manager.clone(),
                 Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
                 "test-provider".to_string(),
-                &self.codex_home,
             )
             .await;
         }
@@ -2577,7 +2560,6 @@ mod tests {
                 "http://localhost".to_string(),
                 Some(false),
             ),
-            codex_home: codex_home.path().to_path_buf(),
         };
 
         guardian_context

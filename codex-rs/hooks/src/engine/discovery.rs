@@ -98,7 +98,6 @@ pub(crate) fn discover_handlers(
                 plugin_id: None,
             };
             if !policy.allows(&policy_source) {
-                warn_for_skipped_unmanaged_hooks(layer, &mut warnings);
                 continue;
             }
 
@@ -155,28 +154,6 @@ pub(crate) fn discover_handlers(
     }
 }
 
-fn warn_for_skipped_unmanaged_hooks(layer: &ConfigLayerEntry, warnings: &mut Vec<String>) {
-    if let Some(config_folder) = layer.config_folder() {
-        let source_path = config_folder.join("hooks.json");
-        if source_path.as_path().is_file() {
-            warnings.push(skipped_unmanaged_hooks_warning(&source_path));
-        }
-    }
-
-    if layer.config.get("hooks").is_some() {
-        warnings.push(skipped_unmanaged_hooks_warning(&config_toml_source_path(
-            layer,
-        )));
-    }
-}
-
-fn skipped_unmanaged_hooks_warning(path: &AbsolutePathBuf) -> String {
-    format!(
-        "skipping unmanaged hooks config {} because `allow_managed_hooks_only` is enabled",
-        path.display()
-    )
-}
-
 fn append_managed_requirement_handlers(
     handlers: &mut Vec<ConfiguredHandler>,
     hook_entries: &mut Vec<HookListEntry>,
@@ -189,11 +166,7 @@ fn append_managed_requirement_handlers(
     let Some(managed_hooks) = config_layer_stack.requirements().managed_hooks.as_ref() else {
         return;
     };
-    let Some(source_path) =
-        managed_hooks_source_path(managed_hooks.get(), managed_hooks.source.as_ref(), warnings)
-    else {
-        return;
-    };
+    let source_path = managed_hooks_source_path(managed_hooks.get(), managed_hooks.source.as_ref());
     append_hook_events(
         handlers,
         hook_entries,
@@ -263,45 +236,35 @@ fn append_plugin_hook_sources(
 fn managed_hooks_source_path(
     managed_hooks: &ManagedHooksRequirementsToml,
     requirement_source: Option<&RequirementSource>,
-    warnings: &mut Vec<String>,
-) -> Option<AbsolutePathBuf> {
-    let source = requirement_source
-        .map(ToString::to_string)
-        .unwrap_or_else(|| "managed requirements".to_string());
-    let Some(source_path) = managed_hooks.managed_dir_for_current_platform() else {
-        warnings.push(format!(
-            "skipping managed hooks from {source}: no managed hook directory is configured for this platform"
-        ));
-        return None;
-    };
+) -> AbsolutePathBuf {
+    if let Some(source_path) = managed_hooks.managed_dir_for_current_platform()
+        && source_path.is_absolute()
+        && let Ok(source_path) = AbsolutePathBuf::from_absolute_path(source_path)
+    {
+        return source_path;
+    }
 
-    if !source_path.is_absolute() {
-        warnings.push(format!(
-            "skipping managed hooks from {source}: managed hook directory {} is not absolute",
-            source_path.display()
-        ));
-        None
-    } else if !source_path.exists() {
-        warnings.push(format!(
-            "skipping managed hooks from {source}: managed hook directory {} does not exist",
-            source_path.display()
-        ));
-        None
-    } else if !source_path.is_dir() {
-        warnings.push(format!(
-            "skipping managed hooks from {source}: managed hook directory {} is not a directory",
-            source_path.display()
-        ));
-        None
-    } else {
-        AbsolutePathBuf::from_absolute_path(source_path)
-            .inspect_err(|err| {
-                warnings.push(format!(
-                    "skipping managed hooks from {source}: could not normalize managed hook directory {}: {err}",
-                    source_path.display()
-                ));
-            })
-            .ok()
+    fallback_managed_hooks_source_path(requirement_source)
+}
+
+fn fallback_managed_hooks_source_path(
+    requirement_source: Option<&RequirementSource>,
+) -> AbsolutePathBuf {
+    match requirement_source {
+        Some(RequirementSource::SystemRequirementsToml { file })
+        | Some(RequirementSource::LegacyManagedConfigTomlFromFile { file }) => file.clone(),
+        Some(RequirementSource::MdmManagedPreferences { domain, key }) => {
+            synthetic_layer_path(&format!("<mdm:{domain}:{key}>/requirements.toml"))
+        }
+        Some(RequirementSource::CloudRequirements) => {
+            synthetic_layer_path("<cloud-requirements>/requirements.toml")
+        }
+        Some(RequirementSource::LegacyManagedConfigTomlFromMdm) => {
+            synthetic_layer_path("<legacy-managed-config.toml-mdm>/managed_config.toml")
+        }
+        Some(RequirementSource::Unknown) | None => {
+            synthetic_layer_path("<managed-requirements>/requirements.toml")
+        }
     }
 }
 
@@ -406,7 +369,6 @@ fn append_hook_events(
     policy: HookDiscoveryPolicy,
 ) {
     if !policy.allows(&source) {
-        warnings.push(skipped_unmanaged_hooks_warning(source.path));
         return;
     }
 

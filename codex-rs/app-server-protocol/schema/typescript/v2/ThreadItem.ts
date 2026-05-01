@@ -51,7 +51,7 @@ aggregatedOutput: string | null,
  */
 exitCode: number | null,
 /**
- * The duration of the command execution in milliseconds.
+ * Elapsed command runtime in milliseconds. Final once the command completes.
  */
 durationMs: number | null, } | { "type": "fileChange", id: string, changes: Array<FileUpdateChange>, status: PatchApplyStatus, } | { "type": "mcpToolCall", id: string, server: string, tool: string, status: McpToolCallStatus, arguments: JsonValue, mcpAppResourceUri?: string, result: McpToolCallResult | null, error: McpToolCallError | null,
 /**

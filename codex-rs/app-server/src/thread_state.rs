@@ -1,8 +1,10 @@
 use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::ConnectionRequestId;
+use codex_app_server_protocol::CommandExecutionStatus;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadGoal;
 use codex_app_server_protocol::ThreadHistoryBuilder;
+use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnError;
 use codex_core::CodexThread;
@@ -16,6 +18,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Weak;
+use std::time::Instant;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -23,6 +26,10 @@ use tokio::sync::watch;
 use tracing::error;
 
 type PendingInterruptQueue = Vec<ConnectionRequestId>;
+
+fn elapsed_duration_ms(duration: std::time::Duration) -> i64 {
+    i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
+}
 
 pub(crate) struct PendingThreadResumeRequest {
     pub(crate) request_id: ConnectionRequestId,
@@ -74,6 +81,7 @@ pub(crate) struct ThreadState {
     pub(crate) cancel_tx: Option<oneshot::Sender<()>>,
     pub(crate) experimental_raw_events: bool,
     pub(crate) listener_generation: u64,
+    running_command_started_at: HashMap<String, Instant>,
     listener_command_tx: Option<mpsc::UnboundedSender<ThreadListenerCommand>>,
     current_turn_history: ThreadHistoryBuilder,
     listener_thread: Option<Weak<CodexThread>>,
@@ -122,12 +130,45 @@ impl ThreadState {
     }
 
     pub(crate) fn active_turn_snapshot(&self) -> Option<Turn> {
-        self.current_turn_history.active_turn_snapshot()
+        let mut turn = self.current_turn_history.active_turn_snapshot()?;
+        self.refresh_running_command_durations(std::slice::from_mut(&mut turn));
+        Some(turn)
+    }
+
+    pub(crate) fn refresh_running_command_durations(&self, turns: &mut [Turn]) {
+        for turn in turns {
+            for item in &mut turn.items {
+                let ThreadItem::CommandExecution {
+                    id,
+                    status: CommandExecutionStatus::InProgress,
+                    duration_ms,
+                    ..
+                } = item
+                else {
+                    continue;
+                };
+                let Some(started_at) = self.running_command_started_at.get(id) else {
+                    continue;
+                };
+                *duration_ms = Some(elapsed_duration_ms(started_at.elapsed()));
+            }
+        }
     }
 
     pub(crate) fn track_current_turn_event(&mut self, event_turn_id: &str, event: &EventMsg) {
-        if let EventMsg::TurnStarted(payload) = event {
-            self.turn_summary.started_at = payload.started_at;
+        match event {
+            EventMsg::TurnStarted(payload) => {
+                self.turn_summary.started_at = payload.started_at;
+            }
+            EventMsg::ExecCommandBegin(payload) => {
+                self.running_command_started_at
+                    .entry(payload.call_id.clone())
+                    .or_insert_with(Instant::now);
+            }
+            EventMsg::ExecCommandEnd(payload) => {
+                self.running_command_started_at.remove(&payload.call_id);
+            }
+            _ => {}
         }
         self.current_turn_history.handle_event(event);
         if matches!(event, EventMsg::TurnAborted(_) | EventMsg::TurnComplete(_))
@@ -415,5 +456,98 @@ impl ThreadStateManager {
             .threads
             .get(&thread_id)
             .map(|thread_entry| thread_entry.has_connections_watcher.subscribe())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_app_server_protocol::CommandAction;
+    use codex_app_server_protocol::CommandExecutionSource;
+    use codex_app_server_protocol::TurnStatus;
+    use codex_utils_absolute_path::AbsolutePathBuf;
+    use pretty_assertions::assert_eq;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    fn test_absolute_path(path: &str) -> AbsolutePathBuf {
+        AbsolutePathBuf::try_from(PathBuf::from(path)).expect("path must be absolute")
+    }
+
+    #[test]
+    fn refreshes_running_command_durations_for_live_turns() {
+        let mut state = ThreadState::default();
+        state.running_command_started_at.insert(
+            "exec-call".into(),
+            Instant::now() - Duration::from_millis(1_500),
+        );
+        let mut turns = vec![Turn {
+            id: "turn-1".into(),
+            items: vec![ThreadItem::CommandExecution {
+                id: "exec-call".into(),
+                command: "sleep 100".into(),
+                cwd: test_absolute_path(if cfg!(windows) { "C:\\tmp" } else { "/tmp" }),
+                process_id: Some("pid-1".into()),
+                source: CommandExecutionSource::Agent,
+                status: CommandExecutionStatus::InProgress,
+                command_actions: vec![CommandAction::Unknown {
+                    command: "sleep 100".into(),
+                }],
+                aggregated_output: None,
+                exit_code: None,
+                duration_ms: Some(0),
+            }],
+            status: TurnStatus::InProgress,
+            error: None,
+            started_at: None,
+            completed_at: None,
+            duration_ms: None,
+        }];
+
+        state.refresh_running_command_durations(&mut turns);
+
+        let ThreadItem::CommandExecution { duration_ms, .. } = &turns[0].items[0] else {
+            panic!("expected command execution item");
+        };
+        let elapsed = duration_ms.expect("running command duration");
+        assert!(elapsed >= 1_500, "elapsed duration should include runtime");
+    }
+
+    #[test]
+    fn leaves_completed_command_duration_unchanged() {
+        let mut state = ThreadState::default();
+        state.running_command_started_at.insert(
+            "exec-call".into(),
+            Instant::now() - Duration::from_millis(1_500),
+        );
+        let mut turns = vec![Turn {
+            id: "turn-1".into(),
+            items: vec![ThreadItem::CommandExecution {
+                id: "exec-call".into(),
+                command: "sleep 100".into(),
+                cwd: test_absolute_path(if cfg!(windows) { "C:\\tmp" } else { "/tmp" }),
+                process_id: Some("pid-1".into()),
+                source: CommandExecutionSource::Agent,
+                status: CommandExecutionStatus::Completed,
+                command_actions: vec![CommandAction::Unknown {
+                    command: "sleep 100".into(),
+                }],
+                aggregated_output: Some(String::new()),
+                exit_code: Some(0),
+                duration_ms: Some(42),
+            }],
+            status: TurnStatus::Completed,
+            error: None,
+            started_at: None,
+            completed_at: None,
+            duration_ms: None,
+        }];
+
+        state.refresh_running_command_durations(&mut turns);
+
+        let ThreadItem::CommandExecution { duration_ms, .. } = &turns[0].items[0] else {
+            panic!("expected command execution item");
+        };
+        assert_eq!(*duration_ms, Some(42));
     }
 }

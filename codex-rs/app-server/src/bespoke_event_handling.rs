@@ -1376,7 +1376,7 @@ async fn start_command_execution_item(
                 command_actions,
                 aggregated_output: None,
                 exit_code: None,
-                duration_ms: None,
+                duration_ms: Some(0),
             },
         };
         outgoing
@@ -2431,7 +2431,7 @@ mod tests {
                         command_actions: completion_item.command_actions.clone(),
                         aggregated_output: None,
                         exit_code: None,
-                        duration_ms: None,
+                        duration_ms: Some(0),
                     }
                 );
             }

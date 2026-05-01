@@ -101,7 +101,7 @@ pub fn build_command_execution_begin_item(payload: &ExecCommandBeginEvent) -> Th
             .collect(),
         aggregated_output: None,
         exit_code: None,
-        duration_ms: None,
+        duration_ms: Some(0),
     }
 }
 

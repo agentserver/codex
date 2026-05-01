@@ -147,7 +147,7 @@ fn maybe_run_exec_server_from_test_binary(guard: Option<&TestBinaryDispatchGuard
                 };
                 listen_url = Some(value);
             }
-            "--config" => {
+            "--config-path" => {
                 let Some(value) = args.next() else {
                     eprintln!("expected config path");
                     std::process::exit(1);

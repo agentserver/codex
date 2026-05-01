@@ -23,7 +23,7 @@ The CLI entrypoint supports:
 
 - `ws://IP:PORT` (default)
 
-The CLI also accepts `--config PATH`. When omitted, the server reads
+The CLI also accepts `--config-path PATH`. When omitted, the server reads
 `$CODEX_HOME/exec-server.toml`. Missing config files are ignored. The supported
 setting is:
 

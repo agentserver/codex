@@ -455,7 +455,7 @@ struct ExecServerCommand {
     listen: String,
 
     /// Path to exec-server configuration. Defaults to `$CODEX_HOME/exec-server.toml`.
-    #[arg(long = "config", value_name = "PATH")]
+    #[arg(long = "config-path", value_name = "PATH")]
     config: Option<PathBuf>,
 }
 
@@ -1263,7 +1263,9 @@ async fn run_exec_server_command(
 ) -> anyhow::Result<()> {
     let config_path = match cmd.config {
         Some(path) => path,
-        None => find_codex_home()?.join(codex_exec_server::EXEC_SERVER_CONFIG_FILE),
+        None => find_codex_home()?
+            .join(codex_exec_server::EXEC_SERVER_CONFIG_FILE)
+            .to_path_buf(),
     };
     let options = codex_exec_server::ExecServerConfig::load_from_path(&config_path)
         .await?
@@ -1848,8 +1850,9 @@ mod tests {
 
     #[test]
     fn exec_server_parses_config_path() {
-        let exec_server =
-            exec_server_from_args(["codex", "exec-server", "--config", "/tmp/exec.toml"].as_ref());
+        let exec_server = exec_server_from_args(
+            ["codex", "exec-server", "--config-path", "/tmp/exec.toml"].as_ref(),
+        );
 
         assert_eq!(exec_server.config, Some(PathBuf::from("/tmp/exec.toml")));
     }

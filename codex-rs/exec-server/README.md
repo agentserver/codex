@@ -27,6 +27,22 @@ Wire framing:
 
 - websocket: one JSON-RPC message per websocket text frame
 
+## Status endpoints
+
+When listening on `ws://IP:PORT`, the same TCP listener also serves a small
+HTTP operations surface:
+
+- `GET /healthz`: returns `200 OK` with `ok\n` when the process can answer.
+- `GET /readyz`: returns `200 OK` with `ready\n` when required helper paths are
+  usable, otherwise `503 Service Unavailable` with `not ready\n`.
+- `GET /status`: returns a JSON summary with service/version, readiness,
+  uptime, connection/session/process/request counters, and capability flags.
+  The response intentionally avoids command lines, environment variables,
+  working directories, session ids, process ids, user names, and local paths.
+- `GET /metrics`: returns low-cardinality Prometheus text metrics for uptime,
+  connections, sessions, processes, and JSON-RPC request totals by fixed method
+  name and result.
+
 ## Lifecycle
 
 Each connection follows this sequence:

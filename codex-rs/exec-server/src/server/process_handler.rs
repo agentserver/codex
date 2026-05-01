@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use codex_app_server_protocol::JSONRPCErrorError;
 
 use crate::local_process::LocalProcess;
@@ -10,6 +12,8 @@ use crate::protocol::TerminateResponse;
 use crate::protocol::WriteParams;
 use crate::protocol::WriteResponse;
 use crate::rpc::RpcNotificationSender;
+use crate::server::status::ExecServerStatusState;
+use crate::server::status::ProcessStatusSnapshot;
 
 #[derive(Clone)]
 pub(crate) struct ProcessHandler {
@@ -17,9 +21,12 @@ pub(crate) struct ProcessHandler {
 }
 
 impl ProcessHandler {
-    pub(crate) fn new(notifications: RpcNotificationSender) -> Self {
+    pub(crate) fn new(
+        notifications: RpcNotificationSender,
+        status: Arc<ExecServerStatusState>,
+    ) -> Self {
         Self {
-            process: LocalProcess::new(notifications),
+            process: LocalProcess::new(notifications, status),
         }
     }
 
@@ -29,6 +36,10 @@ impl ProcessHandler {
 
     pub(crate) fn set_notification_sender(&self, notifications: Option<RpcNotificationSender>) {
         self.process.set_notification_sender(notifications);
+    }
+
+    pub(crate) async fn status_snapshot(&self) -> ProcessStatusSnapshot {
+        self.process.status_snapshot().await
     }
 
     pub(crate) async fn exec(&self, params: ExecParams) -> Result<ExecResponse, JSONRPCErrorError> {

@@ -1,3 +1,5 @@
+use axum::extract::ws::Message as AxumWebSocketMessage;
+use axum::extract::ws::WebSocket as AxumWebSocket;
 use codex_app_server_protocol::JSONRPCMessage;
 use futures::SinkExt;
 use futures::StreamExt;
@@ -34,6 +36,139 @@ pub(crate) struct JsonRpcConnection {
 }
 
 impl JsonRpcConnection {
+    pub(crate) fn from_axum_websocket(stream: AxumWebSocket, connection_label: String) -> Self {
+        let (outgoing_tx, mut outgoing_rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let (incoming_tx, incoming_rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let (disconnected_tx, disconnected_rx) = watch::channel(false);
+        let (mut websocket_writer, mut websocket_reader) = stream.split();
+
+        let reader_label = connection_label.clone();
+        let incoming_tx_for_reader = incoming_tx.clone();
+        let disconnected_tx_for_reader = disconnected_tx.clone();
+        let reader_task = tokio::spawn(async move {
+            loop {
+                match websocket_reader.next().await {
+                    Some(Ok(AxumWebSocketMessage::Text(text))) => {
+                        match serde_json::from_str::<JSONRPCMessage>(text.as_ref()) {
+                            Ok(message) => {
+                                if incoming_tx_for_reader
+                                    .send(JsonRpcConnectionEvent::Message(message))
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                send_malformed_message(
+                                    &incoming_tx_for_reader,
+                                    Some(format!(
+                                        "failed to parse websocket JSON-RPC message from {reader_label}: {err}"
+                                    )),
+                                )
+                                .await;
+                            }
+                        }
+                    }
+                    Some(Ok(AxumWebSocketMessage::Binary(bytes))) => {
+                        match serde_json::from_slice::<JSONRPCMessage>(bytes.as_ref()) {
+                            Ok(message) => {
+                                if incoming_tx_for_reader
+                                    .send(JsonRpcConnectionEvent::Message(message))
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                send_malformed_message(
+                                    &incoming_tx_for_reader,
+                                    Some(format!(
+                                        "failed to parse websocket JSON-RPC message from {reader_label}: {err}"
+                                    )),
+                                )
+                                .await;
+                            }
+                        }
+                    }
+                    Some(Ok(AxumWebSocketMessage::Close(_))) => {
+                        send_disconnected(
+                            &incoming_tx_for_reader,
+                            &disconnected_tx_for_reader,
+                            /*reason*/ None,
+                        )
+                        .await;
+                        break;
+                    }
+                    Some(Ok(AxumWebSocketMessage::Ping(_)))
+                    | Some(Ok(AxumWebSocketMessage::Pong(_))) => {}
+                    Some(Err(err)) => {
+                        send_disconnected(
+                            &incoming_tx_for_reader,
+                            &disconnected_tx_for_reader,
+                            Some(format!(
+                                "failed to read websocket JSON-RPC message from {reader_label}: {err}"
+                            )),
+                        )
+                        .await;
+                        break;
+                    }
+                    None => {
+                        send_disconnected(
+                            &incoming_tx_for_reader,
+                            &disconnected_tx_for_reader,
+                            /*reason*/ None,
+                        )
+                        .await;
+                        break;
+                    }
+                }
+            }
+        });
+
+        let writer_task = tokio::spawn(async move {
+            while let Some(message) = outgoing_rx.recv().await {
+                match serialize_jsonrpc_message(&message) {
+                    Ok(encoded) => {
+                        if let Err(err) = websocket_writer
+                            .send(AxumWebSocketMessage::Text(encoded.into()))
+                            .await
+                        {
+                            send_disconnected(
+                                &incoming_tx,
+                                &disconnected_tx,
+                                Some(format!(
+                                    "failed to write websocket JSON-RPC message to {connection_label}: {err}"
+                                )),
+                            )
+                            .await;
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        send_disconnected(
+                            &incoming_tx,
+                            &disconnected_tx,
+                            Some(format!(
+                                "failed to serialize JSON-RPC message for {connection_label}: {err}"
+                            )),
+                        )
+                        .await;
+                        break;
+                    }
+                }
+            }
+        });
+
+        Self {
+            outgoing_tx,
+            incoming_rx,
+            disconnected_rx,
+            task_handles: vec![reader_task, writer_task],
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn from_stdio<R, W>(reader: R, writer: W, connection_label: String) -> Self
     where

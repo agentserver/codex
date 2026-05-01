@@ -10,6 +10,9 @@ use uuid::Uuid;
 use crate::rpc::RpcNotificationSender;
 use crate::rpc::invalid_request;
 use crate::server::process_handler::ProcessHandler;
+use crate::server::status::ExecServerStatusState;
+use crate::server::status::ProcessStatusSnapshot;
+use crate::server::status::SessionStatusSnapshot;
 
 #[cfg(test)]
 const DETACHED_SESSION_TTL: Duration = Duration::from_millis(200);
@@ -18,6 +21,7 @@ const DETACHED_SESSION_TTL: Duration = Duration::from_secs(10);
 
 pub(crate) struct SessionRegistry {
     sessions: Mutex<HashMap<String, Arc<SessionEntry>>>,
+    status: Arc<ExecServerStatusState>,
 }
 
 struct SessionEntry {
@@ -49,10 +53,21 @@ pub(crate) struct SessionHandle {
 }
 
 impl SessionRegistry {
-    pub(crate) fn new() -> Arc<Self> {
+    pub(crate) fn new(status: Arc<ExecServerStatusState>) -> Arc<Self> {
         Arc::new(Self {
             sessions: Mutex::new(HashMap::new()),
+            status,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_tests() -> Arc<Self> {
+        let runtime_paths = crate::ExecServerRuntimePaths::new(
+            std::env::current_exe().expect("current executable should resolve"),
+            None,
+        )
+        .expect("current executable should be absolute");
+        Self::new(ExecServerStatusState::new(runtime_paths))
     }
 
     pub(crate) async fn attach(
@@ -94,10 +109,11 @@ impl SessionRegistry {
                 let session_id = Uuid::new_v4().to_string();
                 let entry = Arc::new(SessionEntry::new(
                     session_id.clone(),
-                    ProcessHandler::new(notifications),
+                    ProcessHandler::new(notifications, Arc::clone(&self.status)),
                     connection_id,
                 ));
                 sessions.insert(session_id, Arc::clone(&entry));
+                self.status.session_created();
                 Ok(AttachOutcome::Attached(entry))
             }
         };
@@ -134,13 +150,25 @@ impl SessionRegistry {
             entry.process.shutdown().await;
         }
     }
-}
 
-impl Default for SessionRegistry {
-    fn default() -> Self {
-        Self {
-            sessions: Mutex::new(HashMap::new()),
+    pub(crate) async fn status_snapshot(&self) -> (SessionStatusSnapshot, ProcessStatusSnapshot) {
+        let entries = {
+            let sessions = self.sessions.lock().await;
+            sessions.values().cloned().collect::<Vec<_>>()
+        };
+        let mut sessions = SessionStatusSnapshot::default();
+        let mut processes = ProcessStatusSnapshot::default();
+        for entry in entries {
+            match entry.attachment_status() {
+                SessionAttachmentStatus::Active => sessions.active += 1,
+                SessionAttachmentStatus::Detached => sessions.detached += 1,
+            }
+            let process = entry.process.status_snapshot().await;
+            processes.starting += process.starting;
+            processes.running += process.running;
+            processes.exited_retained += process.exited_retained;
         }
+        (sessions, processes)
     }
 }
 
@@ -221,6 +249,23 @@ impl SessionEntry {
                 .detached_expires_at
                 .is_some_and(|deadline| now >= deadline)
     }
+
+    fn attachment_status(&self) -> SessionAttachmentStatus {
+        let attachment = self
+            .attachment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if attachment.current_connection_id.is_some() {
+            SessionAttachmentStatus::Active
+        } else {
+            SessionAttachmentStatus::Detached
+        }
+    }
+}
+
+enum SessionAttachmentStatus {
+    Active,
+    Detached,
 }
 
 impl SessionHandle {

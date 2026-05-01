@@ -45,6 +45,8 @@ use crate::rpc::RpcServerOutboundMessage;
 use crate::rpc::internal_error;
 use crate::rpc::invalid_params;
 use crate::rpc::invalid_request;
+use crate::server::status::ExecServerStatusState;
+use crate::server::status::ProcessStatusSnapshot;
 
 const RETAINED_OUTPUT_BYTES_PER_PROCESS: usize = 1024 * 1024;
 const NOTIFICATION_CHANNEL_CAPACITY: usize = 256;
@@ -84,6 +86,7 @@ enum ProcessEntry {
 struct Inner {
     notifications: std::sync::RwLock<Option<RpcNotificationSender>>,
     processes: Mutex<HashMap<ProcessId, ProcessEntry>>,
+    status: Arc<ExecServerStatusState>,
 }
 
 #[derive(Clone)]
@@ -103,16 +106,28 @@ impl Default for LocalProcess {
         let (outgoing_tx, mut outgoing_rx) =
             mpsc::channel::<RpcServerOutboundMessage>(NOTIFICATION_CHANNEL_CAPACITY);
         tokio::spawn(async move { while outgoing_rx.recv().await.is_some() {} });
-        Self::new(RpcNotificationSender::new(outgoing_tx))
+        let runtime_paths = crate::ExecServerRuntimePaths::new(
+            std::env::current_exe().expect("current executable should resolve"),
+            None,
+        )
+        .expect("current executable should be absolute");
+        Self::new(
+            RpcNotificationSender::new(outgoing_tx),
+            ExecServerStatusState::new(runtime_paths),
+        )
     }
 }
 
 impl LocalProcess {
-    pub(crate) fn new(notifications: RpcNotificationSender) -> Self {
+    pub(crate) fn new(
+        notifications: RpcNotificationSender,
+        status: Arc<ExecServerStatusState>,
+    ) -> Self {
         Self {
             inner: Arc::new(Inner {
                 notifications: std::sync::RwLock::new(Some(notifications)),
                 processes: Mutex::new(HashMap::new()),
+                status,
             }),
         }
     }
@@ -140,6 +155,21 @@ impl LocalProcess {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         *notification_sender = notifications;
+    }
+
+    pub(crate) async fn status_snapshot(&self) -> ProcessStatusSnapshot {
+        let processes = self.inner.processes.lock().await;
+        let mut snapshot = ProcessStatusSnapshot::default();
+        for process in processes.values() {
+            match process {
+                ProcessEntry::Starting => snapshot.starting += 1,
+                ProcessEntry::Running(process) if process.exit_code.is_some() => {
+                    snapshot.exited_retained += 1;
+                }
+                ProcessEntry::Running(_) => snapshot.running += 1,
+            }
+        }
+        snapshot
     }
 
     async fn start_process(
@@ -229,6 +259,7 @@ impl LocalProcess {
                 })),
             );
         }
+        self.inner.status.process_started();
 
         tokio::spawn(stream_output(
             process_id.clone(),

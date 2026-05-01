@@ -16,28 +16,51 @@ use crate::rpc::method_not_found;
 use crate::server::ExecServerHandler;
 use crate::server::registry::build_router;
 use crate::server::session_registry::SessionRegistry;
+use crate::server::status::ExecServerStatusState;
+use crate::server::status::StatusResponse;
 
 #[derive(Clone)]
 pub(crate) struct ConnectionProcessor {
     session_registry: Arc<SessionRegistry>,
     runtime_paths: ExecServerRuntimePaths,
+    status: Arc<ExecServerStatusState>,
 }
 
 impl ConnectionProcessor {
-    pub(crate) fn new(runtime_paths: ExecServerRuntimePaths) -> Self {
+    pub(crate) fn new(
+        runtime_paths: ExecServerRuntimePaths,
+        status: Arc<ExecServerStatusState>,
+    ) -> Self {
         Self {
-            session_registry: SessionRegistry::new(),
+            session_registry: SessionRegistry::new(Arc::clone(&status)),
             runtime_paths,
+            status,
         }
     }
 
     pub(crate) async fn run_connection(&self, connection: JsonRpcConnection) {
+        self.status.connection_opened();
         run_connection(
             connection,
             Arc::clone(&self.session_registry),
             self.runtime_paths.clone(),
+            Arc::clone(&self.status),
         )
         .await;
+        self.status.connection_closed();
+    }
+
+    pub(crate) async fn status_snapshot(&self) -> StatusResponse {
+        let (sessions, processes) = self.session_registry.status_snapshot().await;
+        self.status.snapshot(sessions, processes).await
+    }
+
+    pub(crate) async fn readiness(&self) -> Result<(), String> {
+        self.status.readiness().await
+    }
+
+    pub(crate) fn render_prometheus_metrics(&self, snapshot: &StatusResponse) -> String {
+        self.status.render_prometheus_metrics(snapshot)
     }
 }
 
@@ -45,6 +68,7 @@ async fn run_connection(
     connection: JsonRpcConnection,
     session_registry: Arc<SessionRegistry>,
     runtime_paths: ExecServerRuntimePaths,
+    status: Arc<ExecServerStatusState>,
 ) {
     let router = Arc::new(build_router());
     let (json_outgoing_tx, mut incoming_rx, mut disconnected_rx, connection_tasks) =
@@ -96,6 +120,7 @@ async fn run_connection(
             JsonRpcConnectionEvent::Message(message) => match message {
                 codex_app_server_protocol::JSONRPCMessage::Request(request) => {
                     if let Some(route) = router.request_route(request.method.as_str()) {
+                        let method = request.method.clone();
                         let message = tokio::select! {
                             message = route(Arc::clone(&handler), request) => message,
                             _ = disconnected_rx.changed() => {
@@ -103,23 +128,37 @@ async fn run_connection(
                                 break;
                             }
                         };
+                        match &message {
+                            Some(RpcServerOutboundMessage::Error { .. }) => {
+                                status.request_failed(&method);
+                            }
+                            Some(RpcServerOutboundMessage::Response { .. }) | None => {
+                                status.request_succeeded(&method);
+                            }
+                            Some(RpcServerOutboundMessage::Notification(_)) => {
+                                status.request_succeeded(&method);
+                            }
+                        }
                         if let Some(message) = message
                             && outgoing_tx.send(message).await.is_err()
                         {
                             break;
                         }
-                    } else if outgoing_tx
-                        .send(RpcServerOutboundMessage::Error {
-                            request_id: request.id,
-                            error: method_not_found(format!(
-                                "exec-server stub does not implement `{}` yet",
-                                request.method
-                            )),
-                        })
-                        .await
-                        .is_err()
-                    {
-                        break;
+                    } else {
+                        status.request_failed(&request.method);
+                        if outgoing_tx
+                            .send(RpcServerOutboundMessage::Error {
+                                request_id: request.id,
+                                error: method_not_found(format!(
+                                    "exec-server stub does not implement `{}` yet",
+                                    request.method
+                                )),
+                            })
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
                     }
                 }
                 codex_app_server_protocol::JSONRPCMessage::Notification(notification) => {
@@ -218,10 +257,11 @@ mod tests {
     use crate::protocol::TerminateParams;
     use crate::protocol::TerminateResponse;
     use crate::server::session_registry::SessionRegistry;
+    use crate::server::status::ExecServerStatusState;
 
     #[tokio::test]
     async fn transport_disconnect_detaches_session_during_in_flight_read() {
-        let registry = SessionRegistry::new();
+        let registry = SessionRegistry::new_for_tests();
         let (mut first_writer, mut first_lines, first_task) =
             spawn_test_connection(Arc::clone(&registry), "first");
 
@@ -317,7 +357,9 @@ mod tests {
         let (server_writer, client_reader) = duplex(1 << 20);
         let connection =
             JsonRpcConnection::from_stdio(server_reader, server_writer, label.to_string());
-        let task = tokio::spawn(run_connection(connection, registry, test_runtime_paths()));
+        let runtime_paths = test_runtime_paths();
+        let status = ExecServerStatusState::new(runtime_paths.clone());
+        let task = tokio::spawn(run_connection(connection, registry, runtime_paths, status));
         (client_writer, BufReader::new(client_reader).lines(), task)
     }
 

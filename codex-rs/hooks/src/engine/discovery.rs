@@ -423,17 +423,8 @@ fn append_matcher_groups(
                     let trusted_hash = (!source.source.is_managed())
                         .then(|| state.and_then(|state| state.trusted_hash.clone()))
                         .flatten();
-                    let trust_status = if source.source.is_managed() {
-                        HookTrustStatus::Managed
-                    } else {
-                        match trusted_hash.as_deref() {
-                            Some(trusted_hash) if trusted_hash == current_hash => {
-                                HookTrustStatus::Trusted
-                            }
-                            Some(_) => HookTrustStatus::Modified,
-                            None => HookTrustStatus::Untrusted,
-                        }
-                    };
+                    let trust_status =
+                        hook_trust_status(source.source.is_managed(), &current_hash, &trusted_hash);
                     hook_entries.push(HookListEntry {
                         key,
                         event_name,
@@ -485,6 +476,8 @@ fn append_matcher_groups(
     }
 }
 
+/// Hash normalized handler fields instead of source text so equivalent hooks
+/// from config TOML and hooks.json converge on the same trust identity.
 fn command_hook_hash(
     event_name: codex_protocol::protocol::HookEventName,
     matcher: Option<&str>,
@@ -492,8 +485,6 @@ fn command_hook_hash(
     timeout_sec: u64,
     status_message: Option<&str>,
 ) -> String {
-    // Hash normalized handler fields instead of source text so equivalent hooks from
-    // config TOML and hooks.json converge on the same trust identity.
     let TomlValue::Table(mut table) = TomlValue::Table(Default::default()) else {
         unreachable!("TOML table construction should stay a table");
     };
@@ -536,6 +527,22 @@ fn hook_event_key_label(event_name: codex_protocol::protocol::HookEventName) -> 
         codex_protocol::protocol::HookEventName::SessionStart => "session_start",
         codex_protocol::protocol::HookEventName::UserPromptSubmit => "user_prompt_submit",
         codex_protocol::protocol::HookEventName::Stop => "stop",
+    }
+}
+
+fn hook_trust_status(
+    is_managed: bool,
+    current_hash: &str,
+    trusted_hash: &Option<String>,
+) -> HookTrustStatus {
+    if is_managed {
+        HookTrustStatus::Managed
+    } else {
+        match trusted_hash.as_deref() {
+            Some(trusted_hash) if trusted_hash == current_hash => HookTrustStatus::Trusted,
+            Some(_) => HookTrustStatus::Modified,
+            None => HookTrustStatus::Untrusted,
+        }
     }
 }
 

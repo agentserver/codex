@@ -244,7 +244,7 @@ impl UserMessageItem {
         self.content
             .iter()
             .filter_map(|c| match c {
-                UserInput::Image { image_url } => Some(image_url.clone()),
+                UserInput::Image { image_url, .. } => Some(image_url.clone()),
                 _ => None,
             })
             .collect()
@@ -254,7 +254,7 @@ impl UserMessageItem {
         self.content
             .iter()
             .filter_map(|c| match c {
-                UserInput::LocalImage { path } => Some(path.clone()),
+                UserInput::LocalImage { path, .. } => Some(path.clone()),
                 _ => None,
             })
             .collect()

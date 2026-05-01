@@ -43,6 +43,7 @@ use codex_protocol::models::ActivePermissionProfile as CoreActivePermissionProfi
 use codex_protocol::models::ActivePermissionProfileModification as CoreActivePermissionProfileModification;
 use codex_protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
 use codex_protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
+use codex_protocol::models::ImageDetail;
 use codex_protocol::models::ManagedFileSystemPermissions as CoreManagedFileSystemPermissions;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::NetworkPermissions as CoreNetworkPermissions;
@@ -5790,9 +5791,15 @@ pub enum UserInput {
         text_elements: Vec<TextElement>,
     },
     Image {
+        #[serde(default)]
+        #[ts(optional = nullable)]
+        detail: Option<ImageDetail>,
         url: String,
     },
     LocalImage {
+        #[serde(default)]
+        #[ts(optional = nullable)]
+        detail: Option<ImageDetail>,
         path: PathBuf,
     },
     Skill {
@@ -5815,8 +5822,11 @@ impl UserInput {
                 text,
                 text_elements: text_elements.into_iter().map(Into::into).collect(),
             },
-            UserInput::Image { url } => CoreUserInput::Image { image_url: url },
-            UserInput::LocalImage { path } => CoreUserInput::LocalImage { path },
+            UserInput::Image { url, detail } => CoreUserInput::Image {
+                image_url: url,
+                detail,
+            },
+            UserInput::LocalImage { path, detail } => CoreUserInput::LocalImage { path, detail },
             UserInput::Skill { name, path } => CoreUserInput::Skill { name, path },
             UserInput::Mention { name, path } => CoreUserInput::Mention { name, path },
         }
@@ -5833,8 +5843,11 @@ impl From<CoreUserInput> for UserInput {
                 text,
                 text_elements: text_elements.into_iter().map(Into::into).collect(),
             },
-            CoreUserInput::Image { image_url } => UserInput::Image { url: image_url },
-            CoreUserInput::LocalImage { path } => UserInput::LocalImage { path },
+            CoreUserInput::Image { image_url, detail } => UserInput::Image {
+                url: image_url,
+                detail,
+            },
+            CoreUserInput::LocalImage { path, detail } => UserInput::LocalImage { path, detail },
             CoreUserInput::Skill { name, path } => UserInput::Skill { name, path },
             CoreUserInput::Mention { name, path } => UserInput::Mention { name, path },
             _ => unreachable!("unsupported user input variant"),
@@ -10238,9 +10251,11 @@ mod tests {
                 },
                 CoreUserInput::Image {
                     image_url: "https://example.com/image.png".to_string(),
+                    detail: Some(ImageDetail::Original),
                 },
                 CoreUserInput::LocalImage {
                     path: PathBuf::from("local/image.png"),
+                    detail: Some(ImageDetail::Original),
                 },
                 CoreUserInput::Skill {
                     name: "skill-creator".to_string(),
@@ -10264,9 +10279,11 @@ mod tests {
                     },
                     UserInput::Image {
                         url: "https://example.com/image.png".to_string(),
+                        detail: Some(ImageDetail::Original),
                     },
                     UserInput::LocalImage {
                         path: PathBuf::from("local/image.png"),
+                        detail: Some(ImageDetail::Original),
                     },
                     UserInput::Skill {
                         name: "skill-creator".to_string(),
@@ -10414,6 +10431,33 @@ mod tests {
                     diff: "hello\n".to_string(),
                 }],
                 status: PatchApplyStatus::Completed,
+            }
+        );
+    }
+
+    #[test]
+    fn user_input_into_core_preserves_image_detail() {
+        assert_eq!(
+            UserInput::Image {
+                url: "https://example.com/image.png".to_string(),
+                detail: Some(ImageDetail::Original),
+            }
+            .into_core(),
+            CoreUserInput::Image {
+                image_url: "https://example.com/image.png".to_string(),
+                detail: Some(ImageDetail::Original),
+            }
+        );
+
+        assert_eq!(
+            UserInput::LocalImage {
+                path: PathBuf::from("local/image.png"),
+                detail: Some(ImageDetail::Original),
+            }
+            .into_core(),
+            CoreUserInput::LocalImage {
+                path: PathBuf::from("local/image.png"),
+                detail: Some(ImageDetail::Original),
             }
         );
     }

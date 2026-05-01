@@ -183,6 +183,7 @@ async fn assert_user_turn_local_image_resizes_to(
             &test,
             vec![UserInput::LocalImage {
                 path: abs_path.clone(),
+                detail: None,
             }],
             session_model,
         ))
@@ -1221,6 +1222,7 @@ async fn replaces_invalid_local_image_after_bad_request() -> anyhow::Result<()> 
             &test,
             vec![UserInput::LocalImage {
                 path: abs_path.clone(),
+                detail: None,
             }],
             session_model,
         ))

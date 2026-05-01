@@ -4006,6 +4006,7 @@ impl CodexMessageProcessor {
         } else {
             false
         };
+
         let thread_status = self
             .thread_watch_manager
             .loaded_status_for_thread(&thread.id)
@@ -8426,6 +8427,7 @@ async fn handle_pending_thread_resume_request(
             .await;
         return;
     }
+
     let thread_status = thread_watch_manager
         .loaded_status_for_thread(&thread.id)
         .await;

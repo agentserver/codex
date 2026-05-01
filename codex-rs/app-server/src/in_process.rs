@@ -82,6 +82,7 @@ use codex_config::CloudRequirementsLoader;
 use codex_config::LoaderOverrides;
 use codex_config::ThreadConfigLoader;
 use codex_core::config::Config;
+use codex_core::config::ThreadStoreConfig;
 use codex_core::init_state_db_from_config;
 use codex_exec_server::EnvironmentManager;
 use codex_feedback::CodexFeedback;
@@ -410,7 +411,29 @@ fn start_uninitialized(args: InProcessStartArgs) -> InProcessClientHandle {
         );
         let (processor_tx, mut processor_rx) = mpsc::channel::<ProcessorCommand>(channel_capacity);
         let mut processor_handle = tokio::spawn(async move {
-            let Some(state_db) = init_state_db_from_config(args.config.as_ref()).await else {
+            let state_db = match &args.config.experimental_thread_store {
+                ThreadStoreConfig::Local => init_state_db_from_config(args.config.as_ref()).await,
+                ThreadStoreConfig::Remote { .. } | ThreadStoreConfig::InMemory { .. } => {
+                    let sqlite_home = tempfile::tempdir()
+                        .expect("create isolated in-process sqlite home")
+                        .keep();
+                    match codex_state::StateRuntime::init(
+                        sqlite_home,
+                        args.config.model_provider_id.clone(),
+                    )
+                    .await
+                    {
+                        Ok(state_db) => Some(state_db),
+                        Err(err) => {
+                            warn!(
+                                "in-process app-server isolated state db initialization failed; shutting down processor task: {err}"
+                            );
+                            None
+                        }
+                    }
+                }
+            };
+            let Some(state_db) = state_db else {
                 warn!(
                     "in-process app-server state db initialization failed; shutting down processor task"
                 );

@@ -20,6 +20,7 @@ use crate::tasks::InterruptedTurnHistoryMarker;
 use crate::tasks::interrupted_turn_history_marker;
 use codex_agent_graph_store::AgentGraphStore;
 use codex_agent_graph_store::LocalAgentGraphStore;
+use codex_agent_graph_store::RemoteAgentGraphStore;
 use codex_analytics::AnalyticsEventsClient;
 use codex_app_server_protocol::ThreadHistoryBuilder;
 use codex_app_server_protocol::TurnStatus;
@@ -69,6 +70,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -287,6 +289,20 @@ pub fn agent_graph_store_from_state_db(state_db: StateDbHandle) -> Arc<dyn Agent
     Arc::new(LocalAgentGraphStore::new(state_db))
 }
 
+pub fn agent_graph_store_from_config(
+    config: &Config,
+    state_db: StateDbHandle,
+) -> Arc<dyn AgentGraphStore> {
+    match &config.experimental_thread_store {
+        ThreadStoreConfig::Remote { endpoint } => {
+            Arc::new(RemoteAgentGraphStore::new(endpoint.clone()))
+        }
+        ThreadStoreConfig::Local | ThreadStoreConfig::InMemory { .. } => {
+            Arc::new(LocalAgentGraphStore::new(state_db))
+        }
+    }
+}
+
 /// Process-scoped persistence dependencies required by [`ThreadManager`].
 #[derive(Clone)]
 pub struct ThreadManagerPersistence {
@@ -300,14 +316,21 @@ fn state_db_from_roots_for_tests(
     sqlite_home: PathBuf,
     default_model_provider_id: String,
 ) -> StateDbHandle {
+    fn state_db_test_runtime() -> &'static tokio::runtime::Runtime {
+        static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+        RUNTIME.get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .unwrap_or_else(|err| panic!("test runtime build failed: {err}"))
+        })
+    }
+
     match std::thread::spawn(move || {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap_or_else(|err| panic!("test runtime build failed: {err}"))
-            .block_on(async move {
-                state_db::init_with_roots(codex_home, sqlite_home, default_model_provider_id).await
-            })
+        state_db_test_runtime().block_on(async move {
+            state_db::init_with_roots(codex_home, sqlite_home, default_model_provider_id).await
+        })
     })
     .join()
     {

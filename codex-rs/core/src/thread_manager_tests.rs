@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::ThreadStoreConfig;
 use crate::config::test_config;
 use crate::rollout::RolloutRecorder;
 use crate::session::session::SessionSettingsUpdate;
@@ -7,6 +8,7 @@ use crate::tasks::InterruptedTurnHistoryMarker;
 use crate::tasks::interrupted_turn_history_marker;
 use codex_features::Feature;
 use codex_models_manager::manager::RefreshStrategy;
+use codex_protocol::ThreadId;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ReasoningItemReasoningSummary;
 use codex_protocol::models::ResponseItem;
@@ -60,6 +62,37 @@ async fn agent_graph_store_from_state_db_returns_store() {
     let _ = agent_graph_store_from_state_db(state_db);
 }
 
+#[tokio::test]
+async fn agent_graph_store_from_config_uses_remote_endpoint() {
+    let temp_dir = tempdir().expect("tempdir");
+    let mut config = test_config().await;
+    config.codex_home = temp_dir.path().join("codex-home").abs();
+    config.cwd = config.codex_home.abs();
+    config.experimental_thread_store = ThreadStoreConfig::Remote {
+        endpoint: "http://127.0.0.1:1".to_string(),
+    };
+    std::fs::create_dir_all(&config.codex_home).expect("create codex home");
+
+    let state_db = init_state_db_from_config(&config)
+        .await
+        .expect("thread manager test requires state db");
+    let store = agent_graph_store_from_config(&config, state_db);
+
+    let err = store
+        .list_thread_spawn_children(
+            ThreadId::from_string("00000000-0000-0000-0000-000000000001").expect("valid thread id"),
+            /*status_filter*/ None,
+        )
+        .await
+        .expect_err("remote selection should attempt to connect to the configured endpoint");
+
+    assert!(matches!(
+        err,
+        codex_agent_graph_store::AgentGraphStoreError::Internal { message }
+            if message.contains("failed to connect to remote agent graph store")
+    ));
+}
+
 async fn state_backed_stores(
     config: &Config,
 ) -> (
@@ -71,7 +104,7 @@ async fn state_backed_stores(
         .await
         .expect("thread manager test requires state db");
     let thread_store = thread_store_from_config(config, state_db.clone());
-    let agent_graph_store = agent_graph_store_from_state_db(state_db.clone());
+    let agent_graph_store = agent_graph_store_from_config(config, state_db.clone());
     (state_db, thread_store, agent_graph_store)
 }
 

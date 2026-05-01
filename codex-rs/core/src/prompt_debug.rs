@@ -18,7 +18,7 @@ use crate::session::turn::build_prompt;
 use crate::session::turn::built_tools;
 use crate::thread_manager::ThreadManager;
 use crate::thread_manager::ThreadManagerPersistence;
-use crate::thread_manager::agent_graph_store_from_state_db;
+use crate::thread_manager::agent_graph_store_from_config;
 use crate::thread_manager::init_state_db_from_config;
 use crate::thread_manager::thread_store_from_config;
 
@@ -42,7 +42,7 @@ pub async fn build_prompt_input(
         return Err(std::io::Error::other("prompt debug requires state db").into());
     };
     let thread_store = thread_store_from_config(&config, state_db.clone());
-    let agent_graph_store = agent_graph_store_from_state_db(state_db.clone());
+    let agent_graph_store = agent_graph_store_from_config(&config, state_db.clone());
     let thread_manager = ThreadManager::new(
         &config,
         Arc::clone(&auth_manager),

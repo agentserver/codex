@@ -371,8 +371,8 @@ use codex_protocol::protocol::W3cTraceContext;
 use codex_protocol::user_input::MAX_USER_INPUT_TEXT_CHARS;
 use codex_protocol::user_input::UserInput as CoreInputItem;
 use codex_rmcp_client::perform_oauth_login_return_url;
-use codex_rollout::find_archived_thread_path_by_id_str_with_state_db;
-use codex_rollout::find_thread_path_by_id_str_with_state_db;
+use codex_rollout::find_archived_thread_path_by_id_str;
+use codex_rollout::find_thread_path_by_id_str;
 use codex_rollout::state_db::StateDbHandle;
 use codex_rollout::state_db::reconcile_rollout;
 use codex_state::ThreadMetadata;
@@ -3515,7 +3515,7 @@ impl CodexMessageProcessor {
             return Ok(());
         }
 
-        let rollout_path = match find_thread_path_by_id_str_with_state_db(
+        let rollout_path = match find_thread_path_by_id_str(
             &self.config.codex_home,
             &thread_uuid.to_string(),
             self.state_db.as_deref(),
@@ -3523,7 +3523,7 @@ impl CodexMessageProcessor {
         .await
         {
             Ok(Some(path)) => path,
-            Ok(None) => match find_archived_thread_path_by_id_str_with_state_db(
+            Ok(None) => match find_archived_thread_path_by_id_str(
                 &self.config.codex_home,
                 &thread_uuid.to_string(),
                 self.state_db.as_deref(),
@@ -5215,64 +5215,15 @@ impl CodexMessageProcessor {
     ) -> Result<GetConversationSummaryResponse, JSONRPCErrorError> {
         let fallback_provider = self.config.model_provider_id.as_str();
         let read_result = match params {
-            GetConversationSummaryParams::ThreadId { conversation_id } => {
-                if let Some(local_thread_store) = self
-                    .thread_store
-                    .as_any()
-                    .downcast_ref::<LocalThreadStore>()
-                {
-                    let thread_id = conversation_id.to_string();
-                    let rollout_path = match find_thread_path_by_id_str_with_state_db(
-                        &self.config.codex_home,
-                        thread_id.as_str(),
-                        self.state_db.as_deref(),
-                    )
-                    .await
-                    {
-                        Ok(Some(path)) => Some(path),
-                        Ok(None) => find_archived_thread_path_by_id_str_with_state_db(
-                            &self.config.codex_home,
-                            thread_id.as_str(),
-                            self.state_db.as_deref(),
-                        )
-                        .await
-                        .map_err(|err| {
-                            internal_error(format!(
-                                "failed to locate archived conversation id {conversation_id}: {err}"
-                            ))
-                        })?,
-                        Err(err) => {
-                            return Err(internal_error(format!(
-                                "failed to locate conversation id {conversation_id}: {err}"
-                            )));
-                        }
-                    };
-                    let Some(rollout_path) = rollout_path else {
-                        return Err(conversation_summary_not_found_error(conversation_id));
-                    };
-                    local_thread_store
-                        .read_thread_by_rollout_path(
-                            rollout_path,
-                            /*include_archived*/ true,
-                            /*include_history*/ false,
-                        )
-                        .await
-                        .map_err(|err| {
-                            conversation_summary_thread_id_read_error(conversation_id, err)
-                        })
-                } else {
-                    self.thread_store
-                        .read_thread(StoreReadThreadParams {
-                            thread_id: conversation_id,
-                            include_archived: true,
-                            include_history: false,
-                        })
-                        .await
-                        .map_err(|err| {
-                            conversation_summary_thread_id_read_error(conversation_id, err)
-                        })
-                }
-            }
+            GetConversationSummaryParams::ThreadId { conversation_id } => self
+                .thread_store
+                .read_thread(StoreReadThreadParams {
+                    thread_id: conversation_id,
+                    include_archived: true,
+                    include_history: false,
+                })
+                .await
+                .map_err(|err| conversation_summary_thread_id_read_error(conversation_id, err)),
             GetConversationSummaryParams::RolloutPath { rollout_path } => {
                 let Some(local_thread_store) = self
                     .thread_store
@@ -7349,7 +7300,7 @@ impl CodexMessageProcessor {
         let rollout_path = if let Some(path) = parent_thread.rollout_path() {
             path
         } else {
-            find_thread_path_by_id_str_with_state_db(
+            find_thread_path_by_id_str(
                 &self.config.codex_home,
                 &parent_thread_id.to_string(),
                 self.state_db.as_deref(),

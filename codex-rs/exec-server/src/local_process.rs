@@ -110,7 +110,10 @@ impl Default for LocalProcess {
             Ok(current_exe) => current_exe,
             Err(err) => panic!("current executable should resolve: {err}"),
         };
-        let runtime_paths = match crate::ExecServerRuntimePaths::new(current_exe, None) {
+        let runtime_paths = match crate::ExecServerRuntimePaths::new(
+            current_exe,
+            /*codex_linux_sandbox_exe*/ None,
+        ) {
             Ok(runtime_paths) => runtime_paths,
             Err(err) => panic!("current executable should be absolute: {err}"),
         };

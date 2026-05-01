@@ -433,6 +433,7 @@ use crate::filters::source_kind_matches;
 use crate::thread_state::ThreadListenerCommand;
 use crate::thread_state::ThreadState;
 use crate::thread_state::ThreadStateManager;
+use codex_agent_graph_store::AgentGraphStore;
 use token_usage_replay::latest_token_usage_turn_id_for_thread_path;
 use token_usage_replay::latest_token_usage_turn_id_from_rollout_items;
 use token_usage_replay::send_thread_token_usage_update_to_connection;
@@ -534,6 +535,7 @@ pub(crate) struct CodexMessageProcessor {
     arg0_paths: Arg0DispatchPaths,
     config: Arc<Config>,
     thread_store: Arc<dyn ThreadStore>,
+    agent_graph_store: Option<Arc<dyn AgentGraphStore>>,
     config_manager: ConfigManager,
     active_login: Arc<Mutex<Option<ActiveLogin>>>,
     pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
@@ -693,6 +695,7 @@ pub(crate) struct CodexMessageProcessorArgs {
     pub(crate) config: Arc<Config>,
     pub(crate) config_manager: ConfigManager,
     pub(crate) thread_store: Arc<dyn ThreadStore>,
+    pub(crate) agent_graph_store: Option<Arc<dyn AgentGraphStore>>,
     pub(crate) feedback: CodexFeedback,
     pub(crate) log_db: Option<LogDbLayer>,
 }
@@ -854,6 +857,7 @@ impl CodexMessageProcessor {
             config,
             config_manager,
             thread_store,
+            agent_graph_store,
             feedback,
             log_db,
         } = args;
@@ -864,6 +868,7 @@ impl CodexMessageProcessor {
             analytics_events_client,
             arg0_paths,
             thread_store,
+            agent_graph_store,
             config,
             config_manager,
             active_login: Arc::new(Mutex::new(None)),
@@ -3054,9 +3059,9 @@ impl CodexMessageProcessor {
             .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
 
         let mut thread_ids = vec![thread_id];
-        if let Some(state_db_ctx) = get_state_db(&self.config).await {
-            let descendants = state_db_ctx
-                .list_thread_spawn_descendants(thread_id)
+        if let Some(agent_graph_store) = self.agent_graph_store.as_ref() {
+            let descendants = agent_graph_store
+                .list_thread_spawn_descendants(thread_id, /*status_filter*/ None)
                 .await
                 .map_err(|err| {
                     internal_error(format!(
@@ -8004,23 +8009,18 @@ impl CodexMessageProcessor {
                             "failed to list feedback subtree for thread_id={conversation_id}: {err}"
                         );
                         let mut thread_ids = vec![conversation_id];
-                        if let Some(state_db_ctx) = state_db_ctx.as_ref() {
-                            for status in [
-                                codex_state::DirectionalThreadSpawnEdgeStatus::Open,
-                                codex_state::DirectionalThreadSpawnEdgeStatus::Closed,
-                            ] {
-                                match state_db_ctx
-                                    .list_thread_spawn_descendants_with_status(
-                                        conversation_id,
-                                        status,
-                                    )
-                                    .await
-                                {
-                                    Ok(descendant_ids) => thread_ids.extend(descendant_ids),
-                                    Err(err) => warn!(
-                                        "failed to list persisted feedback subtree for thread_id={conversation_id}: {err}"
-                                    ),
-                                }
+                        if let Some(agent_graph_store) = self.agent_graph_store.as_ref() {
+                            match agent_graph_store
+                                .list_thread_spawn_descendants(
+                                    conversation_id,
+                                    /*status_filter*/ None,
+                                )
+                                .await
+                            {
+                                Ok(descendant_ids) => thread_ids.extend(descendant_ids),
+                                Err(err) => warn!(
+                                    "failed to list persisted feedback subtree for thread_id={conversation_id}: {err}"
+                                ),
                             }
                         }
                         thread_ids

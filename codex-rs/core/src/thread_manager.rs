@@ -18,6 +18,8 @@ use crate::skills_watcher::SkillsWatcher;
 use crate::skills_watcher::SkillsWatcherEvent;
 use crate::tasks::InterruptedTurnHistoryMarker;
 use crate::tasks::interrupted_turn_history_marker;
+use codex_agent_graph_store::AgentGraphStore;
+use codex_agent_graph_store::LocalAgentGraphStore;
 use codex_analytics::AnalyticsEventsClient;
 use codex_app_server_protocol::ThreadHistoryBuilder;
 use codex_app_server_protocol::TurnStatus;
@@ -50,7 +52,7 @@ use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::protocol::W3cTraceContext;
-use codex_state::DirectionalThreadSpawnEdgeStatus;
+use codex_rollout::state_db;
 use codex_thread_store::InMemoryThreadStore;
 use codex_thread_store::LocalThreadStore;
 use codex_thread_store::LocalThreadStoreConfig;
@@ -246,6 +248,7 @@ pub(crate) struct ThreadManagerState {
     mcp_manager: Arc<McpManager>,
     skills_watcher: Arc<SkillsWatcher>,
     thread_store: Arc<dyn ThreadStore>,
+    pub(crate) agent_graph_store: Option<Arc<dyn AgentGraphStore>>,
     session_source: SessionSource,
     analytics_events_client: Option<AnalyticsEventsClient>,
     // Captures submitted ops for testing purpose when test mode is enabled.
@@ -273,6 +276,36 @@ pub fn thread_store_from_config(config: &Config) -> Arc<dyn ThreadStore> {
     }
 }
 
+/// Build the process-scoped agent graph store from configured state storage, when available.
+pub async fn agent_graph_store_from_config(config: &Config) -> Option<Arc<dyn AgentGraphStore>> {
+    let state_db = state_db::init(config).await?;
+    let agent_graph_store: Arc<dyn AgentGraphStore> = Arc::new(LocalAgentGraphStore::new(state_db));
+    Some(agent_graph_store)
+}
+
+fn agent_graph_store_from_config_for_tests(
+    codex_home: PathBuf,
+    sqlite_home: PathBuf,
+    default_model_provider_id: String,
+) -> Option<Arc<dyn AgentGraphStore>> {
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap_or_else(|err| panic!("test runtime build failed: {err}"))
+            .block_on(async move {
+                let state_db =
+                    state_db::init_with_roots(codex_home, sqlite_home, default_model_provider_id)
+                        .await?;
+                let agent_graph_store: Arc<dyn AgentGraphStore> =
+                    Arc::new(LocalAgentGraphStore::new(state_db));
+                Some(agent_graph_store)
+            })
+    })
+    .join()
+    .unwrap_or_else(|_| panic!("agent graph store init thread panicked"))
+}
+
 impl ThreadManager {
     pub fn new(
         config: &Config,
@@ -281,6 +314,7 @@ impl ThreadManager {
         environment_manager: Arc<EnvironmentManager>,
         analytics_events_client: Option<AnalyticsEventsClient>,
         thread_store: Arc<dyn ThreadStore>,
+        agent_graph_store: Option<Arc<dyn AgentGraphStore>>,
     ) -> Self {
         let codex_home = config.codex_home.clone();
         let restriction_product = session_source.restriction_product();
@@ -307,6 +341,7 @@ impl ThreadManager {
                 mcp_manager,
                 skills_watcher,
                 thread_store,
+                agent_graph_store,
                 auth_manager,
                 session_source,
                 analytics_events_client,
@@ -375,6 +410,11 @@ impl ThreadManager {
                 sqlite_home: codex_home.clone(),
                 default_model_provider_id: OPENAI_PROVIDER_ID.to_string(),
             }));
+        let agent_graph_store = agent_graph_store_from_config_for_tests(
+            codex_home.clone(),
+            codex_home.clone(),
+            OPENAI_PROVIDER_ID.to_string(),
+        );
         Self {
             state: Arc::new(ThreadManagerState {
                 threads: Arc::new(RwLock::new(HashMap::new())),
@@ -387,6 +427,7 @@ impl ThreadManager {
                 mcp_manager,
                 skills_watcher,
                 thread_store,
+                agent_graph_store,
                 auth_manager,
                 session_source: SessionSource::Exec,
                 analytics_events_client: None,
@@ -496,21 +537,16 @@ impl ThreadManager {
         subtree_thread_ids.push(thread_id);
         seen_thread_ids.insert(thread_id);
 
-        if let Some(state_db_ctx) = thread.state_db() {
-            for status in [
-                DirectionalThreadSpawnEdgeStatus::Open,
-                DirectionalThreadSpawnEdgeStatus::Closed,
-            ] {
-                for descendant_id in state_db_ctx
-                    .list_thread_spawn_descendants_with_status(thread_id, status)
-                    .await
-                    .map_err(|err| {
-                        CodexErr::Fatal(format!("failed to load thread-spawn descendants: {err}"))
-                    })?
-                {
-                    if seen_thread_ids.insert(descendant_id) {
-                        subtree_thread_ids.push(descendant_id);
-                    }
+        if let Some(agent_graph_store) = self.state.agent_graph_store.as_ref() {
+            for descendant_id in agent_graph_store
+                .list_thread_spawn_descendants(thread_id, /*status_filter*/ None)
+                .await
+                .map_err(|err| {
+                    CodexErr::Fatal(format!("failed to load thread-spawn descendants: {err}"))
+                })?
+            {
+                if seen_thread_ids.insert(descendant_id) {
+                    subtree_thread_ids.push(descendant_id);
                 }
             }
         }

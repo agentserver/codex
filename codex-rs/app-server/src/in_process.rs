@@ -409,22 +409,25 @@ fn start_uninitialized(args: InProcessStartArgs) -> InProcessClientHandle {
         );
         let (processor_tx, mut processor_rx) = mpsc::channel::<ProcessorCommand>(channel_capacity);
         let mut processor_handle = tokio::spawn(async move {
-            let processor = Arc::new(MessageProcessor::new(MessageProcessorArgs {
-                outgoing: Arc::clone(&processor_outgoing),
-                analytics_events_client,
-                arg0_paths: args.arg0_paths,
-                config: args.config,
-                config_manager,
-                environment_manager: args.environment_manager,
-                feedback: args.feedback,
-                log_db: args.log_db,
-                config_warnings: args.config_warnings,
-                session_source: args.session_source,
-                auth_manager,
-                rpc_transport: AppServerRpcTransport::InProcess,
-                remote_control_handle: None,
-                plugin_startup_tasks: crate::PluginStartupTasks::Start,
-            }));
+            let processor = Arc::new(
+                MessageProcessor::new(MessageProcessorArgs {
+                    outgoing: Arc::clone(&processor_outgoing),
+                    analytics_events_client,
+                    arg0_paths: args.arg0_paths,
+                    config: args.config,
+                    config_manager,
+                    environment_manager: args.environment_manager,
+                    feedback: args.feedback,
+                    log_db: args.log_db,
+                    config_warnings: args.config_warnings,
+                    session_source: args.session_source,
+                    auth_manager,
+                    rpc_transport: AppServerRpcTransport::InProcess,
+                    remote_control_handle: None,
+                    plugin_startup_tasks: crate::PluginStartupTasks::Start,
+                })
+                .await,
+            );
             let mut thread_created_rx = processor.thread_created_receiver();
             let session = Arc::new(ConnectionSessionState::new(ConnectionOrigin::InProcess));
             let mut listen_for_threads = true;

@@ -64,6 +64,7 @@ use codex_app_server_protocol::experimental_required_message;
 use codex_arg0::Arg0DispatchPaths;
 use codex_chatgpt::connectors;
 use codex_core::ThreadManager;
+use codex_core::agent_graph_store_from_config;
 use codex_core::config::Config;
 use codex_core::thread_store_from_config;
 use codex_exec_server::EnvironmentManager;
@@ -266,7 +267,7 @@ pub(crate) struct MessageProcessorArgs {
 impl MessageProcessor {
     /// Create a new `MessageProcessor`, retaining a handle to the outgoing
     /// `Sender` so handlers can enqueue messages to be written to stdout.
-    pub(crate) fn new(args: MessageProcessorArgs) -> Self {
+    pub(crate) async fn new(args: MessageProcessorArgs) -> Self {
         let MessageProcessorArgs {
             outgoing,
             analytics_events_client,
@@ -290,6 +291,7 @@ impl MessageProcessor {
         // affect per-thread behavior, but they must not move newly started,
         // resumed, or forked threads to a different persistence backend/root.
         let thread_store = thread_store_from_config(config.as_ref());
+        let agent_graph_store = agent_graph_store_from_config(config.as_ref()).await;
         let thread_manager = Arc::new(ThreadManager::new(
             config.as_ref(),
             auth_manager.clone(),
@@ -297,6 +299,7 @@ impl MessageProcessor {
             environment_manager,
             Some(analytics_events_client.clone()),
             Arc::clone(&thread_store),
+            agent_graph_store.clone(),
         ));
         thread_manager
             .plugins_manager()
@@ -311,6 +314,7 @@ impl MessageProcessor {
             config: Arc::clone(&config),
             config_manager: config_manager.clone(),
             thread_store,
+            agent_graph_store,
             feedback,
             log_db,
         });

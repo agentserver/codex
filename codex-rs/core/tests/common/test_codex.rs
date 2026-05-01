@@ -15,6 +15,7 @@ use anyhow::anyhow;
 use codex_config::CloudRequirementsLoader;
 use codex_core::CodexThread;
 use codex_core::ThreadManager;
+use codex_core::agent_graph_store_from_config;
 use codex_core::config::Config;
 use codex_core::shell::Shell;
 use codex_core::shell::get_shell_by_model_provided_path;
@@ -424,13 +425,16 @@ impl TestCodexBuilder {
     ) -> anyhow::Result<TestCodex> {
         let auth = self.auth.clone();
         let thread_manager = if config.model_catalog.is_some() {
+            let thread_store = thread_store_from_config(&config);
+            let agent_graph_store = agent_graph_store_from_config(&config).await;
             ThreadManager::new(
                 &config,
                 codex_core::test_support::auth_manager_from_auth(auth.clone()),
                 SessionSource::Exec,
                 Arc::clone(&environment_manager),
                 /*analytics_events_client*/ None,
-                thread_store_from_config(&config),
+                thread_store,
+                agent_graph_store,
             )
         } else {
             codex_core::test_support::thread_manager_with_models_provider_and_home(

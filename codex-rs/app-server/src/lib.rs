@@ -740,22 +740,25 @@ pub async fn run_main_with_transport_options(
         ));
         let initialize_notification_sender = outgoing_message_sender.clone();
         let outbound_control_tx = outbound_control_tx;
-        let processor = Arc::new(MessageProcessor::new(MessageProcessorArgs {
-            outgoing: outgoing_message_sender,
-            analytics_events_client,
-            arg0_paths,
-            config: Arc::new(config),
-            config_manager,
-            environment_manager,
-            feedback: feedback.clone(),
-            log_db,
-            config_warnings,
-            session_source,
-            auth_manager,
-            rpc_transport: analytics_rpc_transport(&transport),
-            remote_control_handle: Some(remote_control_handle.clone()),
-            plugin_startup_tasks: runtime_options.plugin_startup_tasks,
-        }));
+        let processor = Arc::new(
+            MessageProcessor::new(MessageProcessorArgs {
+                outgoing: outgoing_message_sender,
+                analytics_events_client,
+                arg0_paths,
+                config: Arc::new(config),
+                config_manager,
+                environment_manager,
+                feedback: feedback.clone(),
+                log_db,
+                config_warnings,
+                session_source,
+                auth_manager,
+                rpc_transport: analytics_rpc_transport(&transport),
+                remote_control_handle: Some(remote_control_handle.clone()),
+                plugin_startup_tasks: runtime_options.plugin_startup_tasks,
+            })
+            .await,
+        );
         let mut thread_created_rx = processor.thread_created_receiver();
         let mut running_turn_count_rx = processor.subscribe_running_assistant_turn_count();
         let mut connections = HashMap::<ConnectionId, ConnectionState>::new();

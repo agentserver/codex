@@ -51,6 +51,7 @@ use codex_core_api::TuiNotificationSettings;
 use codex_core_api::UriBasedFileOpener;
 use codex_core_api::UserInput;
 use codex_core_api::WebSearchMode;
+use codex_core_api::agent_graph_store_from_config;
 use codex_core_api::arg0_dispatch_or_else;
 use codex_core_api::built_in_model_providers;
 use codex_core_api::find_codex_home;
@@ -110,6 +111,7 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         config.codex_linux_sandbox_exe.clone(),
     )?;
     let thread_store = thread_store_from_config(&config);
+    let agent_graph_store = agent_graph_store_from_config(&config).await;
     let environment_manager =
         Arc::new(EnvironmentManager::new(EnvironmentManagerArgs::new(local_runtime_paths)).await);
     let thread_manager = ThreadManager::new(
@@ -119,6 +121,7 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         environment_manager,
         /*analytics_events_client*/ None,
         Arc::clone(&thread_store),
+        agent_graph_store,
     );
 
     let NewThread {

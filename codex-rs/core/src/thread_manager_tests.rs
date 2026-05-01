@@ -46,6 +46,46 @@ fn assistant_msg(text: &str) -> ResponseItem {
     }
 }
 
+#[tokio::test]
+async fn agent_graph_store_from_config_returns_store() {
+    let temp_dir = tempdir().expect("tempdir");
+    let mut config = test_config().await;
+    config.codex_home = temp_dir.path().join("codex-home").abs();
+    config.cwd = config.codex_home.abs();
+    std::fs::create_dir_all(&config.codex_home).expect("create codex home");
+
+    assert!(agent_graph_store_from_config(&config).await.is_some());
+}
+
+#[tokio::test]
+async fn thread_manager_accepts_separate_agent_graph_store_and_thread_store() {
+    let temp_dir = tempdir().expect("tempdir");
+    let mut config = test_config().await;
+    config.codex_home = temp_dir.path().join("codex-home").abs();
+    config.cwd = config.codex_home.abs();
+    std::fs::create_dir_all(&config.codex_home).expect("create codex home");
+
+    let auth_manager =
+        AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    let thread_store: Arc<dyn ThreadStore> = Arc::new(InMemoryThreadStore::default());
+    let agent_graph_store = agent_graph_store_from_config(&config).await;
+    let manager = ThreadManager::new(
+        &config,
+        auth_manager,
+        SessionSource::Exec,
+        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+        /*analytics_events_client*/ None,
+        thread_store,
+        agent_graph_store,
+    );
+
+    let new_thread = manager
+        .start_thread(config)
+        .await
+        .expect("thread should start with independent stores");
+    assert_eq!(manager.list_thread_ids().await, vec![new_thread.thread_id]);
+}
+
 fn contextual_user_interrupted_marker() -> ResponseItem {
     interrupted_turn_history_marker(InterruptedTurnHistoryMarker::ContextualUser)
         .expect("contextual-user interrupted marker should be enabled")
@@ -383,13 +423,16 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    let thread_store = thread_store_from_config(&config);
+    let agent_graph_store = agent_graph_store_from_config(&config).await;
     let manager = ThreadManager::new(
         &config,
         auth_manager.clone(),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        thread_store_from_config(&config),
+        thread_store,
+        agent_graph_store,
     );
     let selected_cwd =
         AbsolutePathBuf::try_from(config.cwd.as_path().join("selected")).expect("absolute path");
@@ -480,13 +523,16 @@ async fn resume_active_thread_from_rollout_returns_running_thread() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    let thread_store = thread_store_from_config(&config);
+    let agent_graph_store = agent_graph_store_from_config(&config).await;
     let manager = ThreadManager::new(
         &config,
         auth_manager.clone(),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        thread_store_from_config(&config),
+        thread_store,
+        agent_graph_store,
     );
 
     let source = manager
@@ -533,13 +579,16 @@ async fn resume_stopped_thread_from_rollout_spawns_new_thread() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    let thread_store = thread_store_from_config(&config);
+    let agent_graph_store = agent_graph_store_from_config(&config).await;
     let manager = ThreadManager::new(
         &config,
         auth_manager.clone(),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        thread_store_from_config(&config),
+        thread_store,
+        agent_graph_store,
     );
 
     let source = manager
@@ -596,13 +645,16 @@ async fn new_uses_active_provider_for_model_refresh() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    let thread_store = thread_store_from_config(&config);
+    let agent_graph_store = agent_graph_store_from_config(&config).await;
     let manager = ThreadManager::new(
         &config,
         auth_manager,
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        thread_store_from_config(&config),
+        thread_store,
+        agent_graph_store,
     );
 
     let _ = manager.list_models(RefreshStrategy::Online).await;
@@ -807,13 +859,16 @@ async fn interrupted_fork_snapshot_does_not_synthesize_turn_id_for_legacy_histor
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    let thread_store = thread_store_from_config(&config);
+    let agent_graph_store = agent_graph_store_from_config(&config).await;
     let manager = ThreadManager::new(
         &config,
         auth_manager.clone(),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        thread_store_from_config(&config),
+        thread_store,
+        agent_graph_store,
     );
 
     let source = manager
@@ -909,13 +964,16 @@ async fn interrupted_fork_snapshot_preserves_explicit_turn_id() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    let thread_store = thread_store_from_config(&config);
+    let agent_graph_store = agent_graph_store_from_config(&config).await;
     let manager = ThreadManager::new(
         &config,
         auth_manager.clone(),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        thread_store_from_config(&config),
+        thread_store,
+        agent_graph_store,
     );
 
     let source = manager
@@ -1000,13 +1058,16 @@ async fn interrupted_fork_snapshot_uses_persisted_mid_turn_history_without_live_
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    let thread_store = thread_store_from_config(&config);
+    let agent_graph_store = agent_graph_store_from_config(&config).await;
     let manager = ThreadManager::new(
         &config,
         auth_manager.clone(),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        thread_store_from_config(&config),
+        thread_store,
+        agent_graph_store,
     );
 
     let source = manager
@@ -1136,13 +1197,16 @@ async fn resumed_thread_activates_paused_goal_and_continues_on_request() -> anyh
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    let thread_store = thread_store_from_config(&config);
+    let agent_graph_store = agent_graph_store_from_config(&config).await;
     let manager = ThreadManager::new(
         &config,
         auth_manager.clone(),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        thread_store_from_config(&config),
+        thread_store,
+        agent_graph_store,
     );
 
     let source = manager

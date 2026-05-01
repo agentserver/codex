@@ -3,6 +3,7 @@
 
 use anyhow::Result;
 use codex_core::ThreadManager;
+use codex_core::agent_graph_store_from_config;
 use codex_core::thread_store_from_config;
 use codex_exec_server::CreateDirectoryOptions;
 use codex_exec_server::EnvironmentManager;
@@ -235,6 +236,8 @@ async fn list_skills_skips_cwd_roots_when_environment_disabled() -> Result<()> {
     let mut config = load_default_config_for_test(&codex_home).await;
     config.cwd = AbsolutePathBuf::from_absolute_path_checked(cwd.path())?;
 
+    let thread_store = thread_store_from_config(&config);
+    let agent_graph_store = agent_graph_store_from_config(&config).await;
     let thread_manager = ThreadManager::new(
         &config,
         codex_core::test_support::auth_manager_from_auth(CodexAuth::from_api_key("dummy")),
@@ -246,7 +249,8 @@ async fn list_skills_skips_cwd_roots_when_environment_disabled() -> Result<()> {
             )?,
         )),
         /*analytics_events_client*/ None,
-        thread_store_from_config(&config),
+        thread_store,
+        agent_graph_store,
     );
     let new_thread = thread_manager.start_thread(config.clone()).await?;
     let cwd = config.cwd.to_path_buf();

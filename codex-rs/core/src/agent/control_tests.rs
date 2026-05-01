@@ -1695,7 +1695,15 @@ async fn resume_agent_from_rollout_reads_archived_rollout_path() {
         .shutdown_live_agent(child_thread_id)
         .await
         .expect("child shutdown should succeed");
-    let store = LocalThreadStore::new(LocalThreadStoreConfig::from_config(&harness.config));
+    let store = LocalThreadStore::new(
+        LocalThreadStoreConfig::from_config(&harness.config),
+        codex_state::StateRuntime::init(
+            harness.config.sqlite_home.clone(),
+            harness.config.model_provider_id.clone(),
+        )
+        .await
+        .expect("state db should initialize"),
+    );
     store
         .archive_thread(ArchiveThreadParams {
             thread_id: child_thread_id,

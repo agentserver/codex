@@ -82,6 +82,7 @@ use codex_config::CloudRequirementsLoader;
 use codex_config::LoaderOverrides;
 use codex_config::ThreadConfigLoader;
 use codex_core::config::Config;
+use codex_core::init_state_db_from_config;
 use codex_exec_server::EnvironmentManager;
 use codex_feedback::CodexFeedback;
 use codex_login::AuthManager;
@@ -409,6 +410,9 @@ fn start_uninitialized(args: InProcessStartArgs) -> InProcessClientHandle {
         );
         let (processor_tx, mut processor_rx) = mpsc::channel::<ProcessorCommand>(channel_capacity);
         let mut processor_handle = tokio::spawn(async move {
+            let state_db = init_state_db_from_config(args.config.as_ref())
+                .await
+                .expect("in-process app-server requires state db");
             let processor = Arc::new(
                 MessageProcessor::new(MessageProcessorArgs {
                     outgoing: Arc::clone(&processor_outgoing),
@@ -419,6 +423,7 @@ fn start_uninitialized(args: InProcessStartArgs) -> InProcessClientHandle {
                     environment_manager: args.environment_manager,
                     feedback: args.feedback,
                     log_db: args.log_db,
+                    state_db,
                     config_warnings: args.config_warnings,
                     session_source: args.session_source,
                     auth_manager,

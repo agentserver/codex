@@ -374,7 +374,6 @@ use codex_protocol::user_input::MAX_USER_INPUT_TEXT_CHARS;
 use codex_protocol::user_input::UserInput as CoreInputItem;
 use codex_rmcp_client::perform_oauth_login_return_url;
 use codex_rollout::state_db::StateDbHandle;
-use codex_rollout::state_db::get_state_db;
 use codex_rollout::state_db::reconcile_rollout;
 use codex_state::StateRuntime;
 use codex_state::ThreadMetadata;
@@ -535,7 +534,8 @@ pub(crate) struct CodexMessageProcessor {
     arg0_paths: Arg0DispatchPaths,
     config: Arc<Config>,
     thread_store: Arc<dyn ThreadStore>,
-    agent_graph_store: Option<Arc<dyn AgentGraphStore>>,
+    state_db: StateDbHandle,
+    agent_graph_store: Arc<dyn AgentGraphStore>,
     config_manager: ConfigManager,
     active_login: Arc<Mutex<Option<ActiveLogin>>>,
     pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
@@ -695,7 +695,8 @@ pub(crate) struct CodexMessageProcessorArgs {
     pub(crate) config: Arc<Config>,
     pub(crate) config_manager: ConfigManager,
     pub(crate) thread_store: Arc<dyn ThreadStore>,
-    pub(crate) agent_graph_store: Option<Arc<dyn AgentGraphStore>>,
+    pub(crate) state_db: StateDbHandle,
+    pub(crate) agent_graph_store: Arc<dyn AgentGraphStore>,
     pub(crate) feedback: CodexFeedback,
     pub(crate) log_db: Option<LogDbLayer>,
 }
@@ -857,6 +858,7 @@ impl CodexMessageProcessor {
             config,
             config_manager,
             thread_store,
+            state_db,
             agent_graph_store,
             feedback,
             log_db,
@@ -868,6 +870,7 @@ impl CodexMessageProcessor {
             analytics_events_client,
             arg0_paths,
             thread_store,
+            state_db,
             agent_graph_store,
             config,
             config_manager,
@@ -3059,20 +3062,19 @@ impl CodexMessageProcessor {
             .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
 
         let mut thread_ids = vec![thread_id];
-        if let Some(agent_graph_store) = self.agent_graph_store.as_ref() {
-            let descendants = agent_graph_store
-                .list_thread_spawn_descendants(thread_id, /*status_filter*/ None)
-                .await
-                .map_err(|err| {
-                    internal_error(format!(
-                        "failed to list spawned descendants for thread id {thread_id}: {err}"
-                    ))
-                })?;
-            let mut seen = HashSet::from([thread_id]);
-            for descendant_id in descendants {
-                if seen.insert(descendant_id) {
-                    thread_ids.push(descendant_id);
-                }
+        let descendants = self
+            .agent_graph_store
+            .list_thread_spawn_descendants(thread_id, /*status_filter*/ None)
+            .await
+            .map_err(|err| {
+                internal_error(format!(
+                    "failed to list spawned descendants for thread id {thread_id}: {err}"
+                ))
+            })?;
+        let mut seen = HashSet::from([thread_id]);
+        for descendant_id in descendants {
+            if seen.insert(descendant_id) {
+                thread_ids.push(descendant_id);
             }
         }
 
@@ -3321,14 +3323,7 @@ impl CodexMessageProcessor {
     }
 
     async fn memory_reset_response(&self) -> Result<MemoryResetResponse, JSONRPCErrorError> {
-        let state_db = StateRuntime::init(
-            self.config.sqlite_home.clone(),
-            self.config.model_provider_id.clone(),
-        )
-        .await
-        .map_err(|err| {
-            internal_error(format!("failed to open state db for memory reset: {err}"))
-        })?;
+        let state_db = self.state_db.clone();
 
         state_db.clear_memory_data().await.map_err(|err| {
             internal_error(format!("failed to clear memory rows in state db: {err}"))
@@ -3384,7 +3379,7 @@ impl CodexMessageProcessor {
         let loaded_thread = self.thread_manager.get_thread(thread_uuid).await.ok();
         let mut state_db_ctx = loaded_thread.as_ref().and_then(|thread| thread.state_db());
         if state_db_ctx.is_none() {
-            state_db_ctx = get_state_db(&self.config).await;
+            state_db_ctx = Some(self.state_db.clone());
         }
         let Some(state_db_ctx) = state_db_ctx else {
             return Err(internal_error(format!(
@@ -4563,7 +4558,7 @@ impl CodexMessageProcessor {
         let InitialHistory::Resumed(resumed_history) = thread_history else {
             return None;
         };
-        let state_db_ctx = get_state_db(&self.config).await?;
+        let state_db_ctx = self.state_db.clone();
         let persisted_metadata = state_db_ctx
             .get_thread(resumed_history.conversation_id)
             .await
@@ -4701,7 +4696,7 @@ impl CodexMessageProcessor {
                 if let Some(state_db) = existing_thread.state_db() {
                     Some(state_db)
                 } else {
-                    open_state_db_for_direct_thread_lookup(&self.config).await
+                    Some(self.state_db.clone())
                 }
             } else {
                 None
@@ -4942,7 +4937,9 @@ impl CodexMessageProcessor {
     }
 
     async fn attach_thread_name(&self, thread_id: ThreadId, thread: &mut Thread) {
-        if let Some(title) = title_from_state_db(&self.config, thread_id).await {
+        if let Some(title) =
+            title_from_state_db(Some(&self.state_db), &self.config, thread_id).await
+        {
             set_thread_name_from_title(thread, title);
         }
     }
@@ -7996,7 +7993,7 @@ impl CodexMessageProcessor {
             if let Some(log_db) = self.log_db.as_ref() {
                 log_db.flush().await;
             }
-            let state_db_ctx = get_state_db(&self.config).await;
+            let state_db_ctx = Some(self.state_db.clone());
             let feedback_thread_ids = match conversation_id {
                 Some(conversation_id) => match self
                     .thread_manager
@@ -8009,19 +8006,18 @@ impl CodexMessageProcessor {
                             "failed to list feedback subtree for thread_id={conversation_id}: {err}"
                         );
                         let mut thread_ids = vec![conversation_id];
-                        if let Some(agent_graph_store) = self.agent_graph_store.as_ref() {
-                            match agent_graph_store
-                                .list_thread_spawn_descendants(
-                                    conversation_id,
-                                    /*status_filter*/ None,
-                                )
-                                .await
-                            {
-                                Ok(descendant_ids) => thread_ids.extend(descendant_ids),
-                                Err(err) => warn!(
-                                    "failed to list persisted feedback subtree for thread_id={conversation_id}: {err}"
-                                ),
-                            }
+                        match self
+                            .agent_graph_store
+                            .list_thread_spawn_descendants(
+                                conversation_id,
+                                /*status_filter*/ None,
+                            )
+                            .await
+                        {
+                            Ok(descendant_ids) => thread_ids.extend(descendant_ids),
+                            Err(err) => warn!(
+                                "failed to list persisted feedback subtree for thread_id={conversation_id}: {err}"
+                            ),
                         }
                         thread_ids
                     }
@@ -9038,8 +9034,12 @@ async fn read_summary_from_state_db_context_by_thread_id(
     Some(summary_from_thread_metadata(&metadata))
 }
 
-async fn title_from_state_db(config: &Config, thread_id: ThreadId) -> Option<String> {
-    if let Some(state_db_ctx) = open_state_db_for_direct_thread_lookup(config).await
+async fn title_from_state_db(
+    state_db_ctx: Option<&StateDbHandle>,
+    config: &Config,
+    thread_id: ThreadId,
+) -> Option<String> {
+    if let Some(state_db_ctx) = state_db_ctx
         && let Some(metadata) = state_db_ctx.get_thread(thread_id).await.ok().flatten()
         && let Some(title) = distinct_title(&metadata)
     {
@@ -9049,12 +9049,6 @@ async fn title_from_state_db(config: &Config, thread_id: ThreadId) -> Option<Str
         .await
         .ok()
         .flatten()
-}
-
-async fn open_state_db_for_direct_thread_lookup(config: &Config) -> Option<StateDbHandle> {
-    StateRuntime::init(config.sqlite_home.clone(), config.model_provider_id.clone())
-        .await
-        .ok()
 }
 
 fn invalid_request(message: impl Into<String>) -> JSONRPCErrorError {

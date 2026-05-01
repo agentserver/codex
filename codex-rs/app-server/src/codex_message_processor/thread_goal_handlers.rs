@@ -351,9 +351,7 @@ impl CodexMessageProcessor {
             }
         }
 
-        open_state_db_for_direct_thread_lookup(&self.config)
-            .await
-            .ok_or_else(|| internal_error("sqlite state db unavailable for thread goals"))
+        Ok(self.state_db.clone())
     }
 
     pub(super) async fn emit_thread_goal_snapshot(&self, thread_id: ThreadId) {

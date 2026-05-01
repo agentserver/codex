@@ -17,7 +17,8 @@ use crate::session::session::Session;
 use crate::session::turn::build_prompt;
 use crate::session::turn::built_tools;
 use crate::thread_manager::ThreadManager;
-use crate::thread_manager::agent_graph_store_from_config;
+use crate::thread_manager::agent_graph_store_from_state_db;
+use crate::thread_manager::init_state_db_from_config;
 use crate::thread_manager::thread_store_from_config;
 
 /// Build the model-visible `input` list for a single debug turn.
@@ -36,14 +37,18 @@ pub async fn build_prompt_input(
         config.codex_linux_sandbox_exe.clone(),
     )?;
 
-    let thread_store = thread_store_from_config(&config);
-    let agent_graph_store = agent_graph_store_from_config(&config).await;
+    let state_db = init_state_db_from_config(&config)
+        .await
+        .expect("prompt debug requires state db");
+    let thread_store = thread_store_from_config(&config, state_db.clone());
+    let agent_graph_store = agent_graph_store_from_state_db(state_db.clone());
     let thread_manager = ThreadManager::new(
         &config,
         Arc::clone(&auth_manager),
         SessionSource::Exec,
         Arc::new(EnvironmentManager::new(EnvironmentManagerArgs::new(local_runtime_paths)).await),
         /*analytics_events_client*/ None,
+        state_db,
         thread_store,
         agent_graph_store,
     );

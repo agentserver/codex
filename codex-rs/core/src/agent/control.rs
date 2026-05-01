@@ -29,7 +29,6 @@ use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::user_input::UserInput;
-use codex_rollout::state_db;
 use codex_thread_store::ReadThreadParams;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -447,9 +446,7 @@ impl AgentControl {
         ))
         .await?;
         let state = self.upgrade()?;
-        let Some(agent_graph_store) = state.agent_graph_store.as_ref() else {
-            return Ok(resumed_thread_id);
-        };
+        let agent_graph_store = state.agent_graph_store();
 
         let mut resume_queue = VecDeque::from([(thread_id, root_depth)]);
         while let Some((parent_thread_id, parent_depth)) = resume_queue.pop_front() {
@@ -529,16 +526,11 @@ impl AgentControl {
                 agent_role: _,
                 agent_nickname: _,
             }) => {
-                let state_db_ctx: Option<crate::StateDbHandle> =
-                    state_db::get_state_db(&config).await;
+                let state_db_ctx = state.state_db();
                 let (resumed_agent_nickname, resumed_agent_role) =
-                    if let Some(state_db_ctx) = state_db_ctx {
-                        match state_db_ctx.get_thread(thread_id).await {
-                            Ok(Some(metadata)) => (metadata.agent_nickname, metadata.agent_role),
-                            Ok(None) | Err(_) => (None, None),
-                        }
-                    } else {
-                        (None, None)
+                    match state_db_ctx.get_thread(thread_id).await {
+                        Ok(Some(metadata)) => (metadata.agent_nickname, metadata.agent_role),
+                        Ok(None) | Err(_) => (None, None),
                     };
                 self.prepare_thread_spawn(
                     &mut reservation,
@@ -717,13 +709,13 @@ impl AgentControl {
     /// agent and any live descendants reached from the in-memory tree.
     pub(crate) async fn close_agent(&self, agent_id: ThreadId) -> CodexResult<String> {
         let state = self.upgrade()?;
-        if let Some(agent_graph_store) = state.agent_graph_store.as_ref()
-            && let Err(err) = agent_graph_store
-                .set_thread_spawn_edge_status(
-                    agent_id,
-                    codex_agent_graph_store::ThreadSpawnEdgeStatus::Closed,
-                )
-                .await
+        if let Err(err) = state
+            .agent_graph_store()
+            .set_thread_spawn_edge_status(
+                agent_id,
+                codex_agent_graph_store::ThreadSpawnEdgeStatus::Closed,
+            )
+            .await
         {
             warn!("failed to persist thread-spawn edge status for {agent_id}: {err}");
         }
@@ -1148,10 +1140,8 @@ impl AgentControl {
         let Ok(state) = self.upgrade() else {
             return;
         };
-        let Some(agent_graph_store) = state.agent_graph_store.as_ref() else {
-            return;
-        };
-        if let Err(err) = agent_graph_store
+        if let Err(err) = state
+            .agent_graph_store()
             .upsert_thread_spawn_edge(
                 parent_thread_id,
                 child_thread_id,

@@ -78,14 +78,13 @@ pub(super) async fn list_threads(
         .map(|thread| thread.thread_id)
         .collect::<HashSet<_>>();
     let mut names = HashMap::<ThreadId, String>::with_capacity(thread_ids.len());
-    if let Some(state_db_ctx) = store.state_db().await {
-        for &thread_id in &thread_ids {
-            let Ok(Some(metadata)) = state_db_ctx.get_thread(thread_id).await else {
-                continue;
-            };
-            if let Some(title) = distinct_thread_metadata_title(&metadata) {
-                names.insert(thread_id, title);
-            }
+    let state_db_ctx = store.state_db();
+    for &thread_id in &thread_ids {
+        let Ok(Some(metadata)) = state_db_ctx.get_thread(thread_id).await else {
+            continue;
+        };
+        if let Some(title) = distinct_thread_metadata_title(&metadata) {
+            names.insert(thread_id, title);
         }
     }
     if names.len() < thread_ids.len()
@@ -188,7 +187,9 @@ mod tests {
     use super::*;
     use crate::ThreadStore;
     use crate::local::LocalThreadStore;
+    use crate::local::test_support::init_test_state_db;
     use crate::local::test_support::test_config;
+    use crate::local::test_support::test_store;
     use crate::local::test_support::write_archived_session_file;
     use crate::local::test_support::write_session_file;
     use crate::local::test_support::write_session_file_with;
@@ -196,7 +197,7 @@ mod tests {
     #[tokio::test]
     async fn list_threads_uses_default_provider_when_rollout_omits_provider() {
         let home = TempDir::new().expect("temp dir");
-        let store = LocalThreadStore::new(test_config(home.path()));
+        let store = test_store(home.path()).await;
         write_session_file_with(
             home.path(),
             home.path().join("sessions/2025/01/03"),
@@ -231,22 +232,13 @@ mod tests {
     async fn list_threads_preserves_sqlite_title_search_results() {
         let home = TempDir::new().expect("temp dir");
         let config = test_config(home.path());
-        let store = LocalThreadStore::new(config.clone());
+        let runtime = init_test_state_db(&config).await;
+        let store = LocalThreadStore::new(config.clone(), runtime.clone());
         let uuid = Uuid::from_u128(103);
         let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
         let rollout_path = home.path().join("rollout-title-search.jsonl");
         fs::write(&rollout_path, "").expect("placeholder rollout file");
 
-        let runtime = codex_state::StateRuntime::init(
-            home.path().to_path_buf(),
-            config.default_model_provider_id.clone(),
-        )
-        .await
-        .expect("state db should initialize");
-        runtime
-            .mark_backfill_complete(/*last_watermark*/ None)
-            .await
-            .expect("backfill should be complete");
         let created_at = Utc::now();
         let mut builder = codex_state::ThreadMetadataBuilder::new(
             thread_id,
@@ -260,6 +252,10 @@ mod tests {
         let mut metadata = builder.build(config.default_model_provider_id.as_str());
         metadata.title = "needle title".to_string();
         metadata.first_user_message = Some("plain preview".to_string());
+        runtime
+            .mark_backfill_complete(/*last_watermark*/ None)
+            .await
+            .expect("backfill should be complete");
         runtime
             .upsert_thread(&metadata)
             .await
@@ -296,7 +292,7 @@ mod tests {
     #[tokio::test]
     async fn list_threads_selects_active_or_archived_collection() {
         let home = TempDir::new().expect("temp dir");
-        let store = LocalThreadStore::new(test_config(home.path()));
+        let store = test_store(home.path()).await;
         let active_uuid = Uuid::from_u128(105);
         let archived_uuid = Uuid::from_u128(106);
         write_session_file(home.path(), "2025-01-03T12-00-00", active_uuid)
@@ -365,7 +361,7 @@ mod tests {
     async fn list_threads_returns_local_rollout_summary() {
         let home = TempDir::new().expect("temp dir");
         let config = test_config(home.path());
-        let store = LocalThreadStore::new(config);
+        let store = LocalThreadStore::new(config.clone(), init_test_state_db(&config).await);
         let uuid = Uuid::from_u128(101);
         let path =
             write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
@@ -404,7 +400,7 @@ mod tests {
     #[tokio::test]
     async fn list_threads_rejects_invalid_cursor() {
         let home = TempDir::new().expect("temp dir");
-        let store = LocalThreadStore::new(test_config(home.path()));
+        let store = test_store(home.path()).await;
 
         let err = store
             .list_threads(ListThreadsParams {

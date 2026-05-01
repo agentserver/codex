@@ -48,11 +48,10 @@ pub(super) async fn archive_thread(
         }
     })?;
 
-    if let Some(ctx) = store.state_db().await {
-        let _ = ctx
-            .mark_archived(thread_id, archived_path.as_path(), Utc::now())
-            .await;
-    }
+    let _ = store
+        .state_db()
+        .mark_archived(thread_id, archived_path.as_path(), Utc::now())
+        .await;
     Ok(())
 }
 
@@ -71,13 +70,15 @@ mod tests {
     use crate::ThreadSortKey;
     use crate::ThreadStore;
     use crate::local::LocalThreadStore;
+    use crate::local::test_support::init_test_state_db;
     use crate::local::test_support::test_config;
+    use crate::local::test_support::test_store;
     use crate::local::test_support::write_session_file;
 
     #[tokio::test]
     async fn archive_thread_moves_rollout_to_archived_collection() {
         let home = TempDir::new().expect("temp dir");
-        let store = LocalThreadStore::new(test_config(home.path()));
+        let store = test_store(home.path()).await;
         let uuid = Uuid::from_u128(201);
         let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
         let active_path =
@@ -123,21 +124,12 @@ mod tests {
     async fn archive_thread_updates_sqlite_metadata_when_present() {
         let home = TempDir::new().expect("temp dir");
         let config = test_config(home.path());
-        let store = LocalThreadStore::new(config.clone());
+        let runtime = init_test_state_db(&config).await;
+        let store = LocalThreadStore::new(config.clone(), runtime.clone());
         let uuid = Uuid::from_u128(202);
         let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
         let active_path =
             write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
-        let runtime = codex_state::StateRuntime::init(
-            home.path().to_path_buf(),
-            config.default_model_provider_id.clone(),
-        )
-        .await
-        .expect("state db should initialize");
-        runtime
-            .mark_backfill_complete(/*last_watermark*/ None)
-            .await
-            .expect("backfill should be complete");
         let mut builder = codex_state::ThreadMetadataBuilder::new(
             thread_id,
             active_path.clone(),

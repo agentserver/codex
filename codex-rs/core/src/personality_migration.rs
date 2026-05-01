@@ -61,11 +61,18 @@ pub async fn maybe_migrate_personality(
 }
 
 async fn has_recorded_sessions(codex_home: &Path, default_provider: &str) -> io::Result<bool> {
-    let store = LocalThreadStore::new(LocalThreadStoreConfig {
+    let config = LocalThreadStoreConfig {
         codex_home: codex_home.to_path_buf(),
         sqlite_home: codex_home.to_path_buf(),
         default_model_provider_id: default_provider.to_string(),
-    });
+    };
+    let state_db = codex_state::StateRuntime::init(
+        config.sqlite_home.clone(),
+        config.default_model_provider_id.clone(),
+    )
+    .await
+    .map_err(io::Error::other)?;
+    let store = LocalThreadStore::new(config, state_db);
     if has_threads(&store, /*archived*/ false).await? {
         return Ok(true);
     }

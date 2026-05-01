@@ -131,7 +131,6 @@ use codex_terminal_detection::user_agent;
 use codex_thread_store::CreateThreadParams;
 use codex_thread_store::LiveThread;
 use codex_thread_store::LiveThreadInitGuard;
-use codex_thread_store::LocalThreadStore;
 use codex_thread_store::ResumeThreadParams;
 use codex_thread_store::ThreadEventPersistenceMode;
 use codex_thread_store::ThreadPersistenceMetadata;
@@ -410,6 +409,7 @@ pub(crate) struct CodexSpawnArgs {
     pub(crate) parent_trace: Option<W3cTraceContext>,
     pub(crate) environment_selections: ResolvedTurnEnvironments,
     pub(crate) analytics_events_client: Option<AnalyticsEventsClient>,
+    pub(crate) state_db: Option<state_db::StateDbHandle>,
     pub(crate) thread_store: Arc<dyn ThreadStore>,
 }
 
@@ -467,6 +467,7 @@ impl Codex {
             parent_trace: _,
             environment_selections,
             analytics_events_client,
+            state_db,
             thread_store,
         } = args;
         let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
@@ -555,7 +556,7 @@ impl Codex {
             };
             match thread_id {
                 Some(thread_id) => {
-                    let state_db_ctx = state_db::get_state_db(&config).await;
+                    let state_db_ctx = state_db.clone();
                     state_db::get_dynamic_tools(state_db_ctx.as_deref(), thread_id, "codex_spawn")
                         .await
                 }
@@ -641,6 +642,7 @@ impl Codex {
             agent_control,
             environment_manager,
             analytics_events_client,
+            state_db,
             thread_store,
             parent_rollout_thread_trace,
         )

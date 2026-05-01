@@ -63,8 +63,9 @@ use codex_app_server_protocol::ServerRequestPayload;
 use codex_app_server_protocol::experimental_required_message;
 use codex_arg0::Arg0DispatchPaths;
 use codex_chatgpt::connectors;
+use codex_core::StateDbHandle;
 use codex_core::ThreadManager;
-use codex_core::agent_graph_store_from_config;
+use codex_core::agent_graph_store_from_state_db;
 use codex_core::config::Config;
 use codex_core::thread_store_from_config;
 use codex_exec_server::EnvironmentManager;
@@ -256,6 +257,7 @@ pub(crate) struct MessageProcessorArgs {
     pub(crate) environment_manager: Arc<EnvironmentManager>,
     pub(crate) feedback: CodexFeedback,
     pub(crate) log_db: Option<LogDbLayer>,
+    pub(crate) state_db: StateDbHandle,
     pub(crate) config_warnings: Vec<ConfigWarningNotification>,
     pub(crate) session_source: SessionSource,
     pub(crate) auth_manager: Arc<AuthManager>,
@@ -277,6 +279,7 @@ impl MessageProcessor {
             environment_manager,
             feedback,
             log_db,
+            state_db,
             config_warnings,
             session_source,
             auth_manager,
@@ -290,14 +293,15 @@ impl MessageProcessor {
         // The thread store is intentionally process-scoped. Config reloads can
         // affect per-thread behavior, but they must not move newly started,
         // resumed, or forked threads to a different persistence backend/root.
-        let thread_store = thread_store_from_config(config.as_ref());
-        let agent_graph_store = agent_graph_store_from_config(config.as_ref()).await;
+        let thread_store = thread_store_from_config(config.as_ref(), state_db.clone());
+        let agent_graph_store = agent_graph_store_from_state_db(state_db.clone());
         let thread_manager = Arc::new(ThreadManager::new(
             config.as_ref(),
             auth_manager.clone(),
             session_source,
             environment_manager,
             Some(analytics_events_client.clone()),
+            state_db.clone(),
             Arc::clone(&thread_store),
             agent_graph_store.clone(),
         ));
@@ -314,6 +318,7 @@ impl MessageProcessor {
             config: Arc::clone(&config),
             config_manager: config_manager.clone(),
             thread_store,
+            state_db: state_db.clone(),
             agent_graph_store,
             feedback,
             log_db,
@@ -335,8 +340,7 @@ impl MessageProcessor {
             thread_manager.clone(),
             analytics_events_client.clone(),
         );
-        let device_key_api =
-            DeviceKeyApi::new(config.sqlite_home.clone(), config.model_provider_id.clone());
+        let device_key_api = DeviceKeyApi::new(state_db);
         let external_agent_config_api =
             ExternalAgentConfigApi::new(config.codex_home.to_path_buf());
         let fs_api = FsApi::new(

@@ -350,7 +350,7 @@ impl ToolHandler for ApplyPatchHandler {
 
         let (patch_input, environment_id) = match &payload {
             ToolPayload::Function { arguments } => {
-                let args: ApplyPatchToolArgs = parse_arguments(&arguments)?;
+                let args: ApplyPatchToolArgs = parse_arguments(arguments)?;
                 (args.input, args.environment_id)
             }
             ToolPayload::Custom { input } => (input.clone(), None),

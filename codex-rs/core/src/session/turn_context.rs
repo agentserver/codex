@@ -272,13 +272,6 @@ impl TurnContext {
             .map_or_else(|| self.cwd.clone(), |path| self.cwd.join(path))
     }
 
-    pub(crate) fn file_system_sandbox_context(
-        &self,
-        additional_permissions: Option<AdditionalPermissionProfile>,
-    ) -> FileSystemSandboxContext {
-        self.file_system_sandbox_context_for_cwd(&self.cwd, additional_permissions)
-    }
-
     pub(crate) fn file_system_sandbox_context_for_cwd(
         &self,
         cwd: &AbsolutePathBuf,

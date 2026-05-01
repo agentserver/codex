@@ -1097,7 +1097,7 @@
               "description": "The command's working directory."
             },
             "durationMs": {
-              "description": "Elapsed command runtime in milliseconds. Final once the command completes.",
+              "description": "The duration of the command execution in milliseconds.",
               "format": "int64",
               "type": [
                 "integer",

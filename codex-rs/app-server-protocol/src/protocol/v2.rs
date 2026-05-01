@@ -5913,7 +5913,7 @@ pub enum ThreadItem {
         aggregated_output: Option<String>,
         /// The command's exit code.
         exit_code: Option<i32>,
-        /// Elapsed command runtime in milliseconds. Final once the command completes.
+        /// The duration of the command execution in milliseconds.
         #[ts(type = "number | null")]
         duration_ms: Option<i64>,
     },

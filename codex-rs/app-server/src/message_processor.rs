@@ -30,6 +30,8 @@ use axum::http::HeaderValue;
 use codex_analytics::AnalyticsEventsClient;
 use codex_analytics::AppServerRpcTransport;
 use codex_app_server_protocol::AppListUpdatedNotification;
+use codex_app_server_protocol::AttestationGenerateParams;
+use codex_app_server_protocol::AttestationGenerateResponse;
 use codex_app_server_protocol::AuthMode as LoginAuthMode;
 use codex_app_server_protocol::ChatgptAuthTokensRefreshParams;
 use codex_app_server_protocol::ChatgptAuthTokensRefreshReason;
@@ -63,6 +65,7 @@ use codex_app_server_protocol::ServerRequestPayload;
 use codex_app_server_protocol::experimental_required_message;
 use codex_arg0::Arg0DispatchPaths;
 use codex_chatgpt::connectors;
+use codex_core::AttestationProvider;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
 use codex_core::thread_store_from_config;
@@ -85,12 +88,15 @@ use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_state::log_db::LogDbLayer;
 use futures::FutureExt;
+use serde::Serialize;
 use tokio::sync::broadcast;
 use tokio::sync::watch;
 use tokio::time::Duration;
 use tokio::time::timeout;
 use tracing::Instrument;
+use tracing::warn;
 
+const ATTESTATION_GENERATE_TIMEOUT: Duration = Duration::from_secs(10);
 const EXTERNAL_AUTH_REFRESH_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Clone)]
 struct ExternalAuthRefreshBridge {
@@ -158,6 +164,119 @@ impl ExternalAuth for ExternalAuthRefreshBridge {
             response.chatgpt_plan_type,
         ))
     }
+}
+
+fn app_server_attestation_provider(outgoing: Arc<OutgoingMessageSender>) -> AttestationProvider {
+    AttestationProvider::new(move || {
+        let outgoing = outgoing.clone();
+        Box::pin(request_attestation_header_value(outgoing))
+    })
+}
+
+async fn request_attestation_header_value(outgoing: Arc<OutgoingMessageSender>) -> String {
+    request_attestation_header_value_with_timeout(outgoing, ATTESTATION_GENERATE_TIMEOUT).await
+}
+
+async fn request_attestation_header_value_with_timeout(
+    outgoing: Arc<OutgoingMessageSender>,
+    timeout_duration: Duration,
+) -> String {
+    let (request_id, rx) = outgoing
+        .send_request(ServerRequestPayload::AttestationGenerate(
+            AttestationGenerateParams {},
+        ))
+        .await;
+
+    let result = match timeout(timeout_duration, rx).await {
+        Ok(Ok(Ok(result))) => result,
+        Ok(Ok(Err(err))) => {
+            warn!(
+                code = err.code,
+                message = %err.message,
+                "attestation generation request failed"
+            );
+            return attestation_failure_payload(
+                "client_unavailable",
+                /*failure_detail*/ None,
+                /*latency_ms*/ None,
+            );
+        }
+        Ok(Err(err)) => {
+            warn!("attestation generation request canceled: {err}");
+            return attestation_failure_payload(
+                "client_unavailable",
+                /*failure_detail*/ None,
+                /*latency_ms*/ None,
+            );
+        }
+        Err(_) => {
+            let _canceled = outgoing.cancel_request(&request_id).await;
+            warn!(
+                timeout_seconds = timeout_duration.as_secs(),
+                "attestation generation request timed out"
+            );
+            return attestation_failure_payload(
+                "client_timeout",
+                /*failure_detail*/ None,
+                /*latency_ms*/ None,
+            );
+        }
+    };
+
+    match serde_json::from_value::<AttestationGenerateResponse>(result) {
+        Ok(AttestationGenerateResponse::Token { token, latency_ms }) => {
+            attestation_token_payload(&token, latency_ms)
+        }
+        Ok(AttestationGenerateResponse::Failure {
+            failure_reason,
+            failure_detail,
+            latency_ms,
+        }) => attestation_failure_payload(&failure_reason, failure_detail.as_deref(), latency_ms),
+        Err(err) => {
+            warn!("failed to deserialize attestation generation response: {err}");
+            attestation_failure_payload(
+                "client_response_invalid",
+                /*failure_detail*/ None,
+                /*latency_ms*/ None,
+            )
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct AttestationHeaderPayload<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    token: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failure_reason: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failure_detail: Option<&'a str>,
+    #[serde(rename = "t", skip_serializing_if = "Option::is_none")]
+    latency_ms: Option<f64>,
+}
+
+fn attestation_token_payload(token: &str, latency_ms: Option<f64>) -> String {
+    serde_json::to_string(&AttestationHeaderPayload {
+        token: Some(token),
+        failure_reason: None,
+        failure_detail: None,
+        latency_ms,
+    })
+    .unwrap_or_else(|_| r#"{"failure_reason":"payload_serialization_failed"}"#.to_string())
+}
+
+fn attestation_failure_payload(
+    failure_reason: &str,
+    failure_detail: Option<&str>,
+    latency_ms: Option<f64>,
+) -> String {
+    serde_json::to_string(&AttestationHeaderPayload {
+        token: None,
+        failure_reason: Some(failure_reason),
+        failure_detail,
+        latency_ms,
+    })
+    .unwrap_or_else(|_| r#"{"failure_reason":"payload_serialization_failed"}"#.to_string())
 }
 
 pub(crate) struct MessageProcessor {
@@ -290,13 +409,14 @@ impl MessageProcessor {
         // affect per-thread behavior, but they must not move newly started,
         // resumed, or forked threads to a different persistence backend/root.
         let thread_store = thread_store_from_config(config.as_ref());
-        let thread_manager = Arc::new(ThreadManager::new(
+        let thread_manager = Arc::new(ThreadManager::new_with_attestation_provider(
             config.as_ref(),
             auth_manager.clone(),
             session_source,
             environment_manager,
             Some(analytics_events_client.clone()),
             Arc::clone(&thread_store),
+            Some(app_server_attestation_provider(outgoing.clone())),
         ));
         thread_manager
             .plugins_manager()
@@ -1342,6 +1462,11 @@ mod tracing_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::outgoing_message::OutgoingEnvelope;
+    use crate::outgoing_message::OutgoingMessage;
+    use codex_app_server_protocol::ServerRequest;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
 
     fn migration_item(
         item_type: ExternalAgentConfigMigrationItemType,
@@ -1377,5 +1502,188 @@ mod tests {
         assert!(!migration_items_need_runtime_refresh(&[migration_item(
             ExternalAgentConfigMigrationItemType::Sessions,
         )]));
+    }
+
+    fn test_outgoing() -> (
+        Arc<OutgoingMessageSender>,
+        tokio::sync::mpsc::Receiver<OutgoingEnvelope>,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let outgoing = Arc::new(OutgoingMessageSender::new(
+            tx,
+            AnalyticsEventsClient::disabled(),
+        ));
+        (outgoing, rx)
+    }
+
+    async fn recv_attestation_request(
+        rx: &mut tokio::sync::mpsc::Receiver<OutgoingEnvelope>,
+    ) -> codex_app_server_protocol::RequestId {
+        let Some(OutgoingEnvelope::Broadcast {
+            message:
+                OutgoingMessage::Request(ServerRequest::AttestationGenerate { request_id, params }),
+        }) = rx.recv().await
+        else {
+            panic!("expected attestation/generate request");
+        };
+        assert_eq!(params, AttestationGenerateParams {});
+        request_id
+    }
+
+    #[tokio::test]
+    async fn attestation_generation_maps_token_response_into_header_payload() {
+        let (outgoing, mut rx) = test_outgoing();
+        let task = tokio::spawn(request_attestation_header_value(outgoing.clone()));
+        let request_id = recv_attestation_request(&mut rx).await;
+
+        outgoing
+            .notify_client_response(
+                request_id,
+                json!({
+                    "type": "token",
+                    "token": "token",
+                    "latencyMs": 12.5,
+                }),
+            )
+            .await;
+
+        assert_eq!(
+            task.await.expect("attestation task should finish"),
+            r#"{"token":"token","t":12.5}"#.to_string(),
+        );
+    }
+
+    #[tokio::test]
+    async fn attestation_generation_maps_failure_response_into_header_payload() {
+        let (outgoing, mut rx) = test_outgoing();
+        let task = tokio::spawn(request_attestation_header_value(outgoing.clone()));
+        let request_id = recv_attestation_request(&mut rx).await;
+
+        outgoing
+            .notify_client_response(
+                request_id,
+                json!({
+                    "type": "failure",
+                    "failureReason": "unsupported_device",
+                    "failureDetail": "not supported",
+                    "latencyMs": 12.5,
+                }),
+            )
+            .await;
+
+        assert_eq!(
+            task.await.expect("attestation task should finish"),
+            r#"{"failure_reason":"unsupported_device","failure_detail":"not supported","t":12.5}"#
+                .to_string(),
+        );
+    }
+
+    #[tokio::test]
+    async fn attestation_generation_synthesizes_unavailable_failure_for_client_error() {
+        let (outgoing, mut rx) = test_outgoing();
+        let task = tokio::spawn(request_attestation_header_value(outgoing.clone()));
+        let request_id = recv_attestation_request(&mut rx).await;
+
+        outgoing
+            .notify_client_error(
+                request_id,
+                JSONRPCErrorError {
+                    code: -1,
+                    message: "client unavailable".to_string(),
+                    data: None,
+                },
+            )
+            .await;
+
+        assert_eq!(
+            task.await.expect("attestation task should finish"),
+            r#"{"failure_reason":"client_unavailable"}"#.to_string(),
+        );
+    }
+
+    #[tokio::test]
+    async fn attestation_generation_synthesizes_unavailable_failure_for_disconnected_client() {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        drop(rx);
+        let outgoing = Arc::new(OutgoingMessageSender::new(
+            tx,
+            AnalyticsEventsClient::disabled(),
+        ));
+
+        assert_eq!(
+            request_attestation_header_value(outgoing).await,
+            r#"{"failure_reason":"client_unavailable"}"#.to_string(),
+        );
+    }
+
+    #[tokio::test]
+    async fn attestation_generation_synthesizes_timeout_failure() {
+        let (outgoing, mut rx) = test_outgoing();
+        let task = tokio::spawn(request_attestation_header_value_with_timeout(
+            outgoing,
+            Duration::from_millis(1),
+        ));
+        let _request_id = recv_attestation_request(&mut rx).await;
+
+        assert_eq!(
+            task.await.expect("attestation task should finish"),
+            r#"{"failure_reason":"client_timeout"}"#.to_string(),
+        );
+    }
+
+    #[tokio::test]
+    async fn attestation_generation_synthesizes_invalid_response_failure() {
+        let (outgoing, mut rx) = test_outgoing();
+        let task = tokio::spawn(request_attestation_header_value(outgoing.clone()));
+        let request_id = recv_attestation_request(&mut rx).await;
+
+        outgoing
+            .notify_client_response(request_id, json!({ "headerValue": "legacy" }))
+            .await;
+
+        assert_eq!(
+            task.await.expect("attestation task should finish"),
+            r#"{"failure_reason":"client_response_invalid"}"#.to_string(),
+        );
+    }
+
+    #[test]
+    fn attestation_payloads_keep_upstream_header_shape() {
+        assert_eq!(
+            attestation_token_payload("token", /*latency_ms*/ Some(12.5)),
+            r#"{"token":"token","t":12.5}"#
+        );
+        assert_eq!(
+            attestation_failure_payload(
+                "unsupported_device",
+                Some("not supported"),
+                /*latency_ms*/ Some(12.5),
+            ),
+            r#"{"failure_reason":"unsupported_device","failure_detail":"not supported","t":12.5}"#
+        );
+        assert_eq!(
+            attestation_failure_payload(
+                "client_unavailable",
+                /*failure_detail*/ None,
+                /*latency_ms*/ None,
+            ),
+            r#"{"failure_reason":"client_unavailable"}"#
+        );
+        assert_eq!(
+            attestation_failure_payload(
+                "client_timeout",
+                /*failure_detail*/ None,
+                /*latency_ms*/ None,
+            ),
+            r#"{"failure_reason":"client_timeout"}"#
+        );
+        assert_eq!(
+            attestation_failure_payload(
+                "client_response_invalid",
+                /*failure_detail*/ None,
+                /*latency_ms*/ None,
+            ),
+            r#"{"failure_reason":"client_response_invalid"}"#
+        );
     }
 }

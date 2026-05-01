@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "oneOf": [
+    {
+      "properties": {
+        "latencyMs": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "token": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "token"
+          ],
+          "title": "TokenAttestationGenerateResponseType",
+          "type": "string"
+        }
+      },
+      "required": [
+        "token",
+        "type"
+      ],
+      "title": "TokenAttestationGenerateResponse",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "failureDetail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "failureReason": {
+          "type": "string"
+        },
+        "latencyMs": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "type": {
+          "enum": [
+            "failure"
+          ],
+          "title": "FailureAttestationGenerateResponseType",
+          "type": "string"
+        }
+      },
+      "required": [
+        "failureReason",
+        "type"
+      ],
+      "title": "FailureAttestationGenerateResponse",
+      "type": "object"
+    }
+  ],
+  "title": "AttestationGenerateResponse"
+}

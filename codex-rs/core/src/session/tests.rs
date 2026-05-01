@@ -3402,6 +3402,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
         )),
         codex_rollout_trace::ThreadTraceContext::disabled(),
+        /*attestation_provider*/ None,
     )
     .await;
 
@@ -3548,6 +3549,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         thread_store: Arc::new(codex_thread_store::LocalThreadStore::new(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
         )),
+        attestation_provider: None,
         model_client: ModelClient::new(
             Some(auth_manager.clone()),
             conversation_id,
@@ -3721,6 +3723,7 @@ async fn make_session_with_config_and_rx(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
         )),
         codex_rollout_trace::ThreadTraceContext::disabled(),
+        /*attestation_provider*/ None,
     )
     .await?;
 
@@ -4987,6 +4990,7 @@ where
         thread_store: Arc::new(codex_thread_store::LocalThreadStore::new(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
         )),
+        attestation_provider: None,
         model_client: ModelClient::new(
             Some(Arc::clone(&auth_manager)),
             conversation_id,

@@ -17,8 +17,6 @@ use crate::outgoing_message::ConnectionRequestId;
 use crate::outgoing_message::OutgoingMessageSender;
 use crate::outgoing_message::RequestContext;
 use crate::outgoing_message::ThreadScopedOutgoingMessageSender;
-use crate::process_exec::ProcessExecManager;
-use crate::process_exec::StartProcessParams;
 use crate::thread_status::ThreadWatchManager;
 use crate::thread_status::resolve_thread_status;
 use chrono::DateTime;
@@ -135,10 +133,6 @@ use codex_app_server_protocol::PluginSource;
 use codex_app_server_protocol::PluginSummary;
 use codex_app_server_protocol::PluginUninstallParams;
 use codex_app_server_protocol::PluginUninstallResponse;
-use codex_app_server_protocol::ProcessKillParams;
-use codex_app_server_protocol::ProcessResizePtyParams;
-use codex_app_server_protocol::ProcessSpawnParams;
-use codex_app_server_protocol::ProcessWriteStdinParams;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ReviewDelivery as ApiReviewDelivery;
 use codex_app_server_protocol::ReviewStartParams;
@@ -432,6 +426,7 @@ mod apps_list_helpers;
 mod plugin_app_helpers;
 mod plugin_mcp_oauth;
 mod plugins;
+mod process;
 mod token_usage_replay;
 
 use crate::filters::compute_source_filters;
@@ -439,6 +434,7 @@ use crate::filters::source_kind_matches;
 use crate::thread_state::ThreadListenerCommand;
 use crate::thread_state::ThreadState;
 use crate::thread_state::ThreadStateManager;
+use process::ProcessExecManager;
 use token_usage_replay::latest_token_usage_turn_id_for_thread_path;
 use token_usage_replay::latest_token_usage_turn_id_from_rollout_items;
 use token_usage_replay::send_thread_token_usage_update_to_connection;
@@ -2310,107 +2306,6 @@ impl CodexMessageProcessor {
         .await
     }
 
-    async fn process_spawn(&self, request_id: ConnectionRequestId, params: ProcessSpawnParams) {
-        let result = self.process_spawn_inner(request_id.clone(), params).await;
-        self.send_optional_result(request_id, result).await;
-    }
-
-    async fn process_spawn_inner(
-        &self,
-        request_id: ConnectionRequestId,
-        params: ProcessSpawnParams,
-    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        let ProcessSpawnParams {
-            command,
-            process_handle,
-            cwd,
-            tty,
-            stream_stdin,
-            stream_stdout_stderr,
-            output_bytes_cap,
-            timeout_ms,
-            env: env_overrides,
-            size,
-        } = params;
-        let method_name = "process/spawn";
-        tracing::debug!("{method_name} command: {command:?}");
-        if command.is_empty() {
-            return Err(invalid_request("command must not be empty"));
-        }
-        if process_handle.is_empty() {
-            return Err(invalid_request("processHandle must not be empty"));
-        }
-        if size.is_some() && !tty {
-            return Err(invalid_params("process/spawn size requires tty: true"));
-        }
-        let mut env = create_env(
-            &self.config.permissions.shell_environment_policy,
-            /*thread_id*/ None,
-        );
-        if let Some(env_overrides) = env_overrides {
-            for (key, value) in env_overrides {
-                match value {
-                    Some(value) => {
-                        env.insert(key, value);
-                    }
-                    None => {
-                        env.remove(&key);
-                    }
-                }
-            }
-        }
-        let timeout_ms = match timeout_ms {
-            Some(timeout_ms) => match u64::try_from(timeout_ms) {
-                Ok(timeout_ms) => Some(timeout_ms),
-                Err(_) => {
-                    return Err(invalid_params(format!(
-                        "{method_name} timeoutMs must be non-negative, got {timeout_ms}"
-                    )));
-                }
-            },
-            None => None,
-        };
-        let expiration = match timeout_ms {
-            Some(timeout_ms) => timeout_ms.into(),
-            None => ExecExpiration::DefaultTimeout,
-        };
-        let output_bytes_cap = Some(output_bytes_cap.unwrap_or(DEFAULT_OUTPUT_BYTES_CAP));
-        let size = match size.map(crate::process_exec::terminal_size_from_protocol) {
-            Some(Ok(size)) => Some(size),
-            Some(Err(error)) => return Err(error),
-            None => None,
-        };
-        let exec_request = codex_core::sandboxing::ExecRequest::new(
-            command,
-            cwd,
-            env,
-            /*network*/ None,
-            expiration,
-            ExecCapturePolicy::ShellTool,
-            codex_sandboxing::SandboxType::None,
-            WindowsSandboxLevel::Disabled,
-            /*windows_sandbox_private_desktop*/ false,
-            codex_protocol::models::PermissionProfile::Disabled,
-            /*arg0*/ None,
-        );
-
-        self.process_exec_manager
-            .start(StartProcessParams {
-                outgoing: self.outgoing.clone(),
-                request_id,
-                process_handle,
-                exec_request,
-                tty,
-                stream_stdin,
-                stream_stdout_stderr,
-                output_bytes_cap,
-                size,
-            })
-            .await?;
-
-        Ok(None)
-    }
-
     async fn exec_command(
         &self,
         request_id: ConnectionRequestId,
@@ -2692,38 +2587,6 @@ impl CodexMessageProcessor {
         let result = self
             .command_exec_manager
             .terminate(request_id.clone(), params)
-            .await;
-        self.outgoing.send_result(request_id, result).await;
-    }
-
-    async fn process_write_stdin(
-        &self,
-        request_id: ConnectionRequestId,
-        params: ProcessWriteStdinParams,
-    ) {
-        let result = self
-            .process_exec_manager
-            .write_stdin(request_id.clone(), params)
-            .await;
-        self.outgoing.send_result(request_id, result).await;
-    }
-
-    async fn process_resize_pty(
-        &self,
-        request_id: ConnectionRequestId,
-        params: ProcessResizePtyParams,
-    ) {
-        let result = self
-            .process_exec_manager
-            .resize_pty(request_id.clone(), params)
-            .await;
-        self.outgoing.send_result(request_id, result).await;
-    }
-
-    async fn process_kill(&self, request_id: ConnectionRequestId, params: ProcessKillParams) {
-        let result = self
-            .process_exec_manager
-            .kill(request_id.clone(), params)
             .await;
         self.outgoing.send_result(request_id, result).await;
     }

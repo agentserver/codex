@@ -411,7 +411,10 @@ fn start_uninitialized(args: InProcessStartArgs) -> InProcessClientHandle {
         let (processor_tx, mut processor_rx) = mpsc::channel::<ProcessorCommand>(channel_capacity);
         let mut processor_handle = tokio::spawn(async move {
             let Some(state_db) = init_state_db_from_config(args.config.as_ref()).await else {
-                panic!("in-process app-server requires state db");
+                warn!(
+                    "in-process app-server state db initialization failed; shutting down processor task"
+                );
+                return;
             };
             let processor = Arc::new(
                 MessageProcessor::new(MessageProcessorArgs {

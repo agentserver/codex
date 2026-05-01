@@ -269,7 +269,6 @@ use codex_core::exec::ExecCapturePolicy;
 use codex_core::exec::ExecExpiration;
 use codex_core::exec::ExecParams;
 use codex_core::exec_env::create_env;
-use codex_core::find_archived_thread_path_by_id_str;
 use codex_core::find_thread_name_by_id;
 use codex_core::find_thread_path_by_id_str;
 use codex_core::path_utils;
@@ -378,9 +377,11 @@ use codex_rollout::state_db::get_state_db;
 use codex_rollout::state_db::reconcile_rollout;
 use codex_state::StateRuntime;
 use codex_state::ThreadMetadata;
+#[cfg(test)]
 use codex_state::ThreadMetadataBuilder;
 use codex_state::log_db::LogDbLayer;
 use codex_thread_store::ArchiveThreadParams as StoreArchiveThreadParams;
+use codex_thread_store::GitInfoPatch as StoreGitInfoPatch;
 use codex_thread_store::ListThreadsParams as StoreListThreadsParams;
 use codex_thread_store::LocalThreadStore;
 use codex_thread_store::ReadThreadByRolloutPathParams as StoreReadThreadByRolloutPathParams;
@@ -3375,54 +3376,46 @@ impl CodexMessageProcessor {
             return Err(invalid_request("gitInfo must include at least one field"));
         }
 
-        let _thread_list_state_permit = self.acquire_thread_list_state_permit().await?;
-        let loaded_thread = self.thread_manager.get_thread(thread_uuid).await.ok();
-        let mut state_db_ctx = loaded_thread.as_ref().and_then(|thread| thread.state_db());
-        if state_db_ctx.is_none() {
-            state_db_ctx = get_state_db(&self.config).await;
-        }
-        let Some(state_db_ctx) = state_db_ctx else {
-            return Err(internal_error(format!(
-                "sqlite state db unavailable for thread {thread_uuid}"
-            )));
-        };
-
-        self.ensure_thread_metadata_row_exists(thread_uuid, &state_db_ctx, loaded_thread.as_ref())
-            .await?;
-
         let git_sha = Self::normalize_thread_metadata_git_field(sha, "gitInfo.sha")?;
         let git_branch = Self::normalize_thread_metadata_git_field(branch, "gitInfo.branch")?;
         let git_origin_url =
             Self::normalize_thread_metadata_git_field(origin_url, "gitInfo.originUrl")?;
 
-        let updated = state_db_ctx
-            .update_thread_git_info(
-                thread_uuid,
-                git_sha.as_ref().map(|value| value.as_deref()),
-                git_branch.as_ref().map(|value| value.as_deref()),
-                git_origin_url.as_ref().map(|value| value.as_deref()),
-            )
-            .await
-            .map_err(|err| {
-                internal_error(format!(
-                    "failed to update thread metadata for {thread_uuid}: {err}"
-                ))
-            })?;
-        if !updated {
-            return Err(internal_error(format!(
-                "thread metadata disappeared before update completed: {thread_uuid}"
-            )));
-        }
-
-        let Some(summary) =
-            read_summary_from_state_db_context_by_thread_id(Some(&state_db_ctx), thread_uuid).await
-        else {
-            return Err(internal_error(format!(
-                "failed to reload updated thread metadata for {thread_uuid}"
-            )));
+        let patch = StoreThreadMetadataPatch {
+            git_info: Some(StoreGitInfoPatch {
+                sha: git_sha,
+                branch: git_branch,
+                origin_url: git_origin_url,
+            }),
+            ..Default::default()
         };
+        let _thread_list_state_permit = self.acquire_thread_list_state_permit().await?;
+        let loaded_thread = self.thread_manager.get_thread(thread_uuid).await.ok();
+        let updated_thread = if let Some(loaded_thread) = loaded_thread.as_ref() {
+            if loaded_thread.config_snapshot().await.ephemeral {
+                return Err(invalid_request(format!(
+                    "ephemeral thread does not support metadata updates: {thread_id}"
+                )));
+            }
+            loaded_thread
+                .update_thread_metadata(patch, /*include_archived*/ true)
+                .await
+        } else {
+            self.thread_store
+                .update_thread_metadata(StoreUpdateThreadMetadataParams {
+                    thread_id: thread_uuid,
+                    patch,
+                    include_archived: true,
+                })
+                .await
+        }
+        .map_err(|err| thread_store_write_error("update thread metadata", err))?;
 
-        let mut thread = summary_to_thread(summary, &self.config.cwd);
+        let (mut thread, _) = thread_from_stored_thread(
+            updated_thread,
+            self.config.model_provider_id.as_str(),
+            &self.config.cwd,
+        );
         self.attach_thread_name(thread_uuid, &mut thread).await;
         thread.status = resolve_thread_status(
             self.thread_watch_manager
@@ -3448,122 +3441,6 @@ impl CodexMessageProcessor {
             }
             Some(None) => Ok(Some(None)),
             None => Ok(None),
-        }
-    }
-
-    async fn ensure_thread_metadata_row_exists(
-        &self,
-        thread_uuid: ThreadId,
-        state_db_ctx: &Arc<StateRuntime>,
-        loaded_thread: Option<&Arc<CodexThread>>,
-    ) -> Result<(), JSONRPCErrorError> {
-        match state_db_ctx.get_thread(thread_uuid).await {
-            Ok(Some(_)) => return Ok(()),
-            Ok(None) => {}
-            Err(err) => {
-                return Err(internal_error(format!(
-                    "failed to load thread metadata for {thread_uuid}: {err}"
-                )));
-            }
-        }
-
-        if let Some(thread) = loaded_thread {
-            let Some(rollout_path) = thread.rollout_path() else {
-                return Err(invalid_request(format!(
-                    "ephemeral thread does not support metadata updates: {thread_uuid}"
-                )));
-            };
-
-            reconcile_rollout(
-                Some(state_db_ctx),
-                rollout_path.as_path(),
-                self.config.model_provider_id.as_str(),
-                /*builder*/ None,
-                &[],
-                /*archived_only*/ None,
-                /*new_thread_memory_mode*/ None,
-            )
-            .await;
-
-            match state_db_ctx.get_thread(thread_uuid).await {
-                Ok(Some(_)) => return Ok(()),
-                Ok(None) => {}
-                Err(err) => {
-                    return Err(internal_error(format!(
-                        "failed to load reconciled thread metadata for {thread_uuid}: {err}"
-                    )));
-                }
-            }
-
-            let config_snapshot = thread.config_snapshot().await;
-            let model_provider = config_snapshot.model_provider_id.clone();
-            let mut builder = ThreadMetadataBuilder::new(
-                thread_uuid,
-                rollout_path,
-                Utc::now(),
-                config_snapshot.session_source.clone(),
-            );
-            builder.model_provider = Some(model_provider.clone());
-            builder.cwd = config_snapshot.cwd.to_path_buf();
-            builder.cli_version = Some(env!("CARGO_PKG_VERSION").to_string());
-            builder.sandbox_policy = config_snapshot.sandbox_policy();
-            builder.approval_mode = config_snapshot.approval_policy;
-            let metadata = builder.build(model_provider.as_str());
-            if let Err(err) = state_db_ctx.insert_thread_if_absent(&metadata).await {
-                return Err(internal_error(format!(
-                    "failed to create thread metadata for {thread_uuid}: {err}"
-                )));
-            }
-            return Ok(());
-        }
-
-        let rollout_path =
-            match find_thread_path_by_id_str(&self.config.codex_home, &thread_uuid.to_string())
-                .await
-            {
-                Ok(Some(path)) => path,
-                Ok(None) => match find_archived_thread_path_by_id_str(
-                    &self.config.codex_home,
-                    &thread_uuid.to_string(),
-                )
-                .await
-                {
-                    Ok(Some(path)) => path,
-                    Ok(None) => {
-                        return Err(invalid_request(format!("thread not found: {thread_uuid}")));
-                    }
-                    Err(err) => {
-                        return Err(internal_error(format!(
-                            "failed to locate archived thread id {thread_uuid}: {err}"
-                        )));
-                    }
-                },
-                Err(err) => {
-                    return Err(internal_error(format!(
-                        "failed to locate thread id {thread_uuid}: {err}"
-                    )));
-                }
-            };
-
-        reconcile_rollout(
-            Some(state_db_ctx),
-            rollout_path.as_path(),
-            self.config.model_provider_id.as_str(),
-            /*builder*/ None,
-            &[],
-            /*archived_only*/ None,
-            /*new_thread_memory_mode*/ None,
-        )
-        .await;
-
-        match state_db_ctx.get_thread(thread_uuid).await {
-            Ok(Some(_)) => Ok(()),
-            Ok(None) => Err(internal_error(format!(
-                "failed to create thread metadata from rollout for {thread_uuid}"
-            ))),
-            Err(err) => Err(internal_error(format!(
-                "failed to load reconciled thread metadata for {thread_uuid}: {err}"
-            ))),
         }
     }
 
@@ -9025,19 +8902,6 @@ fn validate_dynamic_tools(tools: &[ApiDynamicToolSpec]) -> Result<(), String> {
     Ok(())
 }
 
-async fn read_summary_from_state_db_context_by_thread_id(
-    state_db_ctx: Option<&StateDbHandle>,
-    thread_id: ThreadId,
-) -> Option<ConversationSummary> {
-    let state_db_ctx = state_db_ctx?;
-
-    let metadata = match state_db_ctx.get_thread(thread_id).await {
-        Ok(Some(metadata)) => metadata,
-        Ok(None) | Err(_) => return None,
-    };
-    Some(summary_from_thread_metadata(&metadata))
-}
-
 async fn title_from_state_db(config: &Config, thread_id: ThreadId) -> Option<String> {
     if let Some(state_db_ctx) = open_state_db_for_direct_thread_lookup(config).await
         && let Some(metadata) = state_db_ctx.get_thread(thread_id).await.ok().flatten()
@@ -9388,74 +9252,6 @@ fn summary_from_stored_thread(
         source,
         git_info,
     })
-}
-
-#[allow(clippy::too_many_arguments)]
-fn summary_from_state_db_metadata(
-    conversation_id: ThreadId,
-    path: PathBuf,
-    first_user_message: Option<String>,
-    timestamp: String,
-    updated_at: String,
-    model_provider: String,
-    cwd: PathBuf,
-    cli_version: String,
-    source: String,
-    agent_nickname: Option<String>,
-    agent_role: Option<String>,
-    git_sha: Option<String>,
-    git_branch: Option<String>,
-    git_origin_url: Option<String>,
-) -> ConversationSummary {
-    let preview = first_user_message.unwrap_or_default();
-    let source = serde_json::from_str(&source)
-        .or_else(|_| serde_json::from_value(serde_json::Value::String(source.clone())))
-        .unwrap_or(codex_protocol::protocol::SessionSource::Unknown);
-    let source = with_thread_spawn_agent_metadata(source, agent_nickname, agent_role);
-    let git_info = if git_sha.is_none() && git_branch.is_none() && git_origin_url.is_none() {
-        None
-    } else {
-        Some(ConversationGitInfo {
-            sha: git_sha,
-            branch: git_branch,
-            origin_url: git_origin_url,
-        })
-    };
-    ConversationSummary {
-        conversation_id,
-        path,
-        preview,
-        timestamp: Some(timestamp),
-        updated_at: Some(updated_at),
-        model_provider,
-        cwd,
-        cli_version,
-        source,
-        git_info,
-    }
-}
-
-fn summary_from_thread_metadata(metadata: &ThreadMetadata) -> ConversationSummary {
-    summary_from_state_db_metadata(
-        metadata.id,
-        metadata.rollout_path.clone(),
-        metadata.first_user_message.clone(),
-        metadata
-            .created_at
-            .to_rfc3339_opts(SecondsFormat::Secs, true),
-        metadata
-            .updated_at
-            .to_rfc3339_opts(SecondsFormat::Secs, true),
-        metadata.model_provider.clone(),
-        metadata.cwd.clone(),
-        metadata.cli_version.clone(),
-        metadata.source.clone(),
-        metadata.agent_nickname.clone(),
-        metadata.agent_role.clone(),
-        metadata.git_sha.clone(),
-        metadata.git_branch.clone(),
-        metadata.git_origin_url.clone(),
-    )
 }
 
 pub(crate) async fn read_summary_from_rollout(
@@ -10581,22 +10377,6 @@ mod tests {
     }
 
     #[test]
-    fn summary_from_thread_metadata_formats_protocol_timestamps_as_seconds() -> Result<()> {
-        let mut metadata =
-            test_thread_metadata(/*model*/ None, /*reasoning_effort*/ None)?;
-        metadata.created_at =
-            DateTime::parse_from_rfc3339("2025-09-05T16:53:11.123Z")?.with_timezone(&Utc);
-        metadata.updated_at =
-            DateTime::parse_from_rfc3339("2025-09-05T16:53:12.456Z")?.with_timezone(&Utc);
-
-        let summary = summary_from_thread_metadata(&metadata);
-
-        assert_eq!(summary.timestamp, Some("2025-09-05T16:53:11Z".to_string()));
-        assert_eq!(summary.updated_at, Some("2025-09-05T16:53:12Z".to_string()));
-        Ok(())
-    }
-
-    #[test]
     fn merge_persisted_resume_metadata_prefers_persisted_model_and_reasoning_effort() -> Result<()>
     {
         let mut request_overrides = None;
@@ -11026,43 +10806,6 @@ mod tests {
                 .is_empty()
         );
         assert!(outgoing_rx.try_recv().is_err());
-        Ok(())
-    }
-
-    #[test]
-    fn summary_from_state_db_metadata_preserves_agent_nickname() -> Result<()> {
-        let conversation_id = ThreadId::from_string("bfd12a78-5900-467b-9bc5-d3d35df08191")?;
-        let source =
-            serde_json::to_string(&SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-                parent_thread_id: ThreadId::from_string("ad7f0408-99b8-4f6e-a46f-bd0eec433370")?,
-                depth: 1,
-                agent_path: None,
-                agent_nickname: None,
-                agent_role: None,
-            }))?;
-
-        let summary = summary_from_state_db_metadata(
-            conversation_id,
-            PathBuf::from("/tmp/rollout.jsonl"),
-            Some("hi".to_string()),
-            "2025-09-05T16:53:11Z".to_string(),
-            "2025-09-05T16:53:12Z".to_string(),
-            "test-provider".to_string(),
-            PathBuf::from("/"),
-            "0.0.0".to_string(),
-            source,
-            Some("atlas".to_string()),
-            Some("explorer".to_string()),
-            /*git_sha*/ None,
-            /*git_branch*/ None,
-            /*git_origin_url*/ None,
-        );
-
-        let fallback_cwd = AbsolutePathBuf::from_absolute_path("/")?;
-        let thread = summary_to_thread(summary, &fallback_cwd);
-
-        assert_eq!(thread.agent_nickname, Some("atlas".to_string()));
-        assert_eq!(thread.agent_role, Some("explorer".to_string()));
         Ok(())
     }
 

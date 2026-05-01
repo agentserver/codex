@@ -11,6 +11,7 @@ use codex_tools::DiscoverableToolType;
 use codex_tools::TOOL_SUGGEST_PERSIST_ALWAYS_VALUE;
 use codex_tools::TOOL_SUGGEST_PERSIST_KEY;
 use codex_tools::TOOL_SUGGEST_TOOL_NAME;
+use codex_tools::ToolName;
 use codex_tools::ToolSuggestArgs;
 use codex_tools::ToolSuggestResult;
 use codex_tools::all_suggested_connectors_picked_up;
@@ -36,6 +37,10 @@ pub struct ToolSuggestHandler;
 
 impl ToolHandler for ToolSuggestHandler {
     type Output = FunctionToolOutput;
+
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain(TOOL_SUGGEST_TOOL_NAME)
+    }
 
     fn kind(&self) -> ToolKind {
         ToolKind::Function

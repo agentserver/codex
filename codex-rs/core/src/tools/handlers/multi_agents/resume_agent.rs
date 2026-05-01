@@ -7,6 +7,10 @@ pub(crate) struct Handler;
 impl ToolHandler for Handler {
     type Output = ResumeAgentResult;
 
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain("resume_agent")
+    }
+
     fn kind(&self) -> ToolKind {
         ToolKind::Function
     }

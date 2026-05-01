@@ -68,9 +68,9 @@ When Codex knows which client started the turn, the legacy notify JSON payload a
 
 ## Lifecycle hooks
 
-Admins can set `allow_managed_hooks_only = true` in `requirements.toml` to ignore
-user, project, and session hook configs while still allowing managed hooks from
-requirements and managed config layers.
+Admins can set `allow_managed_hooks_only = true` under `[hooks]` in
+`requirements.toml` to ignore user, project, and session hook configs while
+still allowing managed hooks from requirements and managed config layers.
 
 ## JSON Schema
 

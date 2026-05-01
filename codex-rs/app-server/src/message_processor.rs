@@ -65,6 +65,7 @@ use codex_arg0::Arg0DispatchPaths;
 use codex_chatgpt::connectors;
 use codex_core::StateDbHandle;
 use codex_core::ThreadManager;
+use codex_core::ThreadManagerPersistence;
 use codex_core::agent_graph_store_from_state_db;
 use codex_core::config::Config;
 use codex_core::thread_store_from_config;
@@ -301,9 +302,11 @@ impl MessageProcessor {
             session_source,
             environment_manager,
             Some(analytics_events_client.clone()),
-            state_db.clone(),
-            Arc::clone(&thread_store),
-            agent_graph_store.clone(),
+            ThreadManagerPersistence {
+                state_db: state_db.clone(),
+                thread_store: Arc::clone(&thread_store),
+                agent_graph_store: agent_graph_store.clone(),
+            },
         ));
         thread_manager
             .plugins_manager()

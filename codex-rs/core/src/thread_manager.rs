@@ -287,12 +287,20 @@ pub fn agent_graph_store_from_state_db(state_db: StateDbHandle) -> Arc<dyn Agent
     Arc::new(LocalAgentGraphStore::new(state_db))
 }
 
+/// Process-scoped persistence dependencies required by [`ThreadManager`].
+#[derive(Clone)]
+pub struct ThreadManagerPersistence {
+    pub state_db: StateDbHandle,
+    pub thread_store: Arc<dyn ThreadStore>,
+    pub agent_graph_store: Arc<dyn AgentGraphStore>,
+}
+
 fn state_db_from_roots_for_tests(
     codex_home: PathBuf,
     sqlite_home: PathBuf,
     default_model_provider_id: String,
 ) -> StateDbHandle {
-    std::thread::spawn(move || {
+    match std::thread::spawn(move || {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -302,8 +310,11 @@ fn state_db_from_roots_for_tests(
             })
     })
     .join()
-    .unwrap_or_else(|_| panic!("state db init thread panicked"))
-    .expect("test state db should initialize")
+    {
+        Ok(Some(state_db)) => state_db,
+        Ok(None) => panic!("test state db should initialize"),
+        Err(_) => panic!("state db init thread panicked"),
+    }
 }
 
 impl ThreadManager {
@@ -313,10 +324,13 @@ impl ThreadManager {
         session_source: SessionSource,
         environment_manager: Arc<EnvironmentManager>,
         analytics_events_client: Option<AnalyticsEventsClient>,
-        state_db: StateDbHandle,
-        thread_store: Arc<dyn ThreadStore>,
-        agent_graph_store: Arc<dyn AgentGraphStore>,
+        persistence: ThreadManagerPersistence,
     ) -> Self {
+        let ThreadManagerPersistence {
+            state_db,
+            thread_store,
+            agent_graph_store,
+        } = persistence;
         let codex_home = config.codex_home.clone();
         let restriction_product = session_source.restriction_product();
         let (thread_created_tx, _) = broadcast::channel(THREAD_CREATED_CHANNEL_CAPACITY);

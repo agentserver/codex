@@ -63,6 +63,8 @@ pub(crate) struct AppKeymap {
     pub(crate) clear_terminal: Vec<KeyBinding>,
     /// Toggle Vim mode for the composer input.
     pub(crate) toggle_vim_mode: Vec<KeyBinding>,
+    /// Toggle raw scrollback mode for copy-friendly transcript selection.
+    pub(crate) toggle_raw_output: Vec<KeyBinding>,
 }
 
 /// Chat-level keybindings evaluated at the app event layer.
@@ -369,6 +371,11 @@ impl RuntimeKeymap {
                 &defaults.app.toggle_vim_mode,
                 "tui.keymap.global.toggle_vim_mode",
             )?,
+            toggle_raw_output: resolve_bindings(
+                keymap.global.toggle_raw_output.as_ref(),
+                &defaults.app.toggle_raw_output,
+                "tui.keymap.global.toggle_raw_output",
+            )?,
         };
 
         let chat = ChatKeymap {
@@ -536,6 +543,7 @@ impl RuntimeKeymap {
                 copy: default_bindings![ctrl(KeyCode::Char('o'))],
                 clear_terminal: default_bindings![ctrl(KeyCode::Char('l'))],
                 toggle_vim_mode: default_bindings![],
+                toggle_raw_output: default_bindings![alt(KeyCode::Char('r'))],
             },
             chat: ChatKeymap {
                 decrease_reasoning_effort: default_bindings![alt(KeyCode::Char(','))],
@@ -727,6 +735,7 @@ impl RuntimeKeymap {
                 ("copy", self.app.copy.as_slice()),
                 ("clear_terminal", self.app.clear_terminal.as_slice()),
                 ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
+                ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
                 (
                     "chat.decrease_reasoning_effort",
                     self.chat.decrease_reasoning_effort.as_slice(),
@@ -767,6 +776,7 @@ impl RuntimeKeymap {
                 ("copy", self.app.copy.as_slice()),
                 ("clear_terminal", self.app.clear_terminal.as_slice()),
                 ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
+                ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
                 (
                     "chat.decrease_reasoning_effort",
                     self.chat.decrease_reasoning_effort.as_slice(),
@@ -808,6 +818,7 @@ impl RuntimeKeymap {
                 ("copy", self.app.copy.as_slice()),
                 ("clear_terminal", self.app.clear_terminal.as_slice()),
                 ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
+                ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
             ],
             [
                 ("list.move_up", self.list.move_up.as_slice()),
@@ -856,6 +867,7 @@ impl RuntimeKeymap {
                 ),
                 ("composer.submit", self.composer.submit.as_slice()),
                 ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
+                ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
                 (
                     "composer.history_search_previous",
                     self.composer.history_search_previous.as_slice(),
@@ -1796,6 +1808,28 @@ mod tests {
         keymap.composer.toggle_shortcuts = Some(KeybindingsSpec::Many(vec![]));
         let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
         assert!(runtime.composer.toggle_shortcuts.is_empty());
+    }
+
+    #[test]
+    fn raw_output_toggle_defaults_to_alt_r() {
+        let runtime = RuntimeKeymap::defaults();
+        assert_eq!(
+            runtime.app.toggle_raw_output,
+            vec![key_hint::alt(KeyCode::Char('r'))]
+        );
+    }
+
+    #[test]
+    fn raw_output_toggle_can_be_remapped() {
+        let mut keymap = TuiKeymap::default();
+        keymap.global.toggle_raw_output = Some(one("f12"));
+
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
+
+        assert_eq!(
+            runtime.app.toggle_raw_output,
+            vec![key_hint::plain(KeyCode::F(12))]
+        );
     }
 
     #[test]

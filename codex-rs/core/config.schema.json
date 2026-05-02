@@ -2455,6 +2455,7 @@
               "open_transcript": null,
               "queue": null,
               "submit": null,
+              "toggle_raw_output": null,
               "toggle_shortcuts": null,
               "toggle_vim_mode": null
             },
@@ -2552,6 +2553,11 @@
           ],
           "default": true,
           "description": "Enable desktop notifications from the TUI. Defaults to `true`."
+        },
+        "raw_output_mode": {
+          "default": false,
+          "description": "Start the TUI in raw scrollback mode for copy-friendly transcript output. Defaults to `false`.",
+          "type": "boolean"
         },
         "show_tooltips": {
           "default": true,
@@ -2935,6 +2941,14 @@
           ],
           "description": "Submit the current composer draft."
         },
+        "toggle_raw_output": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Toggle raw scrollback mode for copy-friendly transcript selection."
+        },
         "toggle_shortcuts": {
           "allOf": [
             {
@@ -3039,6 +3053,7 @@
             "open_transcript": null,
             "queue": null,
             "submit": null,
+            "toggle_raw_output": null,
             "toggle_shortcuts": null,
             "toggle_vim_mode": null
           }

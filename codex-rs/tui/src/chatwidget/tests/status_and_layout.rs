@@ -131,6 +131,47 @@ async fn token_usage_update_uses_runtime_context_window() {
         "expected /status to avoid raw config context window, got: {context_line}"
     );
 }
+
+#[tokio::test]
+async fn raw_output_status_line_value_only_shows_when_enabled() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    assert_eq!(
+        chat.status_line_value_for_item(crate::bottom_pane::StatusLineItem::RawOutput),
+        None
+    );
+
+    chat.set_raw_output_mode(/*enabled*/ true);
+
+    assert_eq!(
+        chat.status_line_value_for_item(crate::bottom_pane::StatusLineItem::RawOutput),
+        Some("raw output".to_string())
+    );
+}
+
+#[tokio::test]
+async fn raw_output_mode_can_change_without_inserting_notice() {
+    let (mut chat, mut rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.set_raw_output_mode(/*enabled*/ true);
+
+    assert!(chat.raw_output_mode());
+    assert!(drain_insert_history(&mut rx).is_empty());
+
+    chat.set_raw_output_mode_and_notify(/*enabled*/ false);
+
+    assert!(!chat.raw_output_mode());
+    let history = drain_insert_history(&mut rx)
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        history.contains("Raw output mode off: rich transcript rendering restored."),
+        "expected raw output notice, got {history:?}"
+    );
+}
+
 #[tokio::test]
 async fn helpers_are_available_and_do_not_panic() {
     let (tx_raw, _rx) = unbounded_channel::<AppEvent>();

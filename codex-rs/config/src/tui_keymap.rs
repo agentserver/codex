@@ -104,6 +104,8 @@ pub struct TuiGlobalKeymap {
     pub toggle_shortcuts: Option<KeybindingsSpec>,
     /// Toggle Vim mode for the composer input.
     pub toggle_vim_mode: Option<KeybindingsSpec>,
+    /// Toggle raw scrollback mode for copy-friendly transcript selection.
+    pub toggle_raw_output: Option<KeybindingsSpec>,
 }
 
 /// Chat context keybindings.

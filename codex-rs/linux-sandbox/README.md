@@ -78,9 +78,6 @@ commands that would enter the bubblewrap path.
   "**/*.env" = "none"
   ```
 
-  `glob_scan_max_depth` uses `rg --max-depth` semantics relative to the static
-  prefix before the first glob, so file path components count toward the limit.
-
 - When bubblewrap is active, symlink-in-path and non-existent protected paths inside
   writable roots are blocked by mounting `/dev/null` on the symlink or first
   missing component.

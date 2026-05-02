@@ -912,8 +912,6 @@ fn collect_glob_files(
     remaining_depth: Option<usize>,
     paths: &mut Vec<AbsolutePathBuf>,
 ) -> Result<()> {
-    // Keep the fallback aligned with `rg --max-depth`: the limit is measured
-    // from the static search root and includes the matched file component.
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();

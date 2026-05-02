@@ -1,8 +1,8 @@
 ---
 source: core/tests/suite/compact_remote.rs
-expression: "context_snapshot::format_request_body_diff_snapshot(\"After five varied turns, remote manual compaction reuses the last sampling request input and only appends the completed final-turn outputs.\",\n\"Last Normal /responses Request\", &last_turn_request,\n\"Remote /responses/compact Request\", &compact_request,\n&ContextSnapshotOptions::default(),)"
+expression: "context_snapshot::format_request_body_diff_snapshot(scenario,\n\"Last Normal /responses Request\", &last_turn_request,\n\"Remote /responses/compact Request\", &compact_request,\n&ContextSnapshotOptions::default(),)"
 ---
-Scenario: After five varied turns, remote manual compaction reuses the last sampling request input and only appends the completed final-turn outputs.
+Scenario: After five varied turns with API-key auth, remote manual compaction reuses the last sampling request input, strips compact-rejected fields including service_tier, and appends the completed final-turn outputs.
 
 --- Last Normal /responses Request
 +++ Remote /responses/compact Request
@@ -38,5 +38,6 @@ Scenario: After five varied turns, remote manual compaction reuses the last samp
 +      ],
 +      "role": "assistant",
 +      "type": "message"
+-  "service_tier": "priority",
 -  "store": false,
 -  "stream": true,

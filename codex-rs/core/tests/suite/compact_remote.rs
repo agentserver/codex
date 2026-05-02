@@ -409,21 +409,20 @@ async fn remote_compact_replaces_history_for_followups() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn remote_manual_compact_matches_last_sampling_request_after_varied_history() -> Result<()> {
-    skip_if_no_network!(Ok(()));
-
+async fn assert_remote_manual_compact_matches_last_sampling_request_after_varied_history(
+    auth: CodexAuth,
+    snapshot_name: &str,
+    scenario: &str,
+    normal_only_fields: &[&str],
+) -> Result<()> {
     // Phase 1: script five completed user turns with deliberately different output shapes. The
     // unsupported tool call and local shell call each add a continuation request, so the mock
     // captures seven normal `/responses` requests for five logical turns.
-    let harness = TestCodexHarness::with_builder(
-        test_codex()
-            .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
-            .with_config(|config| {
-                config.service_tier = Some(ServiceTier::Fast);
-            }),
-    )
-    .await?;
+    let harness =
+        TestCodexHarness::with_builder(test_codex().with_auth(auth).with_config(|config| {
+            config.service_tier = Some(ServiceTier::Fast);
+        }))
+        .await?;
     let codex = harness.test().codex.clone();
     let image_url =
         "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
@@ -597,11 +596,11 @@ async fn remote_manual_compact_matches_last_sampling_request_after_varied_histor
         .as_object_mut()
         .expect("compact request body should be an object")
         .remove("input");
-    for field in ["store", "stream", "include", "client_metadata"] {
+    for field in normal_only_fields {
         last_turn_body_without_input
             .as_object_mut()
             .expect("responses request body should be an object")
-            .remove(field);
+            .remove(*field);
     }
     assert_eq!(compact_body_without_input, last_turn_body_without_input);
     assert_eq!(
@@ -623,9 +622,9 @@ async fn remote_manual_compact_matches_last_sampling_request_after_varied_histor
     // change is append-only: final-turn reasoning and assistant output appear in compact because
     // the normal request was captured before those outputs existed.
     insta::assert_snapshot!(
-        "remote_manual_compact_varied_history_request_diff",
+        snapshot_name,
         context_snapshot::format_request_body_diff_snapshot(
-            "After five varied turns, remote manual compaction reuses the last sampling request input and only appends the completed final-turn outputs.",
+            scenario,
             "Last Normal /responses Request",
             &last_turn_request,
             "Remote /responses/compact Request",
@@ -637,82 +636,36 @@ async fn remote_manual_compact_matches_last_sampling_request_after_varied_histor
     Ok(())
 }
 
-async fn assert_remote_compact_service_tier_for_auth(
-    auth: CodexAuth,
-    expected_responses_service_tier: Option<&str>,
-    expected_compact_service_tier: Option<&str>,
-) -> Result<()> {
-    // Configure fast mode in both cases so auth mode is the only reason for the wire shape to
-    // include or omit `service_tier`.
-    let harness =
-        TestCodexHarness::with_builder(test_codex().with_auth(auth).with_config(|config| {
-            config.service_tier = Some(ServiceTier::Fast);
-        }))
-        .await?;
-    let codex = harness.test().codex.clone();
-    let responses_mock = responses::mount_sse_once(
-        harness.server(),
-        responses::sse(vec![
-            responses::ev_assistant_message("service-tier-assistant", "SERVICE_TIER_REPLY"),
-            responses::ev_completed("service-tier-response"),
-        ]),
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_manual_compact_varied_history_api_auth() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    assert_remote_manual_compact_matches_last_sampling_request_after_varied_history(
+        CodexAuth::from_api_key("dummy"),
+        "remote_manual_compact_varied_history_api_auth_request_diff",
+        "After five varied turns with API-key auth, remote manual compaction reuses the last sampling request input, strips compact-rejected fields including service_tier, and appends the completed final-turn outputs.",
+        &[
+            "store",
+            "stream",
+            "include",
+            "client_metadata",
+            "service_tier",
+        ],
     )
-    .await;
-    let compact_mock =
-        responses::mount_compact_user_history_with_summary_once(harness.server(), "SUMMARY").await;
-
-    codex
-        .submit(Op::UserInput {
-            environments: None,
-            items: vec![UserInput::Text {
-                text: "SERVICE_TIER_USER".to_string(),
-                text_elements: Vec::new(),
-            }],
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-        })
-        .await?;
-    wait_for_turn_complete(&codex).await;
-
-    codex.submit(Op::Compact).await?;
-    wait_for_turn_complete(&codex).await;
-
-    let normal_body = responses_mock.single_request().body_json();
-    let compact_body = compact_mock.single_request().body_json();
-
-    // Assert the normal sampling and remote compact requests together so parity drift is obvious.
-    assert_eq!(
-        json!({
-            "normal_responses_service_tier": normal_body
-                .get("service_tier")
-                .and_then(Value::as_str),
-            "remote_compact_service_tier": compact_body
-                .get("service_tier")
-                .and_then(Value::as_str),
-        }),
-        json!({
-            "normal_responses_service_tier": expected_responses_service_tier,
-            "remote_compact_service_tier": expected_compact_service_tier,
-        }),
-    );
+    .await?;
 
     Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn remote_compact_service_tier_matches_auth_mode() -> Result<()> {
+async fn remote_manual_compact_varied_history_chatgpt_auth() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    assert_remote_compact_service_tier_for_auth(
-        CodexAuth::from_api_key("dummy"),
-        Some("priority"),
-        None,
-    )
-    .await?;
-    assert_remote_compact_service_tier_for_auth(
+    assert_remote_manual_compact_matches_last_sampling_request_after_varied_history(
         CodexAuth::create_dummy_chatgpt_auth_for_testing(),
-        Some("priority"),
-        Some("priority"),
+        "remote_manual_compact_varied_history_chatgpt_auth_request_diff",
+        "After five varied turns with ChatGPT auth, remote manual compaction reuses the last sampling request input and only appends the completed final-turn outputs.",
+        &["store", "stream", "include", "client_metadata"],
     )
     .await?;
 

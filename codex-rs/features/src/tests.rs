@@ -1,5 +1,7 @@
+use crate::CommonFeatureConfigToml;
 use crate::Feature;
 use crate::FeatureConfigSource;
+use crate::FeatureConfigTable;
 use crate::FeatureOverrides;
 use crate::FeatureToml;
 use crate::Features;
@@ -312,19 +314,9 @@ fn apps_require_feature_flag_and_chatgpt_auth() {
 
 #[test]
 fn from_sources_applies_base_profile_and_overrides() {
-    let mut base_entries = BTreeMap::new();
-    base_entries.insert("plugins".to_string(), true);
-    let base_features = FeaturesToml {
-        entries: base_entries,
-        ..Default::default()
-    };
-
-    let mut profile_entries = BTreeMap::new();
-    profile_entries.insert("code_mode_only".to_string(), true);
-    let profile_features = FeaturesToml {
-        entries: profile_entries,
-        ..Default::default()
-    };
+    let base_features = FeaturesToml::from(BTreeMap::from([("plugins".to_string(), true)]));
+    let profile_features =
+        FeaturesToml::from(BTreeMap::from([("code_mode_only".to_string(), true)]));
 
     let features = Features::from_sources(
         FeatureConfigSource {
@@ -416,7 +408,10 @@ multi_agent_v2 = true
         features.entries(),
         BTreeMap::from([("multi_agent_v2".to_string(), true)])
     );
-    assert_eq!(features.multi_agent_v2, Some(FeatureToml::Enabled(true)));
+    assert_eq!(
+        features.get("multi_agent_v2"),
+        Some(&FeatureToml::Enabled(true))
+    );
 }
 
 #[test]
@@ -425,6 +420,7 @@ fn multi_agent_v2_feature_config_deserializes_table() {
         r#"
 [multi_agent_v2]
 enabled = true
+hint = "Use this feature carefully."
 max_concurrent_threads_per_session = 4
 min_wait_timeout_ms = 2500
 usage_hint_enabled = false
@@ -441,9 +437,49 @@ hide_spawn_agent_metadata = true
         BTreeMap::from([("multi_agent_v2".to_string(), true)])
     );
     assert_eq!(
-        features.multi_agent_v2,
-        Some(crate::FeatureToml::Config(crate::MultiAgentV2ConfigToml {
-            enabled: Some(true),
+        features.get("multi_agent_v2"),
+        Some(&FeatureToml::Config(FeatureConfigTable {
+            common: CommonFeatureConfigToml {
+                enabled: Some(true),
+                hint: Some("Use this feature carefully.".to_string()),
+            },
+            extra: BTreeMap::from([
+                (
+                    "hide_spawn_agent_metadata".to_string(),
+                    TomlValue::Boolean(true),
+                ),
+                (
+                    "max_concurrent_threads_per_session".to_string(),
+                    TomlValue::Integer(4),
+                ),
+                ("min_wait_timeout_ms".to_string(), TomlValue::Integer(2500)),
+                (
+                    "root_agent_usage_hint_text".to_string(),
+                    TomlValue::String("Root guidance.".to_string()),
+                ),
+                (
+                    "subagent_usage_hint_text".to_string(),
+                    TomlValue::String("Subagent guidance.".to_string()),
+                ),
+                ("usage_hint_enabled".to_string(), TomlValue::Boolean(false),),
+                (
+                    "usage_hint_text".to_string(),
+                    TomlValue::String("Custom delegation guidance.".to_string()),
+                ),
+            ]),
+        }))
+    );
+    let typed = features
+        .typed_config::<crate::MultiAgentV2ConfigToml>("multi_agent_v2")
+        .expect("table feature should expose a typed config")
+        .expect("multi_agent_v2 config should deserialize");
+    assert_eq!(
+        typed.common.hint.as_deref(),
+        Some("Use this feature carefully.")
+    );
+    assert_eq!(
+        typed.extra,
+        crate::MultiAgentV2ConfigToml {
             max_concurrent_threads_per_session: Some(4),
             min_wait_timeout_ms: Some(2500),
             usage_hint_enabled: Some(false),
@@ -451,7 +487,7 @@ hide_spawn_agent_metadata = true
             root_agent_usage_hint_text: Some("Root guidance.".to_string()),
             subagent_usage_hint_text: Some("Subagent guidance.".to_string()),
             hide_spawn_agent_metadata: Some(true),
-        }))
+        }
     );
 }
 
@@ -476,17 +512,27 @@ usage_hint_enabled = false
     assert_eq!(features.enabled(Feature::MultiAgentV2), false);
     assert_eq!(features_toml.entries(), BTreeMap::new());
     assert_eq!(
-        features_toml.multi_agent_v2,
-        Some(crate::FeatureToml::Config(crate::MultiAgentV2ConfigToml {
-            enabled: None,
-            max_concurrent_threads_per_session: None,
-            min_wait_timeout_ms: None,
-            usage_hint_enabled: Some(false),
-            usage_hint_text: None,
-            root_agent_usage_hint_text: None,
-            subagent_usage_hint_text: None,
-            hide_spawn_agent_metadata: None,
+        features_toml.get("multi_agent_v2"),
+        Some(&crate::FeatureToml::Config(FeatureConfigTable {
+            common: CommonFeatureConfigToml::default(),
+            extra: BTreeMap::from([("usage_hint_enabled".to_string(), TomlValue::Boolean(false),)]),
         }))
+    );
+}
+
+#[test]
+fn apps_mcp_path_override_path_still_enables_feature() {
+    let features_toml: FeaturesToml = toml::from_str(
+        r#"
+[apps_mcp_path_override]
+path = "/custom/mcp"
+"#,
+    )
+    .expect("features table should deserialize");
+
+    assert_eq!(
+        features_toml.entries(),
+        BTreeMap::from([("apps_mcp_path_override".to_string(), true)])
     );
 }
 
@@ -497,15 +543,25 @@ fn materialize_resolved_enabled_writes_all_features_and_preserves_custom_config(
     features.enable(Feature::MultiAgentV2);
     features.disable(Feature::ToolSearch);
 
-    let mut features_toml = FeaturesToml {
-        multi_agent_v2: Some(FeatureToml::Config(crate::MultiAgentV2ConfigToml {
-            enabled: Some(false),
-            min_wait_timeout_ms: Some(2500),
-            ..Default::default()
-        })),
-        entries: BTreeMap::from([("include_apply_patch_tool".to_string(), true)]),
-        ..Default::default()
-    };
+    let mut features_toml = FeaturesToml::from_entries(BTreeMap::from([
+        (
+            "multi_agent_v2".to_string(),
+            FeatureToml::Config(FeatureConfigTable {
+                common: CommonFeatureConfigToml {
+                    enabled: Some(false),
+                    hint: Some("Preserve me.".to_string()),
+                },
+                extra: BTreeMap::from([(
+                    "min_wait_timeout_ms".to_string(),
+                    TomlValue::Integer(2500),
+                )]),
+            }),
+        ),
+        (
+            "include_apply_patch_tool".to_string(),
+            FeatureToml::Enabled(true),
+        ),
+    ]));
 
     features_toml.materialize_resolved_enabled(&features);
 
@@ -520,11 +576,13 @@ fn materialize_resolved_enabled_writes_all_features_and_preserves_custom_config(
         );
     }
     assert_eq!(
-        features_toml.multi_agent_v2,
-        Some(FeatureToml::Config(crate::MultiAgentV2ConfigToml {
-            enabled: Some(true),
-            min_wait_timeout_ms: Some(2500),
-            ..Default::default()
+        features_toml.get("multi_agent_v2"),
+        Some(&FeatureToml::Config(FeatureConfigTable {
+            common: CommonFeatureConfigToml {
+                enabled: Some(true),
+                hint: Some("Preserve me.".to_string()),
+            },
+            extra: BTreeMap::from([("min_wait_timeout_ms".to_string(), TomlValue::Integer(2500),)]),
         }))
     );
     let replayed = Features::from_sources(
@@ -539,9 +597,59 @@ fn materialize_resolved_enabled_writes_all_features_and_preserves_custom_config(
 }
 
 #[test]
+fn generic_feature_config_deserializes_hint_without_per_feature_wiring() {
+    let features: FeaturesToml = toml::from_str(
+        r#"
+[some_feature]
+enabled = true
+hint = "Remember {{ features.multi_agent_v2.max_concurrent_threads_per_session }}"
+"#,
+    )
+    .expect("features table should deserialize");
+
+    assert_eq!(
+        features.entries(),
+        BTreeMap::from([("some_feature".to_string(), true)])
+    );
+    assert_eq!(
+        features.get("some_feature"),
+        Some(&FeatureToml::Config(FeatureConfigTable {
+            common: CommonFeatureConfigToml {
+                enabled: Some(true),
+                hint: Some(
+                    "Remember {{ features.multi_agent_v2.max_concurrent_threads_per_session }}"
+                        .to_string(),
+                ),
+            },
+            extra: BTreeMap::new(),
+        }))
+    );
+    assert_eq!(
+        features.hint("some_feature"),
+        Some("Remember {{ features.multi_agent_v2.max_concurrent_threads_per_session }}")
+    );
+}
+
+#[test]
 fn unstable_warning_event_only_mentions_enabled_under_development_features() {
     let mut configured_features = Table::new();
-    configured_features.insert("child_agents_md".to_string(), TomlValue::Boolean(true));
+    configured_features.insert(
+        "child_agents_md".to_string(),
+        TomlValue::Table(Table::from_iter([
+            ("enabled".to_string(), TomlValue::Boolean(true)),
+            (
+                "hint".to_string(),
+                TomlValue::String("Use child_agents_md".to_string()),
+            ),
+        ])),
+    );
+    configured_features.insert(
+        "code_mode".to_string(),
+        TomlValue::Table(Table::from_iter([(
+            "enabled".to_string(),
+            TomlValue::Boolean(false),
+        )])),
+    );
     configured_features.insert("personality".to_string(), TomlValue::Boolean(true));
     configured_features.insert("unknown".to_string(), TomlValue::Boolean(true));
 
@@ -560,6 +668,8 @@ fn unstable_warning_event_only_mentions_enabled_under_development_features() {
         panic!("expected warning event");
     };
     assert!(message.contains("child_agents_md"));
+    assert!(!message.contains("code_mode"));
     assert!(!message.contains("personality"));
+    assert!(!message.contains("unknown"));
     assert!(message.contains("/tmp/config.toml"));
 }

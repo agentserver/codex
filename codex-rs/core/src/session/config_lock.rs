@@ -4,7 +4,6 @@ use codex_config::config_toml::ConfigToml;
 use codex_config::types::MemoriesToml;
 use codex_features::AppsMcpPathOverrideConfigToml;
 use codex_features::Feature;
-use codex_features::FeatureToml;
 use codex_features::FeaturesToml;
 use codex_features::MultiAgentV2ConfigToml;
 use codex_protocol::ThreadId;
@@ -143,14 +142,20 @@ fn save_config_resolved_fields(
         .features
         .get_or_insert_with(FeaturesToml::default);
     features.materialize_resolved_enabled(config.features.get());
-    let mut multi_agent_v2: MultiAgentV2ConfigToml =
+    let multi_agent_v2: MultiAgentV2ConfigToml =
         resolved_config_to_toml(&config.multi_agent_v2, "features.multi_agent_v2")?;
-    multi_agent_v2.enabled = Some(config.features.enabled(Feature::MultiAgentV2));
-    features.multi_agent_v2 = Some(FeatureToml::Config(multi_agent_v2));
-    features.apps_mcp_path_override = Some(FeatureToml::Config(AppsMcpPathOverrideConfigToml {
-        enabled: Some(config.features.enabled(Feature::AppsMcpPathOverride)),
-        path: config.apps_mcp_path_override.clone(),
-    }));
+    features.materialize_resolved_config(
+        Feature::MultiAgentV2,
+        config.features.enabled(Feature::MultiAgentV2),
+        multi_agent_v2,
+    )?;
+    features.materialize_resolved_config(
+        Feature::AppsMcpPathOverride,
+        config.features.enabled(Feature::AppsMcpPathOverride),
+        AppsMcpPathOverrideConfigToml {
+            path: config.apps_mcp_path_override.clone(),
+        },
+    )?;
     lock_config.memories = Some(resolved_config_to_toml::<MemoriesToml>(
         &config.memories,
         "memories",
@@ -253,20 +258,31 @@ mod tests {
         }
 
         let multi_agent_v2 = features
-            .multi_agent_v2
-            .as_ref()
+            .get(Feature::MultiAgentV2.key())
             .expect("multi_agent_v2 config should be materialized");
         assert!(matches!(
             multi_agent_v2,
-            FeatureToml::Config(MultiAgentV2ConfigToml {
-                enabled: Some(false),
-                max_concurrent_threads_per_session: Some(_),
-                min_wait_timeout_ms: Some(_),
-                usage_hint_enabled: Some(_),
-                hide_spawn_agent_metadata: Some(_),
+            FeatureToml::Config(FeatureConfigTable {
+                common: CommonFeatureConfigToml {
+                    enabled: Some(false),
+                    ..
+                },
                 ..
             })
         ));
+        let multi_agent_v2 = features
+            .typed_config::<MultiAgentV2ConfigToml>(Feature::MultiAgentV2.key())
+            .expect("multi_agent_v2 config should parse")
+            .expect("multi_agent_v2 config should deserialize");
+        assert!(
+            multi_agent_v2
+                .extra
+                .max_concurrent_threads_per_session
+                .is_some()
+        );
+        assert!(multi_agent_v2.extra.min_wait_timeout_ms.is_some());
+        assert!(multi_agent_v2.extra.usage_hint_enabled.is_some());
+        assert!(multi_agent_v2.extra.hide_spawn_agent_metadata.is_some());
 
         assert_eq!(lockfile.version, crate::config_lock::CONFIG_LOCK_VERSION);
     }

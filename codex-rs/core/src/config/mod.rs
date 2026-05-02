@@ -62,8 +62,8 @@ use codex_exec_server::LOCAL_FS;
 use codex_features::AppsMcpPathOverrideConfigToml;
 use codex_features::Feature;
 use codex_features::FeatureConfigSource;
+use codex_features::FeatureConfigTable;
 use codex_features::FeatureOverrides;
-use codex_features::FeatureToml;
 use codex_features::Features;
 use codex_features::FeaturesToml;
 use codex_features::MultiAgentV2ConfigToml;
@@ -1876,44 +1876,66 @@ fn resolve_web_search_config(
 fn resolve_multi_agent_v2_config(
     config_toml: &ConfigToml,
     config_profile: &ConfigProfile,
-) -> MultiAgentV2Config {
-    let base = multi_agent_v2_toml_config(config_toml.features.as_ref());
-    let profile = multi_agent_v2_toml_config(config_profile.features.as_ref());
+) -> std::io::Result<MultiAgentV2Config> {
+    let base = multi_agent_v2_toml_config(config_toml.features.as_ref())?;
+    let profile = multi_agent_v2_toml_config(config_profile.features.as_ref())?;
     let default = MultiAgentV2Config::default();
 
     let max_concurrent_threads_per_session = profile
+        .as_ref()
         .and_then(|config| config.max_concurrent_threads_per_session)
-        .or_else(|| base.and_then(|config| config.max_concurrent_threads_per_session))
+        .or_else(|| {
+            base.as_ref()
+                .and_then(|config| config.max_concurrent_threads_per_session)
+        })
         .unwrap_or(default.max_concurrent_threads_per_session);
     let min_wait_timeout_ms = profile
+        .as_ref()
         .and_then(|config| config.min_wait_timeout_ms)
-        .or_else(|| base.and_then(|config| config.min_wait_timeout_ms))
+        .or_else(|| base.as_ref().and_then(|config| config.min_wait_timeout_ms))
         .unwrap_or(default.min_wait_timeout_ms);
     let usage_hint_enabled = profile
+        .as_ref()
         .and_then(|config| config.usage_hint_enabled)
-        .or_else(|| base.and_then(|config| config.usage_hint_enabled))
+        .or_else(|| base.as_ref().and_then(|config| config.usage_hint_enabled))
         .unwrap_or(default.usage_hint_enabled);
     let usage_hint_text = profile
+        .as_ref()
         .and_then(|config| config.usage_hint_text.as_ref())
-        .or_else(|| base.and_then(|config| config.usage_hint_text.as_ref()))
+        .or_else(|| {
+            base.as_ref()
+                .and_then(|config| config.usage_hint_text.as_ref())
+        })
         .cloned()
         .or(default.usage_hint_text);
     let root_agent_usage_hint_text = profile
+        .as_ref()
         .and_then(|config| config.root_agent_usage_hint_text.as_ref())
-        .or_else(|| base.and_then(|config| config.root_agent_usage_hint_text.as_ref()))
+        .or_else(|| {
+            base.as_ref()
+                .and_then(|config| config.root_agent_usage_hint_text.as_ref())
+        })
         .cloned()
         .or(default.root_agent_usage_hint_text);
     let subagent_usage_hint_text = profile
+        .as_ref()
         .and_then(|config| config.subagent_usage_hint_text.as_ref())
-        .or_else(|| base.and_then(|config| config.subagent_usage_hint_text.as_ref()))
+        .or_else(|| {
+            base.as_ref()
+                .and_then(|config| config.subagent_usage_hint_text.as_ref())
+        })
         .cloned()
         .or(default.subagent_usage_hint_text);
     let hide_spawn_agent_metadata = profile
+        .as_ref()
         .and_then(|config| config.hide_spawn_agent_metadata)
-        .or_else(|| base.and_then(|config| config.hide_spawn_agent_metadata))
+        .or_else(|| {
+            base.as_ref()
+                .and_then(|config| config.hide_spawn_agent_metadata)
+        })
         .unwrap_or(default.hide_spawn_agent_metadata);
 
-    MultiAgentV2Config {
+    Ok(MultiAgentV2Config {
         max_concurrent_threads_per_session,
         min_wait_timeout_ms,
         usage_hint_enabled,
@@ -1921,7 +1943,7 @@ fn resolve_multi_agent_v2_config(
         root_agent_usage_hint_text,
         subagent_usage_hint_text,
         hide_spawn_agent_metadata,
-    }
+    })
 }
 
 fn resolve_terminal_resize_reflow_config(config_toml: &ConfigToml) -> TerminalResizeReflowConfig {
@@ -1938,19 +1960,37 @@ fn resolve_terminal_resize_reflow_config(config_toml: &ConfigToml) -> TerminalRe
     }
 }
 
-fn multi_agent_v2_toml_config(features: Option<&FeaturesToml>) -> Option<&MultiAgentV2ConfigToml> {
-    match features?.multi_agent_v2.as_ref()? {
-        FeatureToml::Enabled(_) => None,
-        FeatureToml::Config(config) => Some(config),
-    }
+fn multi_agent_v2_toml_config(
+    features: Option<&FeaturesToml>,
+) -> std::io::Result<Option<MultiAgentV2ConfigToml>> {
+    typed_feature_config::<MultiAgentV2ConfigToml>(features, Feature::MultiAgentV2.key())
+        .map(|config| config.map(|config| config.extra))
 }
 
 fn apps_mcp_path_override_toml_config(
     features: Option<&FeaturesToml>,
-) -> Option<&AppsMcpPathOverrideConfigToml> {
-    match features?.apps_mcp_path_override.as_ref()? {
-        FeatureToml::Enabled(_) => None,
-        FeatureToml::Config(config) => Some(config),
+) -> std::io::Result<Option<AppsMcpPathOverrideConfigToml>> {
+    typed_feature_config::<AppsMcpPathOverrideConfigToml>(
+        features,
+        Feature::AppsMcpPathOverride.key(),
+    )
+    .map(|config| config.map(|config| config.extra))
+}
+
+fn typed_feature_config<T>(
+    features: Option<&FeaturesToml>,
+    key: &'static str,
+) -> std::io::Result<Option<FeatureConfigTable<T>>>
+where
+    T: serde::de::DeserializeOwned,
+{
+    match features.and_then(|features| features.typed_config(key)) {
+        Some(Ok(config)) => Ok(Some(config)),
+        Some(Err(err)) => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("invalid features.{key} config: {err}"),
+        )),
+        None => Ok(None),
     }
 }
 
@@ -2476,13 +2516,14 @@ impl Config {
         let web_search_mode = resolve_web_search_mode(&cfg, &config_profile, &features)
             .unwrap_or(WebSearchMode::Cached);
         let web_search_config = resolve_web_search_config(&cfg, &config_profile);
-        let multi_agent_v2 = resolve_multi_agent_v2_config(&cfg, &config_profile);
+        let multi_agent_v2 = resolve_multi_agent_v2_config(&cfg, &config_profile)?;
         let apps_mcp_path_override = if features.enabled(Feature::AppsMcpPathOverride) {
-            let base = apps_mcp_path_override_toml_config(cfg.features.as_ref());
-            let profile = apps_mcp_path_override_toml_config(config_profile.features.as_ref());
+            let base = apps_mcp_path_override_toml_config(cfg.features.as_ref())?;
+            let profile = apps_mcp_path_override_toml_config(config_profile.features.as_ref())?;
             profile
+                .as_ref()
                 .and_then(|config| config.path.as_ref())
-                .or_else(|| base.and_then(|config| config.path.as_ref()))
+                .or_else(|| base.as_ref().and_then(|config| config.path.as_ref()))
                 .cloned()
         } else {
             None

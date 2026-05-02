@@ -527,7 +527,9 @@ impl ConfigDocument {
             }),
             ConfigEdit::SetServiceTier { service_tier } => Ok(self.write_profile_value(
                 &["service_tier"],
-                service_tier.map(|service_tier| value(service_tier.to_string())),
+                service_tier
+                    .as_ref()
+                    .map(|service_tier| value(service_tier.to_string())),
             )),
             ConfigEdit::SetModelPersonality { personality } => Ok(self.write_profile_value(
                 &["personality"],

@@ -919,7 +919,7 @@ impl Session {
                     thread_name: session_configuration.thread_name.clone(),
                     model: session_configuration.collaboration_mode.model().to_string(),
                     model_provider_id: config.model_provider_id.clone(),
-                    service_tier: session_configuration.service_tier,
+                    service_tier: session_configuration.service_tier.clone(),
                     approval_policy: session_configuration.approval_policy.value(),
                     approvals_reviewer: session_configuration.approvals_reviewer,
                     permission_profile: session_configuration.permission_profile(),

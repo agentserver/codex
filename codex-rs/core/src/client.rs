@@ -1206,7 +1206,7 @@ impl ModelClientSession {
                 model_info,
                 effort,
                 summary,
-                service_tier,
+                service_tier.clone(),
             )?;
             let inference_trace_attempt = inference_trace.start_attempt();
             inference_trace_attempt.record_started(&request);
@@ -1312,7 +1312,7 @@ impl ModelClientSession {
                 model_info,
                 effort,
                 summary,
-                service_tier,
+                service_tier.clone(),
             )?;
             let mut ws_payload = ResponseCreateWsRequest {
                 client_metadata: response_create_client_metadata(
@@ -1521,7 +1521,7 @@ impl ModelClientSession {
                             session_telemetry,
                             effort,
                             summary,
-                            service_tier,
+                            service_tier.clone(),
                             turn_metadata_header,
                             /*warmup*/ false,
                             request_trace,
@@ -1542,7 +1542,7 @@ impl ModelClientSession {
                     session_telemetry,
                     effort,
                     summary,
-                    service_tier,
+                    service_tier.clone(),
                     turn_metadata_header,
                     inference_trace,
                 )

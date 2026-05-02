@@ -1,5 +1,5 @@
 use super::*;
-use crate::guardian::ApprovalRequest;
+use crate::guardian::GuardianApprovalRequest;
 use crate::tools::sandboxing::SandboxAttempt;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::AdditionalPermissionProfile;
@@ -70,7 +70,7 @@ fn guardian_review_request_includes_patch_context() {
 
     assert_eq!(
         guardian_request,
-        ApprovalRequest::ApplyPatch {
+        GuardianApprovalRequest::ApplyPatch {
             id: "call-1".to_string(),
             cwd: expected_cwd,
             files: request.file_paths,

@@ -4,7 +4,7 @@
 //! selected turn environment filesystem for both local and remote turns, with
 //! sandboxing enforced by the explicit filesystem sandbox context.
 use crate::exec::is_likely_sandbox_denied;
-use crate::guardian::ApprovalRequest;
+use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::review_approval_request;
 use crate::tools::sandboxing::Approvable;
 use crate::tools::sandboxing::ApprovalCtx;
@@ -51,8 +51,8 @@ impl ApplyPatchRuntime {
         Self
     }
 
-    fn build_approval_request(req: &ApplyPatchRequest, call_id: &str) -> ApprovalRequest {
-        ApprovalRequest::ApplyPatch {
+    fn build_approval_request(req: &ApplyPatchRequest, call_id: &str) -> GuardianApprovalRequest {
+        GuardianApprovalRequest::ApplyPatch {
             id: call_id.to_string(),
             cwd: req.action.cwd.clone(),
             files: req.file_paths.clone(),
@@ -179,7 +179,7 @@ impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
         &self,
         req: &ApplyPatchRequest,
         ctx: &ApprovalCtx<'_>,
-    ) -> Option<ApprovalRequest> {
+    ) -> Option<GuardianApprovalRequest> {
         Some(Self::build_approval_request(req, ctx.call_id))
     }
 }

@@ -17,7 +17,7 @@ use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
 use crate::config::load_global_mcp_servers;
 use crate::connectors;
-use crate::guardian::ApprovalRequest;
+use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::GuardianMcpAnnotations;
 use crate::guardian::MCP_TOOL_APPROVAL_ACCEPT;
 use crate::guardian::MCP_TOOL_APPROVAL_ACCEPT_AND_REMEMBER;
@@ -884,7 +884,7 @@ fn with_mcp_tool_call_thread_id_meta(
 
 struct McpToolApprovalElicitationRequest<'a> {
     server: &'a str,
-    approval_request: &'a ApprovalRequest,
+    approval_request: &'a GuardianApprovalRequest,
     tool_params: Option<&'a serde_json::Value>,
     tool_params_display: Option<&'a [RenderedMcpToolApprovalParam]>,
     question: RequestUserInputQuestion,
@@ -1155,8 +1155,8 @@ pub(crate) fn build_mcp_tool_approval_request(
     hook_tool_name: &str,
     invocation: &McpInvocation,
     metadata: Option<&McpToolApprovalMetadata>,
-) -> ApprovalRequest {
-    ApprovalRequest::McpToolCall {
+) -> GuardianApprovalRequest {
+    GuardianApprovalRequest::McpToolCall {
         id: call_id.to_string(),
         server: invocation.server.clone(),
         tool_name: invocation.tool.clone(),

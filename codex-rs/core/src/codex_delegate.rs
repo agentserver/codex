@@ -31,7 +31,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
 use crate::environment_selection::ResolvedTurnEnvironments;
-use crate::guardian::ApprovalRequest;
+use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::is_mcp_tool_approval_question_id;
 use crate::guardian::new_guardian_review_id;
 use crate::guardian::routes_approval_to_guardian;
@@ -450,7 +450,7 @@ async fn handle_exec_approval(
         ..
     } = event;
     let hook_command = shlex_join(&command);
-    let approval_request = ApprovalRequest::Shell {
+    let approval_request = GuardianApprovalRequest::Shell {
         id: call_id.clone(),
         command,
         hook_command,
@@ -555,7 +555,7 @@ async fn handle_patch_approval(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let approval_request = ApprovalRequest::ApplyPatch {
+    let approval_request = GuardianApprovalRequest::ApplyPatch {
         id: approval_id.clone(),
         cwd: parent_ctx.cwd.clone(),
         files: changes

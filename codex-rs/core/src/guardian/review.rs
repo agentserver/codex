@@ -24,9 +24,9 @@ use tokio_util::sync::CancellationToken;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 
-use super::ApprovalRequest;
 use super::GUARDIAN_REVIEW_TIMEOUT;
 use super::GUARDIAN_REVIEWER_NAME;
+use super::GuardianApprovalRequest;
 use super::GuardianAssessment;
 use super::GuardianAssessmentOutcome;
 use super::GuardianRejection;
@@ -234,7 +234,7 @@ async fn run_guardian_review(
     session: Arc<Session>,
     turn: Arc<TurnContext>,
     review_id: String,
-    request: ApprovalRequest,
+    request: GuardianApprovalRequest,
     retry_reason: Option<String>,
     approval_request_source: GuardianApprovalRequestSource,
     external_cancel: Option<CancellationToken>,
@@ -523,7 +523,7 @@ pub(crate) async fn review_approval_request(
     session: &Arc<Session>,
     turn: &Arc<TurnContext>,
     review_id: String,
-    request: ApprovalRequest,
+    request: GuardianApprovalRequest,
     retry_reason: Option<String>,
 ) -> ReviewDecision {
     // Box the delegated review future so callers do not inline the entire
@@ -544,7 +544,7 @@ pub(crate) async fn review_approval_request_with_cancel(
     session: &Arc<Session>,
     turn: &Arc<TurnContext>,
     review_id: String,
-    request: ApprovalRequest,
+    request: GuardianApprovalRequest,
     retry_reason: Option<String>,
     approval_request_source: GuardianApprovalRequestSource,
     cancel_token: CancellationToken,
@@ -565,7 +565,7 @@ pub(crate) fn spawn_approval_request_review(
     session: Arc<Session>,
     turn: Arc<TurnContext>,
     review_id: String,
-    request: ApprovalRequest,
+    request: GuardianApprovalRequest,
     retry_reason: Option<String>,
     approval_request_source: GuardianApprovalRequestSource,
     cancel_token: CancellationToken,
@@ -610,7 +610,7 @@ pub(crate) fn spawn_approval_request_review(
 pub(super) async fn run_guardian_review_session(
     session: Arc<Session>,
     turn: Arc<TurnContext>,
-    request: ApprovalRequest,
+    request: GuardianApprovalRequest,
     retry_reason: Option<String>,
     schema: serde_json::Value,
     external_cancel: Option<CancellationToken>,

@@ -1,6 +1,6 @@
 use super::*;
 use crate::config::ConfigBuilder;
-use crate::guardian::ApprovalRequest;
+use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::GuardianMcpAnnotations;
 use crate::guardian::MCP_TOOL_APPROVAL_CANCEL;
 use crate::guardian::MCP_TOOL_APPROVAL_CONNECTOR_DESCRIPTION_KEY;
@@ -123,7 +123,7 @@ fn approval_prompt_request(
     tool_name: &str,
     arguments: Option<serde_json::Value>,
     metadata: Option<&McpToolApprovalMetadata>,
-) -> ApprovalRequest {
+) -> GuardianApprovalRequest {
     build_mcp_tool_approval_request(
         "call-1",
         tool_name,
@@ -1257,7 +1257,7 @@ fn guardian_mcp_review_request_includes_invocation_metadata() {
 
     assert_eq!(
         request,
-        ApprovalRequest::McpToolCall {
+        GuardianApprovalRequest::McpToolCall {
             id: "call-1".to_string(),
             server: CODEX_APPS_MCP_SERVER_NAME.to_string(),
             tool_name: "browser_navigate".to_string(),
@@ -1299,7 +1299,7 @@ fn guardian_mcp_review_request_includes_annotations_when_present() {
 
     assert_eq!(
         request,
-        ApprovalRequest::McpToolCall {
+        GuardianApprovalRequest::McpToolCall {
             id: "call-1".to_string(),
             server: "custom_server".to_string(),
             tool_name: "dangerous_tool".to_string(),

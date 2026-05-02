@@ -7,7 +7,7 @@ the process manager to spawn PTYs once an ExecRequest is prepared.
 use crate::command_canonicalization::canonicalize_command_for_approval;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
-use crate::guardian::ApprovalRequest;
+use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::GuardianNetworkAccessTrigger;
 use crate::guardian::review_approval_request;
 use crate::sandboxing::ExecOptions;
@@ -110,8 +110,11 @@ impl<'a> UnifiedExecRuntime<'a> {
         }
     }
 
-    fn build_approval_request(req: &UnifiedExecRequest, call_id: String) -> ApprovalRequest {
-        ApprovalRequest::ExecCommand {
+    fn build_approval_request(
+        req: &UnifiedExecRequest,
+        call_id: String,
+    ) -> GuardianApprovalRequest {
+        GuardianApprovalRequest::ExecCommand {
             id: call_id,
             command: req.command.clone(),
             hook_command: req.hook_command.clone(),
@@ -202,7 +205,7 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
         &self,
         req: &UnifiedExecRequest,
         ctx: &ApprovalCtx<'_>,
-    ) -> Option<ApprovalRequest> {
+    ) -> Option<GuardianApprovalRequest> {
         Some(Self::build_approval_request(req, ctx.call_id.to_string()))
     }
 

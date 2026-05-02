@@ -37,7 +37,7 @@ use crate::tools::sandboxing::PermissionRequestPayload;
 /// guardian review, approval hooks, and user-prompt transports deriving their
 /// own projections from it.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum ApprovalRequest {
+pub(crate) enum GuardianApprovalRequest {
     Shell {
         id: String,
         command: Vec<String>,
@@ -140,7 +140,7 @@ pub(crate) const MCP_TOOL_APPROVAL_TOOL_DESCRIPTION_KEY: &str = "tool_descriptio
 pub(crate) const MCP_TOOL_APPROVAL_TOOL_PARAMS_KEY: &str = "tool_params";
 pub(crate) const MCP_TOOL_APPROVAL_TOOL_PARAMS_DISPLAY_KEY: &str = "tool_params_display";
 
-impl ApprovalRequest {
+impl GuardianApprovalRequest {
     pub(crate) fn permission_request_payload(&self) -> Option<PermissionRequestPayload> {
         match self {
             Self::Shell {
@@ -838,10 +838,10 @@ pub(crate) struct FormattedGuardianAction {
 }
 
 pub(crate) fn guardian_approval_request_to_json(
-    action: &ApprovalRequest,
+    action: &GuardianApprovalRequest,
 ) -> serde_json::Result<Value> {
     match action {
-        ApprovalRequest::Shell {
+        GuardianApprovalRequest::Shell {
             id: _,
             command,
             cwd,
@@ -858,7 +858,7 @@ pub(crate) fn guardian_approval_request_to_json(
             justification.as_ref(),
             /*tty*/ None,
         ),
-        ApprovalRequest::ExecCommand {
+        GuardianApprovalRequest::ExecCommand {
             id: _,
             command,
             cwd,
@@ -877,7 +877,7 @@ pub(crate) fn guardian_approval_request_to_json(
             Some(*tty),
         ),
         #[cfg(unix)]
-        ApprovalRequest::Execve {
+        GuardianApprovalRequest::Execve {
             id: _,
             source,
             program,
@@ -891,7 +891,7 @@ pub(crate) fn guardian_approval_request_to_json(
             cwd,
             additional_permissions: additional_permissions.as_ref(),
         }),
-        ApprovalRequest::ApplyPatch {
+        GuardianApprovalRequest::ApplyPatch {
             id: _,
             cwd,
             files,
@@ -903,7 +903,7 @@ pub(crate) fn guardian_approval_request_to_json(
             "files": files,
             "patch": patch,
         })),
-        ApprovalRequest::NetworkAccess {
+        GuardianApprovalRequest::NetworkAccess {
             id: _,
             turn_id: _,
             target,
@@ -920,7 +920,7 @@ pub(crate) fn guardian_approval_request_to_json(
             port: *port,
             trigger: trigger.as_ref(),
         }),
-        ApprovalRequest::McpToolCall {
+        GuardianApprovalRequest::McpToolCall {
             id: _,
             server,
             tool_name,
@@ -944,7 +944,7 @@ pub(crate) fn guardian_approval_request_to_json(
             tool_description: tool_description.as_ref(),
             annotations: annotations.as_ref(),
         }),
-        ApprovalRequest::RequestPermissions {
+        GuardianApprovalRequest::RequestPermissions {
             id: _,
             turn_id,
             reason,
@@ -959,16 +959,16 @@ pub(crate) fn guardian_approval_request_to_json(
     }
 }
 
-pub(crate) fn guardian_assessment_action(action: &ApprovalRequest) -> GuardianAssessmentAction {
+pub(crate) fn guardian_assessment_action(action: &GuardianApprovalRequest) -> GuardianAssessmentAction {
     match action {
-        ApprovalRequest::Shell { command, cwd, .. } => {
+        GuardianApprovalRequest::Shell { command, cwd, .. } => {
             command_assessment_action(GuardianCommandSource::Shell, command, cwd)
         }
-        ApprovalRequest::ExecCommand { command, cwd, .. } => {
+        GuardianApprovalRequest::ExecCommand { command, cwd, .. } => {
             command_assessment_action(GuardianCommandSource::UnifiedExec, command, cwd)
         }
         #[cfg(unix)]
-        ApprovalRequest::Execve {
+        GuardianApprovalRequest::Execve {
             source,
             program,
             argv,
@@ -980,11 +980,11 @@ pub(crate) fn guardian_assessment_action(action: &ApprovalRequest) -> GuardianAs
             argv: argv.clone(),
             cwd: cwd.clone(),
         },
-        ApprovalRequest::ApplyPatch { cwd, files, .. } => GuardianAssessmentAction::ApplyPatch {
+        GuardianApprovalRequest::ApplyPatch { cwd, files, .. } => GuardianAssessmentAction::ApplyPatch {
             cwd: cwd.clone(),
             files: files.clone(),
         },
-        ApprovalRequest::NetworkAccess {
+        GuardianApprovalRequest::NetworkAccess {
             id: _id,
             turn_id: _turn_id,
             target,
@@ -999,7 +999,7 @@ pub(crate) fn guardian_assessment_action(action: &ApprovalRequest) -> GuardianAs
             protocol: *protocol,
             port: *port,
         },
-        ApprovalRequest::McpToolCall {
+        GuardianApprovalRequest::McpToolCall {
             server,
             tool_name,
             connector_id,
@@ -1013,7 +1013,7 @@ pub(crate) fn guardian_assessment_action(action: &ApprovalRequest) -> GuardianAs
             connector_name: connector_name.clone(),
             tool_title: tool_title.clone(),
         },
-        ApprovalRequest::RequestPermissions {
+        GuardianApprovalRequest::RequestPermissions {
             reason,
             permissions,
             ..
@@ -1024,9 +1024,9 @@ pub(crate) fn guardian_assessment_action(action: &ApprovalRequest) -> GuardianAs
     }
 }
 
-pub(crate) fn guardian_reviewed_action(request: &ApprovalRequest) -> GuardianReviewedAction {
+pub(crate) fn guardian_reviewed_action(request: &GuardianApprovalRequest) -> GuardianReviewedAction {
     match request {
-        ApprovalRequest::Shell {
+        GuardianApprovalRequest::Shell {
             sandbox_permissions,
             additional_permissions,
             ..
@@ -1034,7 +1034,7 @@ pub(crate) fn guardian_reviewed_action(request: &ApprovalRequest) -> GuardianRev
             sandbox_permissions: *sandbox_permissions,
             additional_permissions: additional_permissions.clone(),
         },
-        ApprovalRequest::ExecCommand {
+        GuardianApprovalRequest::ExecCommand {
             sandbox_permissions,
             additional_permissions,
             tty,
@@ -1045,7 +1045,7 @@ pub(crate) fn guardian_reviewed_action(request: &ApprovalRequest) -> GuardianRev
             tty: *tty,
         },
         #[cfg(unix)]
-        ApprovalRequest::Execve {
+        GuardianApprovalRequest::Execve {
             source,
             program,
             additional_permissions,
@@ -1055,14 +1055,14 @@ pub(crate) fn guardian_reviewed_action(request: &ApprovalRequest) -> GuardianRev
             program: program.clone(),
             additional_permissions: additional_permissions.clone(),
         },
-        ApprovalRequest::ApplyPatch { .. } => GuardianReviewedAction::ApplyPatch {},
-        ApprovalRequest::NetworkAccess { protocol, port, .. } => {
+        GuardianApprovalRequest::ApplyPatch { .. } => GuardianReviewedAction::ApplyPatch {},
+        GuardianApprovalRequest::NetworkAccess { protocol, port, .. } => {
             GuardianReviewedAction::NetworkAccess {
                 protocol: *protocol,
                 port: *port,
             }
         }
-        ApprovalRequest::McpToolCall {
+        GuardianApprovalRequest::McpToolCall {
             server,
             tool_name,
             connector_id,
@@ -1076,41 +1076,41 @@ pub(crate) fn guardian_reviewed_action(request: &ApprovalRequest) -> GuardianRev
             connector_name: connector_name.clone(),
             tool_title: tool_title.clone(),
         },
-        ApprovalRequest::RequestPermissions { .. } => GuardianReviewedAction::RequestPermissions {},
+        GuardianApprovalRequest::RequestPermissions { .. } => GuardianReviewedAction::RequestPermissions {},
     }
 }
 
-pub(crate) fn guardian_request_target_item_id(request: &ApprovalRequest) -> Option<&str> {
+pub(crate) fn guardian_request_target_item_id(request: &GuardianApprovalRequest) -> Option<&str> {
     match request {
-        ApprovalRequest::Shell { id, .. }
-        | ApprovalRequest::ExecCommand { id, .. }
-        | ApprovalRequest::ApplyPatch { id, .. }
-        | ApprovalRequest::McpToolCall { id, .. }
-        | ApprovalRequest::RequestPermissions { id, .. } => Some(id),
-        ApprovalRequest::NetworkAccess { .. } => None,
+        GuardianApprovalRequest::Shell { id, .. }
+        | GuardianApprovalRequest::ExecCommand { id, .. }
+        | GuardianApprovalRequest::ApplyPatch { id, .. }
+        | GuardianApprovalRequest::McpToolCall { id, .. }
+        | GuardianApprovalRequest::RequestPermissions { id, .. } => Some(id),
+        GuardianApprovalRequest::NetworkAccess { .. } => None,
         #[cfg(unix)]
-        ApprovalRequest::Execve { id, .. } => Some(id),
+        GuardianApprovalRequest::Execve { id, .. } => Some(id),
     }
 }
 
 pub(crate) fn guardian_request_turn_id<'a>(
-    request: &'a ApprovalRequest,
+    request: &'a GuardianApprovalRequest,
     default_turn_id: &'a str,
 ) -> &'a str {
     match request {
-        ApprovalRequest::NetworkAccess { turn_id, .. }
-        | ApprovalRequest::RequestPermissions { turn_id, .. } => turn_id,
-        ApprovalRequest::Shell { .. }
-        | ApprovalRequest::ExecCommand { .. }
-        | ApprovalRequest::ApplyPatch { .. }
-        | ApprovalRequest::McpToolCall { .. } => default_turn_id,
+        GuardianApprovalRequest::NetworkAccess { turn_id, .. }
+        | GuardianApprovalRequest::RequestPermissions { turn_id, .. } => turn_id,
+        GuardianApprovalRequest::Shell { .. }
+        | GuardianApprovalRequest::ExecCommand { .. }
+        | GuardianApprovalRequest::ApplyPatch { .. }
+        | GuardianApprovalRequest::McpToolCall { .. } => default_turn_id,
         #[cfg(unix)]
-        ApprovalRequest::Execve { .. } => default_turn_id,
+        GuardianApprovalRequest::Execve { .. } => default_turn_id,
     }
 }
 
 pub(crate) fn format_guardian_action_pretty(
-    action: &ApprovalRequest,
+    action: &GuardianApprovalRequest,
 ) -> serde_json::Result<FormattedGuardianAction> {
     let value = guardian_approval_request_to_json(action)?;
     let (value, truncated) = truncate_guardian_action_value(value);
@@ -1131,7 +1131,7 @@ mod tests {
 
     #[test]
     fn exec_approval_event_is_projected_from_shell_request() {
-        let request = ApprovalRequest::Shell {
+        let request = GuardianApprovalRequest::Shell {
             id: "call-1".to_string(),
             command: vec!["echo".to_string(), "hi".to_string()],
             hook_command: "echo hi".to_string(),
@@ -1169,7 +1169,7 @@ mod tests {
     fn apply_patch_approval_event_is_projected_from_request() {
         let path = test_path_buf("/tmp/file.txt");
         let abs_path = path.abs();
-        let request = ApprovalRequest::ApplyPatch {
+        let request = GuardianApprovalRequest::ApplyPatch {
             id: "call-1".to_string(),
             cwd: test_path_buf("/tmp").abs(),
             files: vec![abs_path],
@@ -1206,7 +1206,7 @@ mod tests {
 
     #[test]
     fn request_permissions_event_is_projected_from_request() {
-        let request = ApprovalRequest::RequestPermissions {
+        let request = GuardianApprovalRequest::RequestPermissions {
             id: "call-1".to_string(),
             turn_id: "turn-1".to_string(),
             reason: Some("need outbound network".to_string()),
@@ -1240,7 +1240,7 @@ mod tests {
 
     #[test]
     fn network_exec_approval_event_is_projected_from_request() {
-        let request = ApprovalRequest::NetworkAccess {
+        let request = GuardianApprovalRequest::NetworkAccess {
             id: "network-1".to_string(),
             turn_id: "turn-1".to_string(),
             target: "https://example.com:443".to_string(),
@@ -1299,7 +1299,7 @@ mod tests {
 
     #[test]
     fn mcp_tool_approval_compat_response_uses_session_label_when_present() {
-        let request = ApprovalRequest::McpToolCall {
+        let request = GuardianApprovalRequest::McpToolCall {
             id: "call-1".to_string(),
             server: "custom_server".to_string(),
             tool_name: "dangerous_tool".to_string(),
@@ -1338,7 +1338,7 @@ mod tests {
 
     #[test]
     fn mcp_tool_approval_compat_response_uses_synthetic_decline_for_abort() {
-        let request = ApprovalRequest::McpToolCall {
+        let request = GuardianApprovalRequest::McpToolCall {
             id: "call-1".to_string(),
             server: "custom_server".to_string(),
             tool_name: "dangerous_tool".to_string(),

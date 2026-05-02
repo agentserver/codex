@@ -242,10 +242,10 @@ pub fn format_labeled_items_snapshot(
     format!("Scenario: {scenario}\n\n{sections}")
 }
 
-/// Render a full unified diff between two captured `/responses` request bodies.
+/// Render changed JSON lines between two captured `/responses` request bodies.
 ///
-/// Request-parity tests use this to review the entire JSON payload while still applying the same
-/// redactions as the other context snapshots.
+/// Request-parity tests use this to compare the entire JSON payload while showing only fields that
+/// changed, with the same redactions as the other context snapshots.
 pub fn format_request_body_diff_snapshot(
     scenario: &str,
     before_title: &str,
@@ -256,7 +256,7 @@ pub fn format_request_body_diff_snapshot(
 ) -> String {
     let before = format_request_body_snapshot(before_request, options);
     let after = format_request_body_snapshot(after_request, options);
-    let diff = format_full_unified_diff(before_title, &before, after_title, &after);
+    let diff = format_changed_lines_diff(before_title, &before, after_title, &after);
     format!("Scenario: {scenario}\n\n{diff}")
 }
 
@@ -311,7 +311,7 @@ fn format_snapshot_json_string(text: &str, options: &ContextSnapshotOptions) -> 
     }
 }
 
-fn format_full_unified_diff(
+fn format_changed_lines_diff(
     before_title: &str,
     before: &str,
     after_title: &str,
@@ -319,33 +319,27 @@ fn format_full_unified_diff(
 ) -> String {
     let before_lines = before.lines().collect::<Vec<&str>>();
     let after_lines = after.lines().collect::<Vec<&str>>();
-    let mut diff = format!(
-        "--- {before_title}\n+++ {after_title}\n@@ -1,{} +1,{} @@\n",
-        before_lines.len(),
-        after_lines.len()
-    );
+    let mut diff = format!("--- {before_title}\n+++ {after_title}\n");
     for line in diff_lines(before_lines.as_slice(), after_lines.as_slice()) {
         match line {
-            DiffLine::Equal(text) => {
-                diff.push(' ');
-                diff.push_str(text);
-            }
+            DiffLine::Equal => {}
             DiffLine::Remove(text) => {
                 diff.push('-');
                 diff.push_str(text);
+                diff.push('\n');
             }
             DiffLine::Add(text) => {
                 diff.push('+');
                 diff.push_str(text);
+                diff.push('\n');
             }
         }
-        diff.push('\n');
     }
     diff
 }
 
 enum DiffLine<'a> {
-    Equal(&'a str),
+    Equal,
     Remove(&'a str),
     Add(&'a str),
 }
@@ -370,7 +364,7 @@ fn diff_lines<'a>(before: &[&'a str], after: &[&'a str]) -> Vec<DiffLine<'a>> {
     let mut after_index = 0usize;
     while before_index < before.len() && after_index < after.len() {
         if before[before_index] == after[after_index] {
-            lines.push(DiffLine::Equal(before[before_index]));
+            lines.push(DiffLine::Equal);
             before_index += 1;
             after_index += 1;
         } else if lengths[(before_index + 1) * (after_len + 1) + after_index]

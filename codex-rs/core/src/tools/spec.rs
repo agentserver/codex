@@ -10,6 +10,7 @@ use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_tools::AdditionalProperties;
 use codex_tools::DiscoverableTool;
 use codex_tools::JsonSchema;
+use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ResponsesApiTool;
 use codex_tools::ToolHandlerKind;
 use codex_tools::ToolName;
@@ -17,6 +18,7 @@ use codex_tools::ToolNamespace;
 use codex_tools::ToolRegistryPlanDeferredTool;
 use codex_tools::ToolRegistryPlanMcpTool;
 use codex_tools::ToolRegistryPlanParams;
+use codex_tools::ToolSpec;
 use codex_tools::ToolUserShellType;
 use codex_tools::ToolsConfig;
 use codex_tools::WaitAgentTimeoutOptions;
@@ -75,12 +77,13 @@ pub(crate) fn build_specs_with_discoverable_tools(
     unavailable_called_tools: Vec<ToolName>,
     discoverable_tools: Option<Vec<DiscoverableTool>>,
     dynamic_tools: &[DynamicToolSpec],
+    extension_tool_specs: Vec<ToolSpec>,
 ) -> ToolRegistryBuilder {
     use crate::tools::handlers::ApplyPatchHandler;
     use crate::tools::handlers::CodeModeExecuteHandler;
     use crate::tools::handlers::CodeModeWaitHandler;
     use crate::tools::handlers::DynamicToolHandler;
-    use crate::tools::handlers::GoalHandler;
+    use crate::tools::handlers::ExtensionToolHandler;
     use crate::tools::handlers::ListDirHandler;
     use crate::tools::handlers::McpHandler;
     use crate::tools::handlers::McpResourceHandler;
@@ -159,7 +162,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
     let plan_handler = Arc::new(PlanHandler);
     let apply_patch_handler = Arc::new(ApplyPatchHandler);
     let dynamic_tool_handler = Arc::new(DynamicToolHandler);
-    let goal_handler = Arc::new(GoalHandler);
+    let extension_tool_handler = Arc::new(ExtensionToolHandler);
     let view_image_handler = Arc::new(ViewImageHandler);
     let mcp_handler = Arc::new(McpHandler);
     let mcp_resource_handler = Arc::new(McpResourceHandler);
@@ -219,9 +222,6 @@ pub(crate) fn build_specs_with_discoverable_tools(
             }
             ToolHandlerKind::FollowupTaskV2 => {
                 builder.register_handler(handler.name, Arc::new(FollowupTaskHandlerV2));
-            }
-            ToolHandlerKind::Goal => {
-                builder.register_handler(handler.name, goal_handler.clone());
             }
             ToolHandlerKind::ListAgentsV2 => {
                 builder.register_handler(handler.name, Arc::new(ListAgentsHandlerV2));
@@ -334,6 +334,37 @@ pub(crate) fn build_specs_with_discoverable_tools(
             builder.push_spec(spec);
         }
         builder.register_handler(unavailable_tool, unavailable_tool_handler.clone());
+    }
+    for extension_tool_spec in extension_tool_specs {
+        let tool_name = match extension_tool_spec {
+            ToolSpec::Function(tool) => {
+                let tool_name = ToolName::plain(tool.name.clone());
+                builder.push_spec(ToolSpec::Function(tool));
+                tool_name
+            }
+            ToolSpec::Freeform(tool) => {
+                let tool_name = ToolName::plain(tool.name.clone());
+                builder.push_spec(ToolSpec::Freeform(tool));
+                tool_name
+            }
+            ToolSpec::Namespace(namespace) => {
+                for tool in &namespace.tools {
+                    match tool {
+                        ResponsesApiNamespaceTool::Function(tool) => builder.register_handler(
+                            ToolName::new(Some(namespace.name.clone()), tool.name.clone()),
+                            extension_tool_handler.clone(),
+                        ),
+                    }
+                }
+                builder.push_spec(ToolSpec::Namespace(namespace));
+                continue;
+            }
+            ToolSpec::ToolSearch { .. }
+            | ToolSpec::LocalShell {}
+            | ToolSpec::ImageGeneration { .. }
+            | ToolSpec::WebSearch { .. } => continue,
+        };
+        builder.register_handler(tool_name, extension_tool_handler.clone());
     }
     builder
 }

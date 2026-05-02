@@ -13,6 +13,8 @@ use crate::session::Codex;
 use crate::session::CodexSpawnArgs;
 use crate::session::CodexSpawnOk;
 use crate::session::INITIAL_SUBMIT_ID;
+use crate::session_extension::SessionRuntimeEvent;
+use crate::session_extension::SessionRuntimeExtension;
 use crate::shell_snapshot::ShellSnapshot;
 use crate::skills_watcher::SkillsWatcher;
 use crate::skills_watcher::SkillsWatcherEvent;
@@ -246,6 +248,7 @@ pub(crate) struct ThreadManagerState {
     mcp_manager: Arc<McpManager>,
     skills_watcher: Arc<SkillsWatcher>,
     thread_store: Arc<dyn ThreadStore>,
+    runtime_extension: std::sync::RwLock<Option<Arc<dyn SessionRuntimeExtension>>>,
     session_source: SessionSource,
     analytics_events_client: Option<AnalyticsEventsClient>,
     // Captures submitted ops for testing purpose when test mode is enabled.
@@ -307,6 +310,7 @@ impl ThreadManager {
                 mcp_manager,
                 skills_watcher,
                 thread_store,
+                runtime_extension: std::sync::RwLock::new(None),
                 auth_manager,
                 session_source,
                 analytics_events_client,
@@ -387,6 +391,7 @@ impl ThreadManager {
                 mcp_manager,
                 skills_watcher,
                 thread_store,
+                runtime_extension: std::sync::RwLock::new(None),
                 auth_manager,
                 session_source: SessionSource::Exec,
                 analytics_events_client: None,
@@ -399,6 +404,15 @@ impl ThreadManager {
 
     pub fn session_source(&self) -> SessionSource {
         self.state.session_source.clone()
+    }
+
+    pub fn set_runtime_extension(&self, extension: Option<Arc<dyn SessionRuntimeExtension>>) {
+        match self.state.runtime_extension.write() {
+            Ok(mut guard) => *guard = extension,
+            Err(err) => {
+                tracing::warn!("failed to install runtime extension: {err}");
+            }
+        }
     }
 
     pub fn auth_manager(&self) -> Arc<AuthManager> {
@@ -1117,6 +1131,11 @@ impl ThreadManagerState {
             .parent_rollout_thread_trace_for_source(&session_source, &initial_history)
             .await;
         let tracked_session_source = session_source.clone();
+        let runtime_extension = self
+            .runtime_extension
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(Arc::clone));
         let CodexSpawnOk {
             codex, thread_id, ..
         } = Codex::spawn(CodexSpawnArgs {
@@ -1142,15 +1161,19 @@ impl ThreadManagerState {
             environment_selections,
             analytics_events_client: self.analytics_events_client.clone(),
             thread_store: Arc::clone(&self.thread_store),
+            runtime_extension,
         })
         .await?;
         let new_thread = self
             .finalize_thread_spawn(codex, thread_id, tracked_session_source, watch_registration)
             .await?;
         if is_resumed_thread
-            && let Err(err) = new_thread.thread.apply_goal_resume_runtime_effects().await
+            && let Err(err) = new_thread
+                .thread
+                .apply_runtime_extension_event(SessionRuntimeEvent::ThreadResumed)
+                .await
         {
-            warn!("failed to apply goal resume runtime effects: {err}");
+            warn!("failed to apply runtime extension resume effects: {err}");
         }
         Ok(new_thread)
     }

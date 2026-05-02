@@ -112,30 +112,37 @@ impl ToolHandler for BatchJobHandler {
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            tool_name,
-            payload,
-            ..
-        } = invocation;
+        Box::pin(async move {
+            let ToolInvocation {
+                session,
+                turn,
+                tool_name,
+                payload,
+                ..
+            } = invocation;
 
-        let arguments = match payload {
-            ToolPayload::Function { arguments } => arguments,
-            _ => {
-                return Err(FunctionCallError::RespondToModel(
-                    "agent jobs handler received unsupported payload".to_string(),
-                ));
+            let arguments = match payload {
+                ToolPayload::Function { arguments } => arguments,
+                _ => {
+                    return Err(FunctionCallError::RespondToModel(
+                        "agent jobs handler received unsupported payload".to_string(),
+                    ));
+                }
+            };
+
+            match tool_name.name.as_str() {
+                "spawn_agents_on_csv" => {
+                    Box::pin(spawn_agents_on_csv::handle(session, turn, arguments)).await
+                }
+                "report_agent_job_result" => {
+                    Box::pin(report_agent_job_result::handle(session, arguments)).await
+                }
+                other => Err(FunctionCallError::RespondToModel(format!(
+                    "unsupported agent job tool {other}"
+                ))),
             }
-        };
-
-        match tool_name.name.as_str() {
-            "spawn_agents_on_csv" => spawn_agents_on_csv::handle(session, turn, arguments).await,
-            "report_agent_job_result" => report_agent_job_result::handle(session, arguments).await,
-            other => Err(FunctionCallError::RespondToModel(format!(
-                "unsupported agent job tool {other}"
-            ))),
-        }
+        })
+        .await
     }
 }
 

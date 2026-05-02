@@ -99,8 +99,11 @@ impl CodexMessageProcessor {
             return;
         }
 
-        if let Some(thread) = running_thread.as_ref() {
-            thread.prepare_external_goal_mutation().await;
+        if let (Some(runtime), Some(thread)) = (self.goal_runtime.as_ref(), running_thread.as_ref())
+        {
+            runtime
+                .prepare_external_goal_mutation(thread.runtime_handle())
+                .await;
         }
 
         let goal = if let Some(objective) = objective {
@@ -176,8 +179,11 @@ impl CodexMessageProcessor {
             .await;
         self.emit_thread_goal_updated_ordered(thread_id, goal, listener_command_tx)
             .await;
-        if let Some(thread) = running_thread.as_ref() {
-            thread.apply_external_goal_set(goal_status).await;
+        if let (Some(runtime), Some(thread)) = (self.goal_runtime.as_ref(), running_thread.as_ref())
+        {
+            runtime
+                .apply_external_goal_set(thread.runtime_handle(), goal_status)
+                .await;
         }
     }
 
@@ -292,8 +298,11 @@ impl CodexMessageProcessor {
         )
         .await;
 
-        if let Some(thread) = running_thread.as_ref() {
-            thread.prepare_external_goal_mutation().await;
+        if let (Some(runtime), Some(thread)) = (self.goal_runtime.as_ref(), running_thread.as_ref())
+        {
+            runtime
+                .prepare_external_goal_mutation(thread.runtime_handle())
+                .await;
         }
 
         let listener_command_tx = {
@@ -310,8 +319,8 @@ impl CodexMessageProcessor {
             }
         };
 
-        if cleared && let Some(thread) = running_thread.as_ref() {
-            thread.apply_external_goal_clear().await;
+        if cleared && let Some(runtime) = self.goal_runtime.as_ref() {
+            runtime.apply_external_goal_clear(thread_id).await;
         }
 
         self.outgoing

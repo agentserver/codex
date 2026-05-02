@@ -15,6 +15,21 @@ use super::ToolCall;
 use super::ToolRouter;
 use super::ToolRouterParams;
 
+fn extension_function_tool(name: &str) -> ToolSpec {
+    ToolSpec::Function(codex_tools::ResponsesApiTool {
+        name: name.to_string(),
+        description: "Host extension test tool.".to_string(),
+        strict: false,
+        parameters: codex_tools::JsonSchema::object(
+            std::collections::BTreeMap::new(),
+            /*required*/ None,
+            Some(codex_tools::AdditionalProperties::Boolean(false)),
+        ),
+        output_schema: None,
+        defer_loading: None,
+    })
+}
+
 #[tokio::test]
 #[expect(
     clippy::await_holding_invalid_type,
@@ -38,6 +53,7 @@ async fn parallel_support_does_not_match_namespaced_local_tool_names() -> anyhow
             parallel_mcp_server_names: HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: turn.dynamic_tools.as_slice(),
+            extension_tool_specs: Vec::new(),
         },
     );
 
@@ -61,6 +77,41 @@ async fn parallel_support_does_not_match_namespaced_local_tool_names() -> anyhow
             arguments: "{}".to_string(),
         },
     }));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn extension_tools_are_exposed_only_when_supplied_by_host() -> anyhow::Result<()> {
+    let (_, turn) = make_session_and_context().await;
+    let tool_name = ToolName::plain("host_extension_tool");
+    let without_extension = ToolRouter::from_config(
+        &turn.tools_config,
+        ToolRouterParams {
+            deferred_mcp_tools: None,
+            mcp_tools: None,
+            unavailable_called_tools: Vec::new(),
+            parallel_mcp_server_names: HashSet::new(),
+            discoverable_tools: None,
+            dynamic_tools: turn.dynamic_tools.as_slice(),
+            extension_tool_specs: Vec::new(),
+        },
+    );
+    let with_extension = ToolRouter::from_config(
+        &turn.tools_config,
+        ToolRouterParams {
+            deferred_mcp_tools: None,
+            mcp_tools: None,
+            unavailable_called_tools: Vec::new(),
+            parallel_mcp_server_names: HashSet::new(),
+            discoverable_tools: None,
+            dynamic_tools: turn.dynamic_tools.as_slice(),
+            extension_tool_specs: vec![extension_function_tool(tool_name.name.as_str())],
+        },
+    );
+
+    assert!(without_extension.find_spec(&tool_name).is_none());
+    assert!(with_extension.find_spec(&tool_name).is_some());
 
     Ok(())
 }
@@ -111,6 +162,7 @@ async fn mcp_parallel_support_uses_exact_payload_server() -> anyhow::Result<()> 
             parallel_mcp_server_names: HashSet::from(["echo".to_string()]),
             discoverable_tools: None,
             dynamic_tools: turn.dynamic_tools.as_slice(),
+            extension_tool_specs: Vec::new(),
         },
     );
 
@@ -178,6 +230,7 @@ async fn model_visible_specs_filter_deferred_dynamic_tools() -> anyhow::Result<(
             parallel_mcp_server_names: HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: &dynamic_tools,
+            extension_tool_specs: Vec::new(),
         },
     );
 

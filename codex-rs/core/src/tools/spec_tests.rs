@@ -295,6 +295,7 @@ fn build_specs_with_unavailable_tools(
         unavailable_called_tools,
         /*discoverable_tools*/ None,
         dynamic_tools,
+        Vec::new(),
     )
 }
 
@@ -356,6 +357,7 @@ async fn assert_model_tools(
             parallel_mcp_server_names: std::collections::HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: &[],
+            extension_tool_specs: Vec::new(),
         },
     );
     let model_visible_specs = router.model_visible_specs();
@@ -825,6 +827,7 @@ async fn request_plugin_install_requires_apps_and_plugins_features() {
             Vec::new(),
             discoverable_tools.clone(),
             &[],
+            Vec::new(),
         )
         .build();
 

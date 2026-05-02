@@ -37,7 +37,6 @@ pub mod file_watcher;
 mod flags;
 #[cfg(test)]
 mod git_info_tests;
-mod goals;
 mod guardian;
 mod hook_runtime;
 mod installation_id;
@@ -82,6 +81,7 @@ pub(crate) mod mentions {
 }
 mod sandbox_tags;
 pub mod sandboxing;
+mod session_extension;
 mod session_prefix;
 mod session_startup_prewarm;
 mod shell_detect;
@@ -197,6 +197,13 @@ pub use exec_policy::format_exec_policy_error_with_source;
 pub use exec_policy::load_exec_policy;
 pub use file_watcher::FileWatcherEvent;
 pub use installation_id::resolve_installation_id;
+pub use session_extension::SessionRuntimeEvent;
+pub use session_extension::SessionRuntimeExtension;
+pub use session_extension::SessionRuntimeHandle;
+pub use session_extension::SessionToolError;
+pub use session_extension::SessionToolInvocation;
+pub use session_extension::SessionToolOutput;
+pub use session_extension::SessionToolSpecContext;
 pub use turn_metadata::build_turn_metadata_header;
 pub mod compact;
 mod memory_usage;

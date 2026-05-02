@@ -277,6 +277,9 @@ use crate::guardian::GuardianReviewSessionManager;
 use crate::mcp::McpManager;
 use crate::network_policy_decision::execpolicy_network_rule_amendment;
 use crate::rollout::map_session_init_error;
+use crate::session_extension::SessionRuntimeEvent;
+use crate::session_extension::SessionRuntimeExtension;
+use crate::session_extension::SessionRuntimeHandle;
 use crate::session_startup_prewarm::SessionStartupPrewarmHandle;
 use crate::shell;
 use crate::shell_snapshot::ShellSnapshot;
@@ -411,6 +414,7 @@ pub(crate) struct CodexSpawnArgs {
     pub(crate) environment_selections: ResolvedTurnEnvironments,
     pub(crate) analytics_events_client: Option<AnalyticsEventsClient>,
     pub(crate) thread_store: Arc<dyn ThreadStore>,
+    pub(crate) runtime_extension: Option<Arc<dyn SessionRuntimeExtension>>,
 }
 
 pub(crate) const INITIAL_SUBMIT_ID: &str = "";
@@ -468,6 +472,7 @@ impl Codex {
             environment_selections,
             analytics_events_client,
             thread_store,
+            runtime_extension,
         } = args;
         let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
         let (tx_event, rx_event) = async_channel::unbounded();
@@ -630,6 +635,7 @@ impl Codex {
             auth_manager.clone(),
             models_manager.clone(),
             exec_policy,
+            tx_sub.clone(),
             tx_event.clone(),
             agent_status_tx.clone(),
             conversation_history,
@@ -643,6 +649,7 @@ impl Codex {
             analytics_events_client,
             thread_store,
             parent_rollout_thread_trace,
+            runtime_extension,
         )
         .await
         .map_err(|e| {
@@ -1018,6 +1025,22 @@ impl Session {
 
     pub(crate) fn state_db(&self) -> Option<state_db::StateDbHandle> {
         self.services.state_db.clone()
+    }
+
+    pub(crate) fn runtime_extension(&self) -> Option<Arc<dyn SessionRuntimeExtension>> {
+        self.services.runtime_extension.as_ref().map(Arc::clone)
+    }
+
+    pub(crate) async fn apply_runtime_extension_event(
+        self: &Arc<Self>,
+        event: SessionRuntimeEvent,
+    ) -> anyhow::Result<()> {
+        let Some(extension) = self.runtime_extension() else {
+            return Ok(());
+        };
+        extension
+            .on_event(SessionRuntimeHandle::new(Arc::clone(self)), event)
+            .await
     }
 
     pub(crate) fn live_thread_for_persistence(
@@ -3018,6 +3041,13 @@ impl Session {
         Ok(active_turn_id.clone())
     }
 
+    pub(crate) async fn active_turn_id(&self) -> Option<String> {
+        let active = self.active_turn.lock().await;
+        active
+            .as_ref()
+            .and_then(|active_turn| active_turn.tasks.first().map(|(id, _)| id.clone()))
+    }
+
     /// Returns the input if there was no task running to inject into.
     #[expect(
         clippy::await_holding_invalid_type,
@@ -3204,7 +3234,7 @@ impl Session {
     pub async fn interrupt_task(self: &Arc<Self>) {
         info!("interrupt received: abort current task, if any");
         let had_active_turn = self.active_turn.lock().await.is_some();
-        // Even without an active task, interrupt handling pauses any active goal.
+        // Even without an active task, interrupt handling reaches runtime extensions.
         self.abort_all_tasks(TurnAbortReason::Interrupted).await;
         if !had_active_turn {
             self.cancel_mcp_startup().await;

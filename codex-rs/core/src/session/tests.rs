@@ -52,8 +52,6 @@ use codex_protocol::request_permissions::PermissionGrantScope;
 use codex_protocol::request_permissions::RequestPermissionProfile;
 use tracing::Span;
 
-use crate::goals::GoalRuntimeEvent;
-use crate::goals::SetGoalRequest;
 use crate::rollout::recorder::RolloutRecorder;
 use crate::state::ActiveTurn;
 use crate::state::TaskKind;
@@ -64,7 +62,6 @@ use crate::tasks::execute_user_shell_command;
 use crate::tools::ToolRouter;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
-use crate::tools::handlers::GoalHandler;
 use crate::tools::handlers::ShellHandler;
 use crate::tools::handlers::UnifiedExecHandler;
 use crate::tools::registry::ToolHandler;
@@ -109,7 +106,6 @@ use codex_protocol::protocol::ResumedHistory;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SkillScope;
 use codex_protocol::protocol::Submission;
-use codex_protocol::protocol::ThreadGoalStatus;
 use codex_protocol::protocol::ThreadRolledBackEvent;
 use codex_protocol::protocol::TokenCountEvent;
 use codex_protocol::protocol::TokenUsage;
@@ -119,27 +115,20 @@ use codex_protocol::protocol::TurnCompleteEvent;
 use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::UserMessageEvent;
 use codex_protocol::protocol::W3cTraceContext;
-use codex_protocol::request_user_input::RequestUserInputAnswer;
-use codex_protocol::request_user_input::RequestUserInputResponse;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use core_test_support::context_snapshot;
 use core_test_support::context_snapshot::ContextSnapshotOptions;
 use core_test_support::context_snapshot::ContextSnapshotRenderMode;
-use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
-use core_test_support::responses::ev_completed_with_tokens;
-use core_test_support::responses::ev_function_call;
 use core_test_support::responses::ev_response_created;
 use core_test_support::responses::mount_sse_once;
-use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::test_codex::test_codex;
 use core_test_support::test_path_buf;
 use core_test_support::tracing::install_test_tracing;
 use core_test_support::wait_for_event;
-use core_test_support::wait_for_event_match;
 use opentelemetry::trace::TraceContextExt;
 use opentelemetry::trace::TraceId;
 use opentelemetry_sdk::metrics::InMemoryMetricExporter;
@@ -494,10 +483,138 @@ fn test_tool_runtime(session: Arc<Session>, turn_context: Arc<TurnContext>) -> T
             parallel_mcp_server_names: HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
+            extension_tool_specs: Vec::new(),
         },
     ));
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
     ToolCallRuntime::new(router, session, turn_context, tracker)
+}
+
+fn extension_function_tool(name: &str) -> codex_tools::ToolSpec {
+    codex_tools::ToolSpec::Function(codex_tools::ResponsesApiTool {
+        name: name.to_string(),
+        description: "Host-provided extension tool.".to_string(),
+        strict: false,
+        parameters: codex_tools::JsonSchema::object(
+            std::collections::BTreeMap::new(),
+            /*required*/ None,
+            Some(codex_tools::AdditionalProperties::Boolean(false)),
+        ),
+        output_schema: None,
+        defer_loading: None,
+    })
+}
+
+struct RecordingRuntimeExtension {
+    events: tokio::sync::Mutex<Vec<String>>,
+    notify: tokio::sync::Notify,
+    tool_specs: Vec<codex_tools::ToolSpec>,
+}
+
+impl RecordingRuntimeExtension {
+    fn new(tool_specs: Vec<codex_tools::ToolSpec>) -> Self {
+        Self {
+            events: tokio::sync::Mutex::new(Vec::new()),
+            notify: tokio::sync::Notify::new(),
+            tool_specs,
+        }
+    }
+
+    async fn record(&self, event: String) {
+        self.events.lock().await.push(event);
+        self.notify.notify_waiters();
+    }
+
+    async fn wait_for_events(&self, count: usize) -> Vec<String> {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let notified = self.notify.notified();
+                {
+                    let events = self.events.lock().await;
+                    if events.len() >= count {
+                        return events.clone();
+                    }
+                }
+                notified.await;
+            }
+        })
+        .await
+        .expect("timed out waiting for runtime extension events")
+    }
+}
+
+impl crate::session_extension::SessionRuntimeExtension for RecordingRuntimeExtension {
+    fn tool_specs(
+        &self,
+        _context: crate::session_extension::SessionToolSpecContext,
+    ) -> Vec<codex_tools::ToolSpec> {
+        self.tool_specs.clone()
+    }
+
+    fn handle_tool_call<'a>(
+        &'a self,
+        _handle: crate::session_extension::SessionRuntimeHandle,
+        invocation: crate::session_extension::SessionToolInvocation,
+    ) -> futures::future::BoxFuture<
+        'a,
+        Result<
+            crate::session_extension::SessionToolOutput,
+            crate::session_extension::SessionToolError,
+        >,
+    > {
+        Box::pin(async move {
+            self.record(format!(
+                "tool_call:{}:{}:{}",
+                invocation.turn_id,
+                invocation.tool_name.display(),
+                invocation.arguments
+            ))
+            .await;
+            Ok(crate::session_extension::SessionToolOutput::from_text(
+                "extension output".to_string(),
+                Some(true),
+            ))
+        })
+    }
+
+    fn on_event<'a>(
+        &'a self,
+        _handle: crate::session_extension::SessionRuntimeHandle,
+        event: crate::session_extension::SessionRuntimeEvent,
+    ) -> futures::future::BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move {
+            let event = match event {
+                crate::session_extension::SessionRuntimeEvent::TurnStarted { turn_id, .. } => {
+                    format!("turn_started:{turn_id}")
+                }
+                crate::session_extension::SessionRuntimeEvent::ToolCompleted {
+                    turn_id,
+                    tool_name,
+                    ..
+                } => {
+                    format!("tool_completed:{turn_id}:{}", tool_name.display())
+                }
+                crate::session_extension::SessionRuntimeEvent::TurnFinished {
+                    turn_id,
+                    turn_completed,
+                    ..
+                } => {
+                    format!("turn_finished:{turn_id}:{turn_completed}")
+                }
+                crate::session_extension::SessionRuntimeEvent::MaybeContinueIfIdle => {
+                    "maybe_continue_if_idle".to_string()
+                }
+                crate::session_extension::SessionRuntimeEvent::TaskAborted { turn_id, reason } => {
+                    format!("task_aborted:{turn_id:?}:{reason:?}")
+                }
+                crate::session_extension::SessionRuntimeEvent::ThreadResumed => {
+                    "thread_resumed".to_string()
+                }
+            };
+            self.record(event).await;
+            Ok(())
+        })
+    }
 }
 
 fn make_connector(id: &str, name: &str) -> AppInfo {
@@ -3463,6 +3580,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         user_shell_override: None,
     };
 
+    let (tx_sub, _rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
     let (tx_event, _rx_event) = async_channel::unbounded();
     let (agent_status_tx, _agent_status_rx) = watch::channel(AgentStatus::PendingInit);
     let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.to_path_buf()));
@@ -3477,6 +3595,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         auth_manager,
         models_manager,
         Arc::new(ExecPolicyManager::default()),
+        tx_sub,
         tx_event,
         agent_status_tx,
         InitialHistory::New,
@@ -3492,6 +3611,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
         )),
         codex_rollout_trace::ThreadTraceContext::disabled(),
+        None,
     )
     .await;
 
@@ -3650,6 +3770,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             Session::build_model_client_beta_features_header(config.as_ref()),
         ),
         code_mode_service: crate::tools::code_mode::CodeModeService::new(),
+        runtime_extension: None,
         environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
     };
 
@@ -3685,12 +3806,12 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         session_configuration.cwd.clone(),
         "turn_id".to_string(),
         skills_outcome,
-        /*goal_tools_supported*/ true,
     );
 
     let (mailbox, mailbox_rx) = crate::agent::Mailbox::new();
     let session = Session {
         conversation_id,
+        tx_sub: async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY).0,
         tx_event,
         agent_status: agent_status_tx,
         out_of_band_elicitation_paused: watch::channel(false).0,
@@ -3703,7 +3824,6 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         mailbox,
         mailbox_rx: Mutex::new(mailbox_rx),
         idle_pending_input: Mutex::new(Vec::new()),
-        goal_runtime: crate::goals::GoalRuntimeState::new(),
         guardian_review_session: crate::guardian::GuardianReviewSessionManager::default(),
         services,
         next_internal_sub_id: AtomicU64::new(0),
@@ -3780,6 +3900,7 @@ async fn make_session_with_config_and_rx(
         user_shell_override: None,
     };
 
+    let (tx_sub, _rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
     let (tx_event, rx_event) = async_channel::unbounded();
     let (agent_status_tx, _agent_status_rx) = watch::channel(AgentStatus::PendingInit);
     let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.to_path_buf()));
@@ -3795,6 +3916,7 @@ async fn make_session_with_config_and_rx(
         auth_manager,
         models_manager,
         Arc::new(ExecPolicyManager::default()),
+        tx_sub,
         tx_event,
         agent_status_tx,
         InitialHistory::New,
@@ -3810,6 +3932,7 @@ async fn make_session_with_config_and_rx(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
         )),
         codex_rollout_trace::ThreadTraceContext::disabled(),
+        None,
     )
     .await?;
 
@@ -5132,6 +5255,7 @@ where
             Session::build_model_client_beta_features_header(config.as_ref()),
         ),
         code_mode_service: crate::tools::code_mode::CodeModeService::new(),
+        runtime_extension: None,
         environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
     };
 
@@ -5167,12 +5291,12 @@ where
         session_configuration.cwd.clone(),
         "turn_id".to_string(),
         skills_outcome,
-        /*goal_tools_supported*/ true,
     ));
 
     let (mailbox, mailbox_rx) = crate::agent::Mailbox::new();
     let session = Arc::new(Session {
         conversation_id,
+        tx_sub: async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY).0,
         tx_event,
         agent_status: agent_status_tx,
         out_of_band_elicitation_paused: watch::channel(false).0,
@@ -5185,7 +5309,6 @@ where
         mailbox,
         mailbox_rx: Mutex::new(mailbox_rx),
         idle_pending_input: Mutex::new(Vec::new()),
-        goal_runtime: crate::goals::GoalRuntimeState::new(),
         guardian_review_session: crate::guardian::GuardianReviewSessionManager::default(),
         services,
         next_internal_sub_id: AtomicU64::new(0),
@@ -5207,49 +5330,6 @@ pub(crate) async fn make_session_and_context_with_dynamic_tools_and_rx(
         |_config| {},
     )
     .await
-}
-
-async fn make_goal_session_and_context_with_rx() -> (
-    Arc<Session>,
-    Arc<TurnContext>,
-    async_channel::Receiver<Event>,
-) {
-    let (session, turn_context, rx) = make_session_and_context_with_auth_and_config_and_rx(
-        CodexAuth::from_api_key("Test API Key"),
-        Vec::new(),
-        |config| {
-            config
-                .features
-                .enable(Feature::Goals)
-                .expect("goal mode should be enableable in tests");
-        },
-    )
-    .await;
-    upsert_goal_test_thread(session.as_ref()).await;
-    (session, turn_context, rx)
-}
-
-async fn upsert_goal_test_thread(session: &Session) {
-    let config = session.get_config().await;
-    let state_db = goal_test_state_db(session)
-        .await
-        .expect("goal test state db should initialize");
-    let mut builder = codex_state::ThreadMetadataBuilder::new(
-        session.conversation_id,
-        config
-            .codex_home
-            .join("goal-test-rollout.jsonl")
-            .to_path_buf(),
-        chrono::Utc::now(),
-        SessionSource::Cli,
-    );
-    builder.cwd = config.cwd.to_path_buf();
-    builder.model_provider = Some(config.model_provider_id.clone());
-    let metadata = builder.build(config.model_provider_id.as_str());
-    state_db
-        .upsert_thread(&metadata)
-        .await
-        .expect("goal test thread should be upserted");
 }
 
 // Like make_session_and_context, but returns Arc<Session> and the event receiver
@@ -6448,6 +6528,29 @@ async fn realtime_conversation_list_voices_emits_builtin_list() {
 }
 
 #[derive(Clone, Copy)]
+struct ImmediateTask;
+
+impl SessionTask for ImmediateTask {
+    fn kind(&self) -> TaskKind {
+        TaskKind::Regular
+    }
+
+    fn span_name(&self) -> &'static str {
+        "session_task.immediate"
+    }
+
+    async fn run(
+        self: Arc<Self>,
+        _session: Arc<SessionTaskContext>,
+        _ctx: Arc<TurnContext>,
+        _input: Vec<UserInput>,
+        _cancellation_token: CancellationToken,
+    ) -> Option<String> {
+        Some("done".to_string())
+    }
+}
+
+#[derive(Clone, Copy)]
 struct NeverEndingTask {
     kind: TaskKind,
     listen_to_cancellation_token: bool,
@@ -6999,6 +7102,96 @@ async fn queued_response_items_for_next_turn_move_into_next_active_turn() {
     assert_eq!(sess.get_pending_input().await, vec![queued_item]);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runtime_extension_receives_turn_lifecycle_events_in_order() {
+    let (mut session, turn_context) = make_session_and_context().await;
+    let extension = Arc::new(RecordingRuntimeExtension::new(Vec::new()));
+    let runtime_extension: Arc<dyn crate::session_extension::SessionRuntimeExtension> =
+        extension.clone();
+    session.services.runtime_extension = Some(runtime_extension);
+    let sess = Arc::new(session);
+    let turn_context = Arc::new(turn_context);
+
+    sess.spawn_task(
+        Arc::clone(&turn_context),
+        vec![UserInput::Text {
+            text: "complete immediately".to_string(),
+            text_elements: Vec::new(),
+        }],
+        ImmediateTask,
+    )
+    .await;
+
+    let events = extension.wait_for_events(3).await;
+    assert_eq!(
+        &events[..3],
+        &[
+            format!("turn_started:{}", turn_context.sub_id),
+            format!("turn_finished:{}:true", turn_context.sub_id),
+            "maybe_continue_if_idle".to_string(),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn runtime_extension_hidden_item_injection_reaches_active_turn() {
+    let (sess, tc, _rx) = make_session_and_context_with_rx().await;
+    let hidden_item = ResponseInputItem::Message {
+        role: "developer".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "hidden runtime context".to_string(),
+        }],
+        phase: None,
+    };
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: false,
+        },
+    )
+    .await;
+
+    crate::session_extension::SessionRuntimeHandle::new(Arc::clone(&sess))
+        .inject_response_items(vec![hidden_item.clone()])
+        .await
+        .expect("runtime extension should inject into active turn");
+
+    assert_eq!(sess.get_pending_input().await, vec![hidden_item]);
+}
+
+#[tokio::test]
+async fn idle_background_turn_refuses_to_race_pending_user_work() {
+    let (sess, _tc, _rx) = make_session_and_context_with_rx().await;
+    let existing_item = ResponseInputItem::Message {
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "already queued".to_string(),
+        }],
+        phase: None,
+    };
+    let background_item = ResponseInputItem::Message {
+        role: "developer".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "background continuation".to_string(),
+        }],
+        phase: None,
+    };
+    sess.queue_response_items_for_next_turn(vec![existing_item.clone()])
+        .await;
+
+    let started = crate::session_extension::SessionRuntimeHandle::new(Arc::clone(&sess))
+        .try_start_idle_background_turn(vec![background_item])
+        .await;
+
+    assert!(!started);
+    assert_eq!(
+        sess.take_queued_response_items_for_next_turn().await,
+        vec![existing_item],
+    );
+}
+
 #[tokio::test]
 async fn idle_interrupt_does_not_wake_queued_next_turn_items() {
     let (sess, _tc, _rx) = make_session_and_context_with_rx().await;
@@ -7046,585 +7239,6 @@ async fn abort_empty_active_turn_preserves_pending_input() {
         turn_state.lock().await.take_pending_input(),
         vec![pending_item]
     );
-}
-
-#[tokio::test]
-async fn interrupt_accounts_active_goal_before_pausing() -> anyhow::Result<()> {
-    let (sess, tc, _rx) = make_goal_session_and_context_with_rx().await;
-    sess.set_thread_goal(
-        tc.as_ref(),
-        SetGoalRequest {
-            objective: Some("Keep improving the benchmark".to_string()),
-            status: None,
-            token_budget: None,
-        },
-    )
-    .await?;
-
-    sess.spawn_task(
-        Arc::clone(&tc),
-        Vec::new(),
-        NeverEndingTask {
-            kind: TaskKind::Regular,
-            listen_to_cancellation_token: false,
-        },
-    )
-    .await;
-    set_total_token_usage(&sess, post_goal_token_usage()).await;
-
-    sess.abort_all_tasks(TurnAbortReason::Interrupted).await;
-
-    let goal = sess
-        .get_thread_goal()
-        .await?
-        .expect("goal should remain persisted after interrupt");
-    assert_eq!(
-        codex_protocol::protocol::ThreadGoalStatus::Paused,
-        goal.status
-    );
-    assert_eq!(70, goal.tokens_used);
-
-    assert!(sess.active_turn.lock().await.is_none());
-
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn active_goal_continuation_runs_again_after_no_tool_turn() -> anyhow::Result<()> {
-    let server = start_mock_server().await;
-    let mut builder = test_codex().with_config(|config| {
-        config
-            .features
-            .enable(Feature::Goals)
-            .expect("goal mode should be enableable in tests");
-    });
-    let test = builder.build(&server).await?;
-    let _responses = mount_sse_sequence(
-        &server,
-        vec![
-            sse(vec![
-                ev_response_created("resp-1"),
-                ev_function_call(
-                    "call-create-goal",
-                    "create_goal",
-                    r#"{"objective":"write a benchmark note"}"#,
-                ),
-                ev_completed("resp-1"),
-            ]),
-            sse(vec![
-                ev_assistant_message("msg-1", "Draft ready."),
-                ev_completed("resp-2"),
-            ]),
-            sse(vec![
-                ev_assistant_message("msg-2", "I am still working on the benchmark note."),
-                ev_completed("resp-3"),
-            ]),
-            sse(vec![
-                ev_response_created("resp-4"),
-                ev_function_call(
-                    "call-complete-goal",
-                    "update_goal",
-                    r#"{"status":"complete"}"#,
-                ),
-                ev_completed("resp-4"),
-            ]),
-            sse(vec![
-                ev_assistant_message("msg-3", "Goal complete."),
-                ev_completed("resp-5"),
-            ]),
-        ],
-    )
-    .await;
-
-    test.codex
-        .submit(Op::UserInput {
-            environments: None,
-            items: vec![UserInput::Text {
-                text: "write a benchmark note".into(),
-                text_elements: Vec::new(),
-            }],
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-        })
-        .await?;
-
-    let mut completed_turns = 0;
-    tokio::time::timeout(std::time::Duration::from_secs(8), async {
-        loop {
-            let event = test.codex.next_event().await?;
-            if matches!(event.msg, EventMsg::TurnComplete(_)) {
-                completed_turns += 1;
-                if completed_turns == 3 {
-                    return anyhow::Ok(());
-                }
-            }
-        }
-    })
-    .await??;
-
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn pending_request_user_input_does_not_spawn_extra_goal_continuation() -> anyhow::Result<()> {
-    let server = start_mock_server().await;
-    let mut builder = test_codex().with_config(|config| {
-        config
-            .features
-            .enable(Feature::Goals)
-            .expect("goal mode should be enableable in tests");
-        config
-            .features
-            .enable(Feature::DefaultModeRequestUserInput)
-            .expect("default-mode request_user_input should be enableable in tests");
-    });
-    let test = builder.build(&server).await?;
-    let responses = mount_sse_sequence(
-        &server,
-        vec![
-            sse(vec![
-                ev_response_created("resp-1"),
-                ev_function_call(
-                    "call-create-goal",
-                    "create_goal",
-                    r#"{"objective":"write a benchmark note"}"#,
-                ),
-                ev_completed("resp-1"),
-            ]),
-            sse(vec![
-                ev_assistant_message("msg-1", "Draft ready."),
-                ev_completed("resp-2"),
-            ]),
-            sse(vec![
-                ev_response_created("resp-3"),
-                ev_function_call(
-                    "call-ask-user",
-                    "request_user_input",
-                    r#"{"questions":[{"header":"Choice","id":"next_step","question":"Pick one","options":[{"label":"Outline","description":"Start with an outline."},{"label":"Draft","description":"Write a full draft."}]}]}"#,
-                ),
-                ev_completed("resp-3"),
-            ]),
-            sse(vec![
-                ev_response_created("resp-4"),
-                ev_function_call(
-                    "call-complete-goal",
-                    "update_goal",
-                    r#"{"status":"complete"}"#,
-                ),
-                ev_completed("resp-4"),
-            ]),
-            sse(vec![
-                ev_assistant_message("msg-2", "Goal complete."),
-                ev_completed("resp-5"),
-            ]),
-        ],
-    )
-    .await;
-
-    test.codex
-        .submit(Op::UserInput {
-            environments: None,
-            items: vec![UserInput::Text {
-                text: "write a benchmark note".into(),
-                text_elements: Vec::new(),
-            }],
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-        })
-        .await?;
-
-    let request_user_input_event = wait_for_event_match(&test.codex, |event| match event {
-        EventMsg::RequestUserInput(event) => Some(event.clone()),
-        _ => None,
-    })
-    .await;
-    assert_eq!(3, responses.requests().len());
-    assert!(
-        timeout(Duration::from_millis(200), test.codex.next_event())
-            .await
-            .is_err(),
-        "waiting for request_user_input should keep the turn open without emitting more events"
-    );
-    assert_eq!(
-        3,
-        responses.requests().len(),
-        "waiting for request_user_input should not start another continuation request"
-    );
-
-    test.codex
-        .submit(Op::UserInputAnswer {
-            id: request_user_input_event.turn_id,
-            response: RequestUserInputResponse {
-                answers: std::collections::HashMap::from([(
-                    "next_step".to_string(),
-                    RequestUserInputAnswer {
-                        answers: vec!["Outline".to_string()],
-                    },
-                )]),
-            },
-        })
-        .await?;
-
-    let mut completed_turns = 0;
-    timeout(Duration::from_secs(8), async {
-        loop {
-            let event = test.codex.next_event().await?;
-            if matches!(event.msg, EventMsg::TurnComplete(_)) {
-                completed_turns += 1;
-                if completed_turns == 1 {
-                    return anyhow::Ok(());
-                }
-            }
-        }
-    })
-    .await??;
-
-    assert_eq!(5, responses.requests().len());
-
-    Ok(())
-}
-
-async fn set_total_token_usage(sess: &Session, total_token_usage: TokenUsage) {
-    let mut state = sess.state.lock().await;
-    state.set_token_info(Some(TokenUsageInfo {
-        total_token_usage,
-        last_token_usage: TokenUsage::default(),
-        model_context_window: None,
-    }));
-}
-
-fn post_goal_token_usage() -> TokenUsage {
-    TokenUsage {
-        input_tokens: 50,
-        cached_input_tokens: 10,
-        output_tokens: 30,
-        reasoning_output_tokens: 5,
-        total_tokens: 75,
-    }
-}
-
-async fn goal_test_state_db(sess: &Session) -> anyhow::Result<crate::StateDbHandle> {
-    let config = sess.get_config().await;
-    codex_state::StateRuntime::init(config.sqlite_home.clone(), config.model_provider_id.clone())
-        .await
-}
-
-#[tokio::test]
-async fn budget_limited_accounting_steers_active_turn_without_aborting() -> anyhow::Result<()> {
-    let (sess, tc, rx) = make_goal_session_and_context_with_rx().await;
-    sess.set_thread_goal(
-        tc.as_ref(),
-        SetGoalRequest {
-            objective: Some("Keep improving the benchmark".to_string()),
-            status: None,
-            token_budget: Some(Some(10)),
-        },
-    )
-    .await?;
-    sess.goal_runtime_apply(GoalRuntimeEvent::TurnStarted {
-        turn_context: tc.as_ref(),
-        token_usage: TokenUsage::default(),
-    })
-    .await?;
-    sess.spawn_task(
-        Arc::clone(&tc),
-        Vec::new(),
-        NeverEndingTask {
-            kind: TaskKind::Regular,
-            listen_to_cancellation_token: false,
-        },
-    )
-    .await;
-    while rx.try_recv().is_ok() {}
-
-    set_total_token_usage(
-        &sess,
-        TokenUsage {
-            input_tokens: 20,
-            cached_input_tokens: 0,
-            output_tokens: 5,
-            reasoning_output_tokens: 0,
-            total_tokens: 25,
-        },
-    )
-    .await;
-
-    sess.goal_runtime_apply(GoalRuntimeEvent::ToolCompleted {
-        turn_context: tc.as_ref(),
-        tool_name: "shell",
-    })
-    .await?;
-
-    let pending_input = sess.get_pending_input().await;
-    let [ResponseInputItem::Message { role, content, .. }] = pending_input.as_slice() else {
-        panic!("expected one budget-limit steering message, got {pending_input:#?}");
-    };
-    assert_eq!("developer", role);
-    let [ContentItem::InputText { text }] = content.as_slice() else {
-        panic!("expected one text span in budget-limit steering message, got {content:#?}");
-    };
-    assert!(text.contains("budget_limited"));
-    assert!(text.to_lowercase().contains("wrap up this turn soon"));
-    assert!(sess.active_turn.lock().await.is_some());
-    while let Ok(event) = rx.try_recv() {
-        assert!(
-            !matches!(event.msg, EventMsg::TurnAborted(_)),
-            "budget limit should steer the active turn instead of aborting it"
-        );
-    }
-
-    let state_db = goal_test_state_db(sess.as_ref()).await?;
-    let goal = state_db
-        .get_thread_goal(sess.conversation_id)
-        .await?
-        .expect("goal should remain persisted after accounting");
-    assert_eq!(codex_state::ThreadGoalStatus::BudgetLimited, goal.status);
-    assert_eq!(25, goal.tokens_used);
-
-    set_total_token_usage(
-        &sess,
-        TokenUsage {
-            input_tokens: 30,
-            cached_input_tokens: 0,
-            output_tokens: 10,
-            reasoning_output_tokens: 0,
-            total_tokens: 40,
-        },
-    )
-    .await;
-    sess.goal_runtime_apply(GoalRuntimeEvent::ToolCompletedGoal {
-        turn_context: tc.as_ref(),
-    })
-    .await?;
-
-    let goal = state_db
-        .get_thread_goal(sess.conversation_id)
-        .await?
-        .expect("goal should remain persisted after follow-up accounting");
-    assert_eq!(codex_state::ThreadGoalStatus::BudgetLimited, goal.status);
-    assert_eq!(40, goal.tokens_used);
-
-    sess.abort_all_tasks(TurnAbortReason::Interrupted).await;
-
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn external_goal_mutation_accounts_active_turn_before_status_change() -> anyhow::Result<()> {
-    let (sess, tc, _rx) = make_goal_session_and_context_with_rx().await;
-    sess.set_thread_goal(
-        tc.as_ref(),
-        SetGoalRequest {
-            objective: Some("Keep improving the benchmark".to_string()),
-            status: None,
-            token_budget: None,
-        },
-    )
-    .await?;
-    sess.spawn_task(
-        Arc::clone(&tc),
-        Vec::new(),
-        NeverEndingTask {
-            kind: TaskKind::Regular,
-            listen_to_cancellation_token: false,
-        },
-    )
-    .await;
-    set_total_token_usage(&sess, post_goal_token_usage()).await;
-
-    sess.goal_runtime_apply(GoalRuntimeEvent::ExternalMutationStarting)
-        .await?;
-
-    let state_db = goal_test_state_db(sess.as_ref()).await?;
-    let goal = state_db
-        .get_thread_goal(sess.conversation_id)
-        .await?
-        .expect("goal should remain persisted");
-    assert_eq!(70, goal.tokens_used);
-
-    state_db
-        .update_thread_goal(
-            sess.conversation_id,
-            codex_state::ThreadGoalUpdate {
-                status: Some(codex_state::ThreadGoalStatus::Complete),
-                token_budget: None,
-                expected_goal_id: Some(goal.goal_id),
-            },
-        )
-        .await?
-        .expect("goal status update should succeed");
-    sess.goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
-        status: codex_state::ThreadGoalStatus::Complete,
-    })
-    .await?;
-
-    assert!(sess.active_turn.lock().await.is_some());
-    let goal = state_db
-        .get_thread_goal(sess.conversation_id)
-        .await?
-        .expect("goal should remain persisted");
-    assert_eq!(codex_state::ThreadGoalStatus::Complete, goal.status);
-    assert_eq!(70, goal.tokens_used);
-
-    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
-
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn external_active_goal_set_marks_current_turn_for_accounting() -> anyhow::Result<()> {
-    let (sess, tc, _rx) = make_goal_session_and_context_with_rx().await;
-    sess.spawn_task(
-        Arc::clone(&tc),
-        Vec::new(),
-        NeverEndingTask {
-            kind: TaskKind::Regular,
-            listen_to_cancellation_token: false,
-        },
-    )
-    .await;
-    set_total_token_usage(&sess, post_goal_token_usage()).await;
-
-    let state_db = goal_test_state_db(sess.as_ref()).await?;
-    state_db
-        .replace_thread_goal(
-            sess.conversation_id,
-            "Keep improving the benchmark",
-            codex_state::ThreadGoalStatus::Active,
-            /*token_budget*/ None,
-        )
-        .await?;
-    sess.goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
-        status: codex_state::ThreadGoalStatus::Active,
-    })
-    .await?;
-
-    set_total_token_usage(
-        &sess,
-        TokenUsage {
-            input_tokens: 65,
-            cached_input_tokens: 10,
-            output_tokens: 40,
-            reasoning_output_tokens: 5,
-            total_tokens: 110,
-        },
-    )
-    .await;
-    sess.goal_runtime_apply(GoalRuntimeEvent::ToolCompleted {
-        turn_context: tc.as_ref(),
-        tool_name: "shell",
-    })
-    .await?;
-
-    let goal = state_db
-        .get_thread_goal(sess.conversation_id)
-        .await?
-        .expect("goal should remain persisted");
-    assert_eq!(codex_state::ThreadGoalStatus::Active, goal.status);
-    assert_eq!(25, goal.tokens_used);
-
-    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
-
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn completed_goal_accounts_current_turn_tokens_before_tool_response() -> anyhow::Result<()> {
-    let server = start_mock_server().await;
-    let mut builder = test_codex().with_config(|config| {
-        config
-            .features
-            .enable(Feature::Goals)
-            .expect("goal mode should be enableable in tests");
-    });
-    let test = builder.build(&server).await?;
-    let responses = mount_sse_sequence(
-        &server,
-        vec![
-            sse(vec![
-                ev_response_created("resp-1"),
-                ev_function_call(
-                    "call-create-goal",
-                    "create_goal",
-                    r#"{"objective":"write a report","token_budget":500}"#,
-                ),
-                ev_completed("resp-1"),
-            ]),
-            sse(vec![
-                ev_response_created("resp-2"),
-                ev_function_call(
-                    "call-complete-goal",
-                    "update_goal",
-                    r#"{"status":"complete"}"#,
-                ),
-                ev_completed_with_tokens("resp-2", /*total_tokens*/ 580),
-            ]),
-            sse(vec![
-                ev_assistant_message("msg-1", "Goal complete."),
-                ev_completed("resp-3"),
-            ]),
-        ],
-    )
-    .await;
-
-    test.codex
-        .submit(Op::UserInput {
-            environments: None,
-            items: vec![UserInput::Text {
-                text: "write a report".into(),
-                text_elements: Vec::new(),
-            }],
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-        })
-        .await?;
-
-    tokio::time::timeout(std::time::Duration::from_secs(8), async {
-        loop {
-            let event = test.codex.next_event().await?;
-            if matches!(event.msg, EventMsg::TurnComplete(_)) {
-                return anyhow::Ok(());
-            }
-        }
-    })
-    .await??;
-
-    let complete_output = responses
-        .function_call_output_text("call-complete-goal")
-        .expect("complete tool output should be sent to the model");
-    let complete_output: serde_json::Value = serde_json::from_str(&complete_output)?;
-    assert_eq!(complete_output["goal"]["tokensUsed"], 580);
-    assert_eq!(complete_output["goal"]["status"], "complete");
-    assert_eq!(complete_output["remainingTokens"], 0);
-    assert_eq!(
-        complete_output["completionBudgetReport"],
-        "Goal achieved. Report final budget usage to the user: tokens used: 580 of 500."
-    );
-    let requests = responses.requests();
-    let completion_followup_request = requests
-        .last()
-        .expect("completion tool output should be sent in a follow-up request");
-    assert!(
-        !completion_followup_request.body_contains_text("budget_limited"),
-        "completion follow-up should not include budget-limit steering"
-    );
-
-    let state_db = codex_state::StateRuntime::init(
-        test.config.sqlite_home.clone(),
-        test.config.model_provider_id.clone(),
-    )
-    .await?;
-    let persisted_goal = state_db
-        .get_thread_goal(test.session_configured.session_id)
-        .await?
-        .expect("goal should be persisted");
-    assert_eq!(
-        codex_state::ThreadGoalStatus::Complete,
-        persisted_goal.status
-    );
-    assert_eq!(580, persisted_goal.tokens_used);
-
-    Ok(())
 }
 
 #[tokio::test]
@@ -7938,6 +7552,7 @@ async fn fatal_tool_error_stops_turn_and_reports_error() {
             parallel_mcp_server_names: HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
+            extension_tool_specs: Vec::new(),
         },
     );
     let item = ResponseItem::CustomToolCall {
@@ -7972,6 +7587,77 @@ async fn fatal_tool_error_stops_turn_and_reports_error() {
         }
         other => panic!("expected FunctionCallError::Fatal, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn extension_tool_dispatch_invokes_host_handler_and_lifecycle_event() {
+    let tool_name = "host_tool";
+    let (mut session, turn_context) = make_session_and_context().await;
+    let extension = Arc::new(RecordingRuntimeExtension::new(vec![
+        extension_function_tool(tool_name),
+    ]));
+    let runtime_extension: Arc<dyn crate::session_extension::SessionRuntimeExtension> =
+        extension.clone();
+    session.services.runtime_extension = Some(runtime_extension);
+    let session = Arc::new(session);
+    let turn_context = Arc::new(turn_context);
+    let router = ToolRouter::from_config(
+        &turn_context.tools_config,
+        crate::tools::router::ToolRouterParams {
+            deferred_mcp_tools: None,
+            mcp_tools: None,
+            unavailable_called_tools: Vec::new(),
+            parallel_mcp_server_names: HashSet::new(),
+            discoverable_tools: None,
+            dynamic_tools: turn_context.dynamic_tools.as_slice(),
+            extension_tool_specs: vec![extension_function_tool(tool_name)],
+        },
+    );
+    let item = ResponseItem::FunctionCall {
+        id: None,
+        name: tool_name.to_string(),
+        namespace: None,
+        arguments: "{\"ok\":true}".to_string(),
+        call_id: "call-extension".to_string(),
+    };
+    let call = ToolRouter::build_tool_call(session.as_ref(), item)
+        .await
+        .expect("build extension tool call")
+        .expect("tool call present");
+    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+    let response = router
+        .dispatch_tool_call_with_code_mode_result(
+            Arc::clone(&session),
+            Arc::clone(&turn_context),
+            CancellationToken::new(),
+            tracker,
+            call,
+            ToolCallSource::Direct,
+        )
+        .await
+        .expect("extension tool dispatch should succeed")
+        .into_response();
+
+    assert!(matches!(
+        response,
+        ResponseInputItem::FunctionCallOutput {
+            call_id,
+            output: FunctionCallOutputPayload {
+                body: FunctionCallOutputBody::Text(text),
+                success: Some(true),
+            },
+        } if call_id == "call-extension" && text == "extension output"
+    ));
+    assert_eq!(
+        extension.wait_for_events(2).await,
+        vec![
+            format!(
+                "tool_call:{}:{tool_name}:{{\"ok\":true}}",
+                turn_context.sub_id
+            ),
+            format!("tool_completed:{}:{tool_name}", turn_context.sub_id),
+        ]
+    );
 }
 
 async fn sample_rollout(
@@ -8133,181 +7819,6 @@ async fn sample_rollout(
         rollout_items,
         live_history.for_prompt(&reconstruction_turn.model_info.input_modalities),
     )
-}
-
-#[tokio::test]
-async fn create_goal_tool_rejects_existing_goal() {
-    let (session, turn_context, _rx) = make_goal_session_and_context_with_rx().await;
-    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-    let handler = GoalHandler;
-
-    handler
-        .handle(ToolInvocation {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn_context),
-            cancellation_token: CancellationToken::new(),
-            tracker: Arc::clone(&tracker),
-            call_id: "create-goal-1".to_string(),
-            tool_name: codex_tools::ToolName::plain("create_goal"),
-            source: ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: serde_json::json!({
-                    "objective": "Keep the watcher alive",
-                    "token_budget": 123,
-                })
-                .to_string(),
-            },
-        })
-        .await
-        .expect("initial create_goal should succeed");
-
-    let response = handler
-        .handle(ToolInvocation {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn_context),
-            cancellation_token: CancellationToken::new(),
-            tracker,
-            call_id: "create-goal-2".to_string(),
-            tool_name: codex_tools::ToolName::plain("create_goal"),
-            source: ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: serde_json::json!({
-                    "objective": "Replace the watcher",
-                    "token_budget": 456,
-                })
-                .to_string(),
-            },
-        })
-        .await;
-
-    let Err(FunctionCallError::RespondToModel(output)) = response else {
-        panic!("expected create_goal to reject an existing goal");
-    };
-    assert_eq!(
-        output,
-        "cannot create a new goal because this thread already has a goal; use update_goal only when the existing goal is complete"
-    );
-
-    let goal = session
-        .get_thread_goal()
-        .await
-        .expect("read thread goal")
-        .expect("goal should still exist");
-    assert_eq!(goal.objective, "Keep the watcher alive");
-    assert_eq!(goal.token_budget, Some(123));
-}
-
-#[tokio::test]
-async fn update_goal_tool_rejects_pausing_goal() {
-    let (session, turn_context, _rx) = make_goal_session_and_context_with_rx().await;
-    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-    let handler = GoalHandler;
-
-    handler
-        .handle(ToolInvocation {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn_context),
-            cancellation_token: CancellationToken::new(),
-            tracker: Arc::clone(&tracker),
-            call_id: "create-goal".to_string(),
-            tool_name: codex_tools::ToolName::plain("create_goal"),
-            source: ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: serde_json::json!({
-                    "objective": "Keep the watcher alive",
-                    "token_budget": 123,
-                })
-                .to_string(),
-            },
-        })
-        .await
-        .expect("initial create_goal should succeed");
-
-    let response = handler
-        .handle(ToolInvocation {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn_context),
-            cancellation_token: CancellationToken::new(),
-            tracker,
-            call_id: "pause-goal".to_string(),
-            tool_name: codex_tools::ToolName::plain("update_goal"),
-            source: ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: serde_json::json!({
-                    "status": "paused",
-                })
-                .to_string(),
-            },
-        })
-        .await;
-
-    let Err(FunctionCallError::RespondToModel(output)) = response else {
-        panic!("expected update_goal to reject pausing a goal");
-    };
-    assert_eq!(
-        output,
-        "update_goal can only mark the existing goal complete; pause, resume, and budget-limited status changes are controlled by the user or system"
-    );
-
-    let goal = session
-        .get_thread_goal()
-        .await
-        .expect("read thread goal")
-        .expect("goal should still exist");
-    assert_eq!(goal.status, ThreadGoalStatus::Active);
-}
-
-#[tokio::test]
-async fn update_goal_tool_marks_goal_complete() {
-    let (session, turn_context, _rx) = make_goal_session_and_context_with_rx().await;
-    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-    let handler = GoalHandler;
-
-    handler
-        .handle(ToolInvocation {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn_context),
-            cancellation_token: CancellationToken::new(),
-            tracker: Arc::clone(&tracker),
-            call_id: "create-goal".to_string(),
-            tool_name: codex_tools::ToolName::plain("create_goal"),
-            source: ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: serde_json::json!({
-                    "objective": "Keep the watcher alive",
-                    "token_budget": 123,
-                })
-                .to_string(),
-            },
-        })
-        .await
-        .expect("initial create_goal should succeed");
-
-    handler
-        .handle(ToolInvocation {
-            session: Arc::clone(&session),
-            turn: Arc::clone(&turn_context),
-            cancellation_token: CancellationToken::new(),
-            tracker,
-            call_id: "complete-goal".to_string(),
-            tool_name: codex_tools::ToolName::plain("update_goal"),
-            source: ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: serde_json::json!({
-                    "status": "complete",
-                })
-                .to_string(),
-            },
-        })
-        .await
-        .expect("update_goal should mark the goal complete");
-
-    let goal = session
-        .get_thread_goal()
-        .await
-        .expect("read thread goal")
-        .expect("goal should still exist");
-    assert_eq!(goal.status, ThreadGoalStatus::Complete);
 }
 
 #[tokio::test]

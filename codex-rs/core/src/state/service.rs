@@ -9,6 +9,7 @@ use crate::exec_policy::ExecPolicyManager;
 use crate::guardian::GuardianRejection;
 use crate::guardian::GuardianRejectionCircuitBreaker;
 use crate::mcp::McpManager;
+use crate::session_extension::SessionRuntimeExtension;
 use crate::skills_watcher::SkillsWatcher;
 use crate::tools::code_mode::CodeModeService;
 use crate::tools::network_approval::NetworkApprovalService;
@@ -69,6 +70,7 @@ pub(crate) struct SessionServices {
     /// Session-scoped model client shared across turns.
     pub(crate) model_client: ModelClient,
     pub(crate) code_mode_service: CodeModeService,
+    pub(crate) runtime_extension: Option<Arc<dyn SessionRuntimeExtension>>,
     /// Shared process-level environment registry. Sessions carry an `Arc` handle so they can pass
     /// the same manager through child-thread spawn paths without reconstructing it.
     pub(crate) environment_manager: Arc<EnvironmentManager>,

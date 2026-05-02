@@ -1238,6 +1238,15 @@ pub(crate) async fn built_tools(
                 .then_some(server_name.clone())
         })
         .collect::<HashSet<_>>();
+    let extension_tool_specs = sess
+        .runtime_extension()
+        .map(|extension| {
+            extension.tool_specs(crate::session_extension::SessionToolSpecContext {
+                mode: turn_context.collaboration_mode.mode,
+                ephemeral: turn_context.config.ephemeral,
+            })
+        })
+        .unwrap_or_default();
 
     Ok(Arc::new(ToolRouter::from_config(
         &turn_context.tools_config,
@@ -1248,6 +1257,7 @@ pub(crate) async fn built_tools(
             parallel_mcp_server_names,
             discoverable_tools,
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
+            extension_tool_specs,
         },
     )))
 }

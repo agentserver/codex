@@ -256,6 +256,8 @@ use codex_core::ForkSnapshot;
 use codex_core::NewThread;
 use codex_core::RolloutRecorder;
 use codex_core::SessionMeta;
+use codex_core::SessionRuntimeEvent;
+use codex_core::SessionRuntimeExtension;
 use codex_core::StartThreadOptions;
 use codex_core::SteerInputError;
 use codex_core::ThreadConfigSnapshot;
@@ -430,6 +432,7 @@ mod token_usage_replay;
 
 use crate::filters::compute_source_filters;
 use crate::filters::source_kind_matches;
+use crate::thread_goal_runtime::ThreadGoalRuntime;
 use crate::thread_state::ThreadListenerCommand;
 use crate::thread_state::ThreadState;
 use crate::thread_state::ThreadStateManager;
@@ -550,6 +553,7 @@ pub(crate) struct CodexMessageProcessor {
     background_tasks: TaskTracker,
     feedback: CodexFeedback,
     log_db: Option<LogDbLayer>,
+    goal_runtime: Option<Arc<ThreadGoalRuntime>>,
 }
 
 #[derive(Clone)]
@@ -563,6 +567,16 @@ struct ListenerTaskContext {
     thread_list_state_permit: Arc<Semaphore>,
     fallback_model_provider: String,
     codex_home: PathBuf,
+    goal_runtime: Option<Arc<ThreadGoalRuntime>>,
+}
+
+struct ThreadUnloadContext {
+    thread_manager: Arc<ThreadManager>,
+    outgoing: Arc<OutgoingMessageSender>,
+    pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
+    thread_state_manager: ThreadStateManager,
+    thread_watch_manager: ThreadWatchManager,
+    goal_runtime: Option<Arc<ThreadGoalRuntime>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -857,6 +871,15 @@ impl CodexMessageProcessor {
             feedback,
             log_db,
         } = args;
+        let goal_runtime = config
+            .features
+            .enabled(Feature::Goals)
+            .then(|| Arc::new(ThreadGoalRuntime::new()));
+        if let Some(goal_runtime) = goal_runtime.as_ref() {
+            let extension: Arc<dyn SessionRuntimeExtension> = goal_runtime.clone();
+            thread_manager.set_runtime_extension(Some(extension));
+        }
+
         Self {
             auth_manager,
             thread_manager,
@@ -880,6 +903,7 @@ impl CodexMessageProcessor {
             background_tasks: TaskTracker::new(),
             feedback,
             log_db,
+            goal_runtime,
         }
     }
 
@@ -2559,6 +2583,7 @@ impl CodexMessageProcessor {
             thread_list_state_permit: self.thread_list_state_permit.clone(),
             fallback_model_provider: self.config.model_provider_id.clone(),
             codex_home: self.config.codex_home.to_path_buf(),
+            goal_runtime: self.goal_runtime.clone(),
         };
         let request_trace = request_context.request_trace();
         let config_manager = self.config_manager.clone();
@@ -4536,8 +4561,11 @@ impl CodexMessageProcessor {
                 if self.config.features.enabled(Feature::Goals) {
                     self.emit_thread_goal_snapshot(thread_id).await;
                     // App-server owns resume response and snapshot ordering, so wait
-                    // until those are sent before letting core start goal continuation.
-                    if let Err(err) = codex_thread.continue_active_goal_if_idle().await {
+                    // until those are sent before letting the goal runtime continue.
+                    if let Err(err) = codex_thread
+                        .apply_runtime_extension_event(SessionRuntimeEvent::MaybeContinueIfIdle)
+                        .await
+                    {
                         tracing::warn!("failed to continue active goal after resume: {err}");
                     }
                 }
@@ -5997,17 +6025,24 @@ impl CodexMessageProcessor {
         self.thread_watch_manager
             .remove_thread(&thread_id.to_string())
             .await;
+        if let Some(goal_runtime) = self.goal_runtime.as_ref() {
+            goal_runtime.clear_thread_state(thread_id).await;
+        }
     }
 
     async fn unload_thread_without_subscribers(
-        thread_manager: Arc<ThreadManager>,
-        outgoing: Arc<OutgoingMessageSender>,
-        pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
-        thread_state_manager: ThreadStateManager,
-        thread_watch_manager: ThreadWatchManager,
+        context: ThreadUnloadContext,
         thread_id: ThreadId,
         thread: Arc<CodexThread>,
     ) {
+        let ThreadUnloadContext {
+            thread_manager,
+            outgoing,
+            pending_thread_unloads,
+            thread_state_manager,
+            thread_watch_manager,
+            goal_runtime,
+        } = context;
         info!("thread {thread_id} has no subscribers and is idle; shutting down");
 
         // Any pending app-server -> client requests for this thread can no longer be
@@ -6016,6 +6051,9 @@ impl CodexMessageProcessor {
             .cancel_requests_for_thread(thread_id, /*error*/ None)
             .await;
         thread_state_manager.remove_thread_state(thread_id).await;
+        if let Some(goal_runtime) = goal_runtime.as_ref() {
+            goal_runtime.clear_thread_state(thread_id).await;
+        }
 
         tokio::spawn(async move {
             match Self::wait_for_thread_shutdown(&thread).await {
@@ -7524,6 +7562,7 @@ impl CodexMessageProcessor {
                 thread_list_state_permit: self.thread_list_state_permit.clone(),
                 fallback_model_provider: self.config.model_provider_id.clone(),
                 codex_home: self.config.codex_home.to_path_buf(),
+                goal_runtime: self.goal_runtime.clone(),
             },
             conversation_id,
             connection_id,
@@ -7638,6 +7677,7 @@ impl CodexMessageProcessor {
                 thread_list_state_permit: self.thread_list_state_permit.clone(),
                 fallback_model_provider: self.config.model_provider_id.clone(),
                 codex_home: self.config.codex_home.to_path_buf(),
+                goal_runtime: self.goal_runtime.clone(),
             },
             conversation_id,
             conversation,
@@ -7685,6 +7725,7 @@ impl CodexMessageProcessor {
             thread_list_state_permit,
             fallback_model_provider,
             codex_home,
+            goal_runtime,
         } = listener_task_context;
         let outgoing_for_task = Arc::clone(&outgoing);
         tokio::spawn(async move {
@@ -7788,11 +7829,14 @@ impl CodexMessageProcessor {
                             pending_thread_unloads.insert(conversation_id);
                         }
                         Self::unload_thread_without_subscribers(
-                            thread_manager.clone(),
-                            outgoing_for_task.clone(),
-                            pending_thread_unloads.clone(),
-                            thread_state_manager.clone(),
-                            thread_watch_manager.clone(),
+                            ThreadUnloadContext {
+                                thread_manager: thread_manager.clone(),
+                                outgoing: outgoing_for_task.clone(),
+                                pending_thread_unloads: pending_thread_unloads.clone(),
+                                thread_state_manager: thread_state_manager.clone(),
+                                thread_watch_manager: thread_watch_manager.clone(),
+                                goal_runtime: goal_runtime.clone(),
+                            },
                             conversation_id,
                             conversation.clone(),
                         )
@@ -8466,7 +8510,9 @@ async fn handle_pending_thread_resume_request(
     }
 
     if pending.emit_thread_goal_update
-        && let Err(err) = conversation.apply_goal_resume_runtime_effects().await
+        && let Err(err) = conversation
+            .apply_runtime_extension_event(SessionRuntimeEvent::ThreadResumed)
+            .await
     {
         tracing::warn!("failed to apply goal resume runtime effects: {err}");
     }
@@ -8537,9 +8583,11 @@ async fn handle_pending_thread_resume_request(
         .replay_requests_to_connection_for_thread(connection_id, conversation_id)
         .await;
     // App-server owns resume response and snapshot ordering, so wait until
-    // replay completes before letting core start goal continuation.
+    // replay completes before letting the goal runtime start continuation.
     if pending.emit_thread_goal_update
-        && let Err(err) = conversation.continue_active_goal_if_idle().await
+        && let Err(err) = conversation
+            .apply_runtime_extension_event(SessionRuntimeEvent::MaybeContinueIfIdle)
+            .await
     {
         tracing::warn!("failed to continue active goal after running-thread resume: {err}");
     }

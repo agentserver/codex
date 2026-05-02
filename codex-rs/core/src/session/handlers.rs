@@ -279,6 +279,20 @@ pub(super) async fn user_input_or_turn_inner(
             .await;
             Some(accepted_items)
         }
+        Err(SteerInputError::EmptyInput)
+            if sess.has_queued_response_items_for_next_turn().await
+                || sess.has_trigger_turn_mailbox_items().await =>
+        {
+            sess.refresh_mcp_servers_if_requested(&current_context)
+                .await;
+            sess.spawn_task(
+                Arc::clone(&current_context),
+                Vec::new(),
+                crate::tasks::RegularTask::new(),
+            )
+            .await;
+            Some(Vec::new())
+        }
         Err(err) => {
             sess.send_event_raw(Event {
                 id: sub_id,

@@ -1,5 +1,4 @@
 use super::*;
-use crate::goals::GoalRuntimeState;
 use codex_otel::LEGACY_NOTIFY_CONFIGURED_METRIC;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSpecialPath;
@@ -11,6 +10,7 @@ use tokio::sync::Semaphore;
 /// A session has at most 1 running task at a time, and can be interrupted by user input.
 pub(crate) struct Session {
     pub(crate) conversation_id: ThreadId,
+    pub(crate) tx_sub: Sender<Submission>,
     pub(super) tx_event: Sender<Event>,
     pub(super) agent_status: watch::Sender<AgentStatus>,
     pub(super) out_of_band_elicitation_paused: watch::Sender<bool>,
@@ -27,7 +27,6 @@ pub(crate) struct Session {
     pub(super) mailbox: Mailbox,
     pub(super) mailbox_rx: Mutex<MailboxReceiver>,
     pub(super) idle_pending_input: Mutex<Vec<ResponseInputItem>>, // TODO (jif) merge with mailbox!
-    pub(crate) goal_runtime: GoalRuntimeState,
     pub(crate) guardian_review_session: GuardianReviewSessionManager,
     pub(crate) services: SessionServices,
     pub(super) next_internal_sub_id: AtomicU64,
@@ -333,6 +332,7 @@ impl Session {
         auth_manager: Arc<AuthManager>,
         models_manager: SharedModelsManager,
         exec_policy: Arc<ExecPolicyManager>,
+        tx_sub: Sender<Submission>,
         tx_event: Sender<Event>,
         agent_status: watch::Sender<AgentStatus>,
         initial_history: InitialHistory,
@@ -346,6 +346,7 @@ impl Session {
         analytics_events_client: Option<AnalyticsEventsClient>,
         thread_store: Arc<dyn ThreadStore>,
         parent_rollout_thread_trace: ThreadTraceContext,
+        runtime_extension: Option<Arc<dyn SessionRuntimeExtension>>,
     ) -> anyhow::Result<Arc<Self>> {
         debug!(
             "Configuring session: model={}; provider={:?}",
@@ -876,6 +877,7 @@ impl Session {
                     Self::build_model_client_beta_features_header(config.as_ref()),
                 ),
                 code_mode_service: crate::tools::code_mode::CodeModeService::new(),
+                runtime_extension,
                 environment_manager,
             };
             services
@@ -887,6 +889,7 @@ impl Session {
             let (mailbox, mailbox_rx) = Mailbox::new();
             let sess = Arc::new(Session {
                 conversation_id,
+                tx_sub,
                 tx_event: tx_event.clone(),
                 agent_status,
                 out_of_band_elicitation_paused,
@@ -899,7 +902,6 @@ impl Session {
                 mailbox,
                 mailbox_rx: Mutex::new(mailbox_rx),
                 idle_pending_input: Mutex::new(Vec::new()),
-                goal_runtime: GoalRuntimeState::new(),
                 guardian_review_session: GuardianReviewSessionManager::default(),
                 services,
                 next_internal_sub_id: AtomicU64::new(0),

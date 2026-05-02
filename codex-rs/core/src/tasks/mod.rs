@@ -21,13 +21,13 @@ use tracing::warn;
 
 use crate::config::Config;
 use crate::context::ContextualUserFragment;
-use crate::goals::GoalRuntimeEvent;
 use crate::hook_runtime::PendingInputHookDisposition;
 use crate::hook_runtime::inspect_pending_input;
 use crate::hook_runtime::record_additional_contexts;
 use crate::hook_runtime::record_pending_input;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
+use crate::session_extension::SessionRuntimeEvent;
 use crate::state::ActiveTurn;
 use crate::state::RunningTask;
 use crate::state::TaskKind;
@@ -43,7 +43,9 @@ use codex_otel::TURN_TOOL_CALL_METRIC;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::Op;
 use codex_protocol::protocol::RolloutItem;
+use codex_protocol::protocol::Submission;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnAbortedEvent;
@@ -329,13 +331,14 @@ impl Session {
             .clear_turn(&turn_context.sub_id);
 
         if let Err(err) = self
-            .goal_runtime_apply(GoalRuntimeEvent::TurnStarted {
-                turn_context: turn_context.as_ref(),
+            .apply_runtime_extension_event(SessionRuntimeEvent::TurnStarted {
+                turn_id: turn_context.sub_id.clone(),
+                mode: turn_context.collaboration_mode.mode,
                 token_usage: token_usage_at_turn_start.clone(),
             })
             .await
         {
-            warn!("failed to apply goal runtime turn-start event: {err}");
+            warn!("failed to apply runtime extension turn-start event: {err}");
         }
         let queued_response_items = self.take_queued_response_items_for_next_turn().await;
         let mailbox_items = self.get_pending_input().await;
@@ -455,19 +458,53 @@ impl Session {
             return;
         }
 
-        {
-            let mut active_turn = self.active_turn.lock().await;
-            if active_turn.is_some() {
-                return;
-            }
-            *active_turn = Some(ActiveTurn::default());
+        if self.active_turn.lock().await.is_some() {
+            return;
         }
 
-        let turn_context = self.new_default_turn_with_sub_id(sub_id).await;
-        self.maybe_emit_unknown_model_warning_for_turn(turn_context.as_ref())
-            .await;
-        self.start_task(turn_context, Vec::new(), RegularTask::new())
-            .await;
+        self.submit_pending_work_wakeup(sub_id).await;
+    }
+
+    /// Starts a regular background turn with hidden input when the session is idle.
+    ///
+    /// This is intended for host runtime extensions that need to continue
+    /// process-owned work without reaching into `Session` internals. The helper
+    /// refuses to start if user-visible pending work exists or if another turn
+    /// becomes active while the background turn is being prepared.
+    pub(crate) async fn try_start_idle_background_turn(
+        self: &Arc<Self>,
+        items: Vec<ResponseInputItem>,
+    ) -> bool {
+        if items.is_empty()
+            || self.has_queued_response_items_for_next_turn().await
+            || self.has_trigger_turn_mailbox_items().await
+        {
+            return false;
+        }
+
+        if self.active_turn.lock().await.is_some() {
+            return false;
+        }
+
+        self.queue_response_items_for_next_turn(items).await;
+        self.submit_pending_work_wakeup(uuid::Uuid::new_v4().to_string())
+            .await
+    }
+
+    async fn submit_pending_work_wakeup(&self, sub_id: String) -> bool {
+        self.tx_sub
+            .send(Submission {
+                id: sub_id,
+                op: Op::UserInput {
+                    items: Vec::new(),
+                    environments: None,
+                    final_output_json_schema: None,
+                    responsesapi_client_metadata: None,
+                },
+                trace: None,
+            })
+            .await
+            .is_ok()
     }
 
     pub async fn abort_all_tasks(self: &Arc<Self>, reason: TurnAbortReason) {
@@ -488,13 +525,15 @@ impl Session {
 
         if (aborted_turn || reason == TurnAbortReason::Interrupted)
             && let Err(err) = self
-                .goal_runtime_apply(GoalRuntimeEvent::TaskAborted {
-                    turn_context: turn_context.as_deref(),
+                .apply_runtime_extension_event(SessionRuntimeEvent::TaskAborted {
+                    turn_id: turn_context
+                        .as_ref()
+                        .map(|turn_context| turn_context.sub_id.clone()),
                     reason: reason.clone(),
                 })
                 .await
         {
-            warn!("failed to apply goal runtime abort event: {err}");
+            warn!("failed to apply runtime extension abort event: {err}");
         }
         if let Some(active_turn) = active_turn_to_clear {
             // Let interrupted tasks observe cancellation before dropping pending approvals, or an
@@ -532,13 +571,15 @@ impl Session {
             self.handle_task_abort(task, reason.clone()).await;
         }
         if let Err(err) = self
-            .goal_runtime_apply(GoalRuntimeEvent::TaskAborted {
-                turn_context: turn_context.as_deref(),
+            .apply_runtime_extension_event(SessionRuntimeEvent::TaskAborted {
+                turn_id: turn_context
+                    .as_ref()
+                    .map(|turn_context| turn_context.sub_id.clone()),
                 reason: reason.clone(),
             })
             .await
         {
-            warn!("failed to apply goal runtime abort event: {err}");
+            warn!("failed to apply runtime extension abort event: {err}");
         }
         // Let interrupted tasks observe cancellation before dropping pending approvals, or an
         // in-flight approval wait can surface as a model-visible rejection before TurnAborted.
@@ -732,13 +773,14 @@ impl Session {
             .time_to_first_token_ms()
             .await;
         if let Err(err) = self
-            .goal_runtime_apply(GoalRuntimeEvent::TurnFinished {
-                turn_context: turn_context.as_ref(),
+            .apply_runtime_extension_event(SessionRuntimeEvent::TurnFinished {
+                turn_id: turn_context.sub_id.clone(),
+                mode: turn_context.collaboration_mode.mode,
                 turn_completed: should_clear_active_turn,
             })
             .await
         {
-            warn!("failed to apply goal runtime turn-finished event: {err}");
+            warn!("failed to apply runtime extension turn-finished event: {err}");
         }
         let event = EventMsg::TurnComplete(TurnCompleteEvent {
             turn_id: turn_context.sub_id.clone(),
@@ -772,12 +814,16 @@ impl Session {
             if !cleared_active_turn {
                 return;
             }
-            if let Err(err) = self
-                .goal_runtime_apply(GoalRuntimeEvent::MaybeContinueIfIdle)
-                .await
-            {
-                warn!("failed to apply goal runtime maybe-continue event: {err}");
-            }
+            let sess = Arc::clone(self);
+            tokio::spawn(async move {
+                sess.maybe_start_turn_for_pending_work().await;
+                if let Err(err) = sess
+                    .apply_runtime_extension_event(SessionRuntimeEvent::MaybeContinueIfIdle)
+                    .await
+                {
+                    warn!("failed to apply runtime extension maybe-continue event: {err}");
+                }
+            });
         }
     }
 

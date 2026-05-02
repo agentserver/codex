@@ -438,7 +438,7 @@ impl ModelClient {
             model_info,
             effort,
             summary,
-            None,
+            /*service_tier*/ None,
         )?;
         // Phase 1 builds the same request body that a normal `/responses` turn would send. Phase 2
         // clears only the fields the compact endpoint currently rejects; the rest of the body stays

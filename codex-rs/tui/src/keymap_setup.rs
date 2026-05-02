@@ -741,7 +741,7 @@ fn key_parts_to_config_key_spec(
         KeyCode::Char(' ') => "space".to_string(),
         KeyCode::Char(mut ch) => {
             if ch == '-' {
-                return Err("The `-` key cannot be represented in `tui.keymap` yet.".to_string());
+                return Ok(format_key_spec(modifiers, "minus"));
             }
             if !ch.is_ascii() || ch.is_ascii_control() {
                 return Err("Only printable ASCII keys can be stored in `tui.keymap`.".to_string());
@@ -757,18 +757,22 @@ fn key_parts_to_config_key_spec(
         }
     };
 
+    Ok(format_key_spec(modifiers, &key))
+}
+
+fn format_key_spec(modifiers: KeyModifiers, key: &str) -> String {
     let mut parts = Vec::new();
     if modifiers.contains(KeyModifiers::CONTROL) {
-        parts.push("ctrl".to_string());
+        parts.push("ctrl");
     }
     if modifiers.contains(KeyModifiers::ALT) {
-        parts.push("alt".to_string());
+        parts.push("alt");
     }
     if modifiers.contains(KeyModifiers::SHIFT) {
-        parts.push("shift".to_string());
+        parts.push("shift");
     }
     parts.push(key);
-    Ok(parts.join("-"))
+    parts.join("-")
 }
 
 #[cfg(test)]
@@ -1528,10 +1532,21 @@ mod tests {
     }
 
     #[test]
-    fn key_capture_rejects_unrepresentable_keys() {
-        assert!(
-            key_event_to_config_key_spec(KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE))
-                .is_err()
+    fn key_capture_serializes_minus_as_named_key() {
+        assert_eq!(
+            key_event_to_config_key_spec(KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE)),
+            Ok("minus".to_string())
+        );
+        assert_eq!(
+            key_event_to_config_key_spec(KeyEvent::new(KeyCode::Char('-'), KeyModifiers::ALT)),
+            Ok("alt-minus".to_string())
+        );
+        assert_eq!(
+            key_event_to_config_key_spec(KeyEvent::new(
+                KeyCode::Char('-'),
+                KeyModifiers::CONTROL | KeyModifiers::ALT,
+            )),
+            Ok("ctrl-alt-minus".to_string())
         );
     }
 

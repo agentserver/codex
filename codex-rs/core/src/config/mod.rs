@@ -45,6 +45,7 @@ use codex_config::types::OAuthCredentialsStoreMode;
 use codex_config::types::OtelConfig;
 use codex_config::types::OtelConfigToml;
 use codex_config::types::OtelExporterKind;
+use codex_config::types::SessionPickerViewMode;
 use codex_config::types::ToolSuggestConfig;
 use codex_config::types::ToolSuggestDiscoverable;
 use codex_config::types::TuiKeymap;
@@ -497,6 +498,9 @@ pub struct Config {
 
     /// Syntax highlighting theme override (kebab-case name).
     pub tui_theme: Option<String>,
+
+    /// Preferred layout for resume/fork session picker results.
+    pub tui_session_picker_view: SessionPickerViewMode,
 
     /// Terminal resize-reflow tuning knobs.
     pub terminal_resize_reflow: TerminalResizeReflowConfig,
@@ -2708,6 +2712,11 @@ impl Config {
             tui_status_line: cfg.tui.as_ref().and_then(|t| t.status_line.clone()),
             tui_terminal_title: cfg.tui.as_ref().and_then(|t| t.terminal_title.clone()),
             tui_theme: cfg.tui.as_ref().and_then(|t| t.theme.clone()),
+            tui_session_picker_view: cfg
+                .tui
+                .as_ref()
+                .and_then(|t| t.session_picker_view)
+                .unwrap_or_default(),
             terminal_resize_reflow,
             tui_keymap: cfg
                 .tui

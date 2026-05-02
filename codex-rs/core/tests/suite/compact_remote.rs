@@ -639,7 +639,8 @@ async fn remote_manual_compact_matches_last_sampling_request_after_varied_histor
 
 async fn assert_remote_compact_service_tier_for_auth(
     auth: CodexAuth,
-    expected_service_tier: Option<&str>,
+    expected_responses_service_tier: Option<&str>,
+    expected_compact_service_tier: Option<&str>,
 ) -> Result<()> {
     // Configure fast mode in both cases so auth mode is the only reason for the wire shape to
     // include or omit `service_tier`.
@@ -690,8 +691,8 @@ async fn assert_remote_compact_service_tier_for_auth(
                 .and_then(Value::as_str),
         }),
         json!({
-            "normal_responses_service_tier": expected_service_tier,
-            "remote_compact_service_tier": expected_service_tier,
+            "normal_responses_service_tier": expected_responses_service_tier,
+            "remote_compact_service_tier": expected_compact_service_tier,
         }),
     );
 
@@ -702,9 +703,15 @@ async fn assert_remote_compact_service_tier_for_auth(
 async fn remote_compact_service_tier_matches_auth_mode() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    assert_remote_compact_service_tier_for_auth(CodexAuth::from_api_key("dummy"), None).await?;
+    assert_remote_compact_service_tier_for_auth(
+        CodexAuth::from_api_key("dummy"),
+        Some("priority"),
+        None,
+    )
+    .await?;
     assert_remote_compact_service_tier_for_auth(
         CodexAuth::create_dummy_chatgpt_auth_for_testing(),
+        Some("priority"),
         Some("priority"),
     )
     .await?;

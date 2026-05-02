@@ -1229,6 +1229,45 @@ async fn keymap_capture_can_capture_current_copy_shortcut() {
 }
 
 #[tokio::test]
+async fn slash_keymap_debug_opens_keypress_inspector() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.dispatch_command_with_args(SlashCommand::Keymap, "debug".to_string(), Vec::new());
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert!(popup.contains("Keypress Inspector"));
+    assert!(popup.contains("Waiting for a keypress"));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    let popup = render_bottom_popup(&chat, /*width*/ 100);
+    assert!(popup.contains("global.copy (Copy)"));
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "debug inspector should open without transcript messages"
+    );
+    assert!(op_rx.try_recv().is_err(), "expected no core op to be sent");
+}
+
+#[tokio::test]
+async fn slash_keymap_invalid_args_show_usage() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    submit_composer_text(&mut chat, "/keymap nope");
+
+    let cells = drain_insert_history(&mut rx);
+    let rendered = cells
+        .iter()
+        .map(|cell| lines_to_single_string(cell))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains("Usage: /keymap [debug]"),
+        "expected usage message, got: {rendered:?}"
+    );
+    assert_eq!(recall_latest_after_clearing(&mut chat), "/keymap nope");
+    assert!(op_rx.try_recv().is_err(), "expected no core op to be sent");
+}
+
+#[tokio::test]
 async fn copy_shortcut_can_be_remapped() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let mut keymap_config = chat.config_ref().tui_keymap.clone();

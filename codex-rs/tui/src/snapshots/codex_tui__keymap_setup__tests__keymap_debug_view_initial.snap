@@ -1,0 +1,8 @@
+---
+source: tui/src/keymap_setup.rs
+expression: "render_debug(&view, 80)"
+---
+Keypress Inspector
+Press any key to see what Codex receives. Esc is inspected; Ctrl+C closes.
+
+Waiting for a keypress...

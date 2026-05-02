@@ -1,5 +1,20 @@
 use super::*;
 use crate::config::ConfigBuilder;
+use crate::guardian::ApprovalRequest;
+use crate::guardian::GuardianMcpAnnotations;
+use crate::guardian::MCP_TOOL_APPROVAL_CANCEL;
+use crate::guardian::MCP_TOOL_APPROVAL_CONNECTOR_DESCRIPTION_KEY;
+use crate::guardian::MCP_TOOL_APPROVAL_CONNECTOR_ID_KEY;
+use crate::guardian::MCP_TOOL_APPROVAL_CONNECTOR_NAME_KEY;
+use crate::guardian::MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC;
+use crate::guardian::MCP_TOOL_APPROVAL_KIND_KEY;
+use crate::guardian::MCP_TOOL_APPROVAL_KIND_MCP_TOOL_CALL;
+use crate::guardian::MCP_TOOL_APPROVAL_SOURCE_CONNECTOR;
+use crate::guardian::MCP_TOOL_APPROVAL_SOURCE_KEY;
+use crate::guardian::MCP_TOOL_APPROVAL_TOOL_DESCRIPTION_KEY;
+use crate::guardian::MCP_TOOL_APPROVAL_TOOL_PARAMS_DISPLAY_KEY;
+use crate::guardian::MCP_TOOL_APPROVAL_TOOL_PARAMS_KEY;
+use crate::guardian::MCP_TOOL_APPROVAL_TOOL_TITLE_KEY;
 use crate::session::tests::make_session_and_context;
 use crate::session::tests::make_session_and_context_with_rx;
 use crate::state::ActiveTurn;
@@ -101,6 +116,24 @@ fn prompt_options(
         allow_session_remember,
         allow_persistent_approval,
     }
+}
+
+fn approval_prompt_request(
+    server: &str,
+    tool_name: &str,
+    arguments: Option<serde_json::Value>,
+    metadata: Option<&McpToolApprovalMetadata>,
+) -> ApprovalRequest {
+    build_mcp_tool_approval_request(
+        "call-1",
+        tool_name,
+        &McpInvocation {
+            server: server.to_string(),
+            tool: tool_name.to_string(),
+            arguments,
+        },
+        metadata,
+    )
 }
 
 fn install_mcp_permission_request_hook(
@@ -280,11 +313,25 @@ fn prompt_mode_does_not_allow_persistent_remember() {
 
 #[test]
 fn approval_question_text_prepends_safety_reason() {
+    let request = approval_prompt_request(
+        "custom_server",
+        "run_action",
+        /*arguments*/ None,
+        /*metadata*/ None,
+    );
     assert_eq!(
-        mcp_tool_approval_question_text(
-            "Allow this action?".to_string(),
-            Some("This tool may contact an external system."),
-        ),
+        request
+            .mcp_tool_approval_prompt(
+                "q".to_string(),
+                prompt_options(
+                    /*allow_session_remember*/ false,
+                    /*allow_persistent_approval*/ false,
+                ),
+                Some("This tool may contact an external system."),
+            )
+            .expect("mcp approval prompt")
+            .question
+            .question,
         "Tool call needs your approval. Reason: This tool may contact an external system."
     );
 }
@@ -479,47 +526,43 @@ fn truncates_strings_on_char_boundaries() {
 #[tokio::test]
 async fn approval_elicitation_request_uses_message_override_and_preserves_tool_params_keys() {
     let (session, turn_context) = make_session_and_context().await;
-    let question = build_mcp_tool_approval_question(
-        "q".to_string(),
+    let metadata = approval_metadata(
+        Some("connector_947e0d954944416db111db556030eea6"),
+        Some("Calendar"),
+        Some("Manage events and schedules."),
+        Some("create_event"),
+        Some("Create a calendar event."),
+    );
+    let approval_request = approval_prompt_request(
         CODEX_APPS_MCP_SERVER_NAME,
         "create_event",
-        Some("Calendar"),
-        prompt_options(
-            /*allow_session_remember*/ true, /*allow_persistent_approval*/ true,
-        ),
-        Some("Allow Calendar to create an event?"),
+        Some(serde_json::json!({
+            "title": "Roadmap review",
+            "start_time": "2026-05-01T10:00:00Z",
+            "attendees": ["ada@example.com"],
+        })),
+        Some(&metadata),
     );
+    let prompt = approval_request
+        .mcp_tool_approval_prompt(
+            "q".to_string(),
+            prompt_options(
+                /*allow_session_remember*/ true, /*allow_persistent_approval*/ true,
+            ),
+            /*monitor_reason*/ None,
+        )
+        .expect("mcp approval prompt");
 
     let request = build_mcp_tool_approval_elicitation_request(
         &session,
         &turn_context,
         McpToolApprovalElicitationRequest {
             server: CODEX_APPS_MCP_SERVER_NAME,
-            metadata: Some(&approval_metadata(
-                Some("calendar"),
-                Some("Calendar"),
-                Some("Manage events and schedules."),
-                Some("Create Event"),
-                Some("Create a calendar event."),
-            )),
-            tool_params: Some(&serde_json::json!({
-                "calendar_id": "primary",
-                "title": "Roadmap review",
-            })),
-            tool_params_display: Some(&[
-                RenderedMcpToolApprovalParam {
-                    name: "calendar_id".to_string(),
-                    value: serde_json::json!("primary"),
-                    display_name: "Calendar".to_string(),
-                },
-                RenderedMcpToolApprovalParam {
-                    name: "title".to_string(),
-                    value: serde_json::json!("Roadmap review"),
-                    display_name: "Title".to_string(),
-                },
-            ]),
-            question,
-            message_override: Some("Allow Calendar to create an event?"),
+            approval_request: &approval_request,
+            tool_params: prompt.tool_params.as_ref(),
+            tool_params_display: prompt.tool_params_display.as_deref(),
+            question: prompt.question,
+            message_override: prompt.message_override.as_deref(),
             prompt_options: prompt_options(
                 /*allow_session_remember*/ true, /*allow_persistent_approval*/ true,
             ),
@@ -540,25 +583,31 @@ async fn approval_elicitation_request_uses_message_override_and_preserves_tool_p
                         MCP_TOOL_APPROVAL_PERSIST_ALWAYS,
                     ],
                     MCP_TOOL_APPROVAL_SOURCE_KEY: MCP_TOOL_APPROVAL_SOURCE_CONNECTOR,
-                    MCP_TOOL_APPROVAL_CONNECTOR_ID_KEY: "calendar",
+                    MCP_TOOL_APPROVAL_CONNECTOR_ID_KEY: "connector_947e0d954944416db111db556030eea6",
                     MCP_TOOL_APPROVAL_CONNECTOR_NAME_KEY: "Calendar",
                     MCP_TOOL_APPROVAL_CONNECTOR_DESCRIPTION_KEY: "Manage events and schedules.",
-                    MCP_TOOL_APPROVAL_TOOL_TITLE_KEY: "Create Event",
+                    MCP_TOOL_APPROVAL_TOOL_TITLE_KEY: "create_event",
                     MCP_TOOL_APPROVAL_TOOL_DESCRIPTION_KEY: "Create a calendar event.",
                     MCP_TOOL_APPROVAL_TOOL_PARAMS_KEY: {
-                        "calendar_id": "primary",
                         "title": "Roadmap review",
+                        "start_time": "2026-05-01T10:00:00Z",
+                        "attendees": ["ada@example.com"],
                     },
                     MCP_TOOL_APPROVAL_TOOL_PARAMS_DISPLAY_KEY: [
-                        {
-                            "name": "calendar_id",
-                            "value": "primary",
-                            "display_name": "Calendar",
-                        },
                         {
                             "name": "title",
                             "value": "Roadmap review",
                             "display_name": "Title",
+                        },
+                        {
+                            "name": "start_time",
+                            "value": "2026-05-01T10:00:00Z",
+                            "display_name": "Start",
+                        },
+                        {
+                            "name": "attendees",
+                            "value": ["ada@example.com"],
+                            "display_name": "Attendees",
                         },
                     ],
                 })),
@@ -576,16 +625,21 @@ async fn approval_elicitation_request_uses_message_override_and_preserves_tool_p
 
 #[test]
 fn custom_mcp_tool_question_mentions_server_name() {
-    let question = build_mcp_tool_approval_question(
-        "q".to_string(),
+    let question = approval_prompt_request(
         "custom_server",
         "run_action",
-        /*connector_name*/ None,
+        /*arguments*/ None,
+        /*metadata*/ None,
+    )
+    .mcp_tool_approval_prompt(
+        "q".to_string(),
         prompt_options(
             /*allow_session_remember*/ false, /*allow_persistent_approval*/ false,
         ),
-        /*question_override*/ None,
-    );
+        /*monitor_reason*/ None,
+    )
+    .expect("mcp approval prompt")
+    .question;
 
     assert_eq!(question.header, "Approve app tool call?");
     assert_eq!(
@@ -604,16 +658,21 @@ fn custom_mcp_tool_question_mentions_server_name() {
 
 #[test]
 fn codex_apps_tool_question_uses_fallback_app_label() {
-    let question = build_mcp_tool_approval_question(
-        "q".to_string(),
+    let question = approval_prompt_request(
         CODEX_APPS_MCP_SERVER_NAME,
         "run_action",
-        /*connector_name*/ None,
+        /*arguments*/ None,
+        /*metadata*/ None,
+    )
+    .mcp_tool_approval_prompt(
+        "q".to_string(),
         prompt_options(
             /*allow_session_remember*/ true, /*allow_persistent_approval*/ true,
         ),
-        /*question_override*/ None,
-    );
+        /*monitor_reason*/ None,
+    )
+    .expect("mcp approval prompt")
+    .question;
 
     assert_eq!(
         question.question,
@@ -623,16 +682,22 @@ fn codex_apps_tool_question_uses_fallback_app_label() {
 
 #[test]
 fn trusted_codex_apps_tool_question_offers_always_allow() {
-    let question = build_mcp_tool_approval_question(
-        "q".to_string(),
+    let metadata = approval_metadata(Some("calendar"), Some("Calendar"), None, None, None);
+    let question = approval_prompt_request(
         CODEX_APPS_MCP_SERVER_NAME,
         "run_action",
-        Some("Calendar"),
+        /*arguments*/ None,
+        Some(&metadata),
+    )
+    .mcp_tool_approval_prompt(
+        "q".to_string(),
         prompt_options(
             /*allow_session_remember*/ true, /*allow_persistent_approval*/ true,
         ),
-        /*question_override*/ None,
-    );
+        /*monitor_reason*/ None,
+    )
+    .expect("mcp approval prompt")
+    .question;
     let options = question.options.expect("options");
 
     assert!(options.iter().any(|option| {
@@ -665,18 +730,24 @@ fn codex_apps_tool_question_without_elicitation_omits_always_allow() {
         tool_name: "run_action".to_string(),
     };
     let persistent_key = session_key.clone();
-    let question = build_mcp_tool_approval_question(
-        "q".to_string(),
+    let metadata = approval_metadata(Some("calendar"), Some("Calendar"), None, None, None);
+    let question = approval_prompt_request(
         CODEX_APPS_MCP_SERVER_NAME,
         "run_action",
-        Some("Calendar"),
+        /*arguments*/ None,
+        Some(&metadata),
+    )
+    .mcp_tool_approval_prompt(
+        "q".to_string(),
         mcp_tool_approval_prompt_options(
             Some(&session_key),
             Some(&persistent_key),
             /*tool_call_mcp_elicitation_enabled*/ false,
         ),
-        /*question_override*/ None,
-    );
+        /*monitor_reason*/ None,
+    )
+    .expect("mcp approval prompt")
+    .question;
 
     assert_eq!(
         question
@@ -695,16 +766,21 @@ fn codex_apps_tool_question_without_elicitation_omits_always_allow() {
 
 #[test]
 fn custom_mcp_tool_question_offers_session_remember_and_always_allow() {
-    let question = build_mcp_tool_approval_question(
-        "q".to_string(),
+    let question = approval_prompt_request(
         "custom_server",
         "run_action",
-        /*connector_name*/ None,
+        /*arguments*/ None,
+        /*metadata*/ None,
+    )
+    .mcp_tool_approval_prompt(
+        "q".to_string(),
         prompt_options(
             /*allow_session_remember*/ true, /*allow_persistent_approval*/ true,
         ),
-        /*question_override*/ None,
-    );
+        /*monitor_reason*/ None,
+    )
+    .expect("mcp approval prompt")
+    .question;
 
     assert_eq!(
         question
@@ -1086,10 +1162,14 @@ fn accepted_elicitation_content_converts_to_request_user_input_response() {
 
 #[test]
 fn approval_elicitation_meta_marks_tool_approvals() {
+    let request = approval_prompt_request(
+        "custom_server",
+        "run_action",
+        /*arguments*/ None,
+        /*metadata*/ None,
+    );
     assert_eq!(
-        build_mcp_tool_approval_elicitation_meta(
-            "custom_server",
-            /*metadata*/ None,
+        request.mcp_tool_approval_elicitation_meta(
             /*tool_params*/ None,
             /*tool_params_display*/ None,
             prompt_options(
@@ -1104,16 +1184,21 @@ fn approval_elicitation_meta_marks_tool_approvals() {
 
 #[test]
 fn approval_elicitation_meta_merges_session_and_always_persist_for_custom_servers() {
+    let metadata = approval_metadata(
+        /*connector_id*/ None,
+        /*connector_name*/ None,
+        /*connector_description*/ None,
+        Some("Run Action"),
+        Some("Runs the selected action."),
+    );
+    let request = approval_prompt_request(
+        "custom_server",
+        "run_action",
+        Some(serde_json::json!({"id": 1})),
+        Some(&metadata),
+    );
     assert_eq!(
-        build_mcp_tool_approval_elicitation_meta(
-            "custom_server",
-            Some(&approval_metadata(
-                /*connector_id*/ None,
-                /*connector_name*/ None,
-                /*connector_description*/ None,
-                Some("Run Action"),
-                Some("Runs the selected action."),
-            )),
+        request.mcp_tool_approval_elicitation_meta(
             Some(&serde_json::json!({"id": 1})),
             /*tool_params_display*/ None,
             prompt_options(
@@ -1145,8 +1230,9 @@ fn guardian_mcp_review_request_includes_invocation_metadata() {
         })),
     };
 
-    let request = build_guardian_mcp_tool_review_request(
+    let request = build_mcp_tool_approval_request(
         "call-1",
+        "browser_navigate",
         &invocation,
         Some(&approval_metadata(
             Some("playwright"),
@@ -1159,10 +1245,11 @@ fn guardian_mcp_review_request_includes_invocation_metadata() {
 
     assert_eq!(
         request,
-        GuardianApprovalRequest::McpToolCall {
+        ApprovalRequest::McpToolCall {
             id: "call-1".to_string(),
             server: CODEX_APPS_MCP_SERVER_NAME.to_string(),
             tool_name: "browser_navigate".to_string(),
+            hook_tool_name: "browser_navigate".to_string(),
             arguments: Some(serde_json::json!({
                 "url": "https://example.com",
             })),
@@ -1195,14 +1282,16 @@ fn guardian_mcp_review_request_includes_annotations_when_present() {
         openai_file_input_params: None,
     };
 
-    let request = build_guardian_mcp_tool_review_request("call-1", &invocation, Some(&metadata));
+    let request =
+        build_mcp_tool_approval_request("call-1", "dangerous_tool", &invocation, Some(&metadata));
 
     assert_eq!(
         request,
-        GuardianApprovalRequest::McpToolCall {
+        ApprovalRequest::McpToolCall {
             id: "call-1".to_string(),
             server: "custom_server".to_string(),
             tool_name: "dangerous_tool".to_string(),
+            hook_tool_name: "dangerous_tool".to_string(),
             arguments: None,
             connector_id: None,
             connector_name: None,
@@ -1316,16 +1405,23 @@ async fn guardian_review_decision_maps_to_mcp_tool_decision() {
 
 #[test]
 fn approval_elicitation_meta_includes_connector_source_for_codex_apps() {
+    let metadata = approval_metadata(
+        Some("calendar"),
+        Some("Calendar"),
+        Some("Manage events and schedules."),
+        Some("Run Action"),
+        Some("Runs the selected action."),
+    );
+    let request = approval_prompt_request(
+        CODEX_APPS_MCP_SERVER_NAME,
+        "run_action",
+        Some(serde_json::json!({
+            "calendar_id": "primary",
+        })),
+        Some(&metadata),
+    );
     assert_eq!(
-        build_mcp_tool_approval_elicitation_meta(
-            CODEX_APPS_MCP_SERVER_NAME,
-            Some(&approval_metadata(
-                Some("calendar"),
-                Some("Calendar"),
-                Some("Manage events and schedules."),
-                Some("Run Action"),
-                Some("Runs the selected action."),
-            )),
+        request.mcp_tool_approval_elicitation_meta(
             Some(&serde_json::json!({
                 "calendar_id": "primary",
             })),
@@ -1351,16 +1447,23 @@ fn approval_elicitation_meta_includes_connector_source_for_codex_apps() {
 
 #[test]
 fn approval_elicitation_meta_merges_session_and_always_persist_with_connector_source() {
+    let metadata = approval_metadata(
+        Some("calendar"),
+        Some("Calendar"),
+        Some("Manage events and schedules."),
+        Some("Run Action"),
+        Some("Runs the selected action."),
+    );
+    let request = approval_prompt_request(
+        CODEX_APPS_MCP_SERVER_NAME,
+        "run_action",
+        Some(serde_json::json!({
+            "calendar_id": "primary",
+        })),
+        Some(&metadata),
+    );
     assert_eq!(
-        build_mcp_tool_approval_elicitation_meta(
-            CODEX_APPS_MCP_SERVER_NAME,
-            Some(&approval_metadata(
-                Some("calendar"),
-                Some("Calendar"),
-                Some("Manage events and schedules."),
-                Some("Run Action"),
-                Some("Runs the selected action."),
-            )),
+        request.mcp_tool_approval_elicitation_meta(
             Some(&serde_json::json!({
                 "calendar_id": "primary",
             })),

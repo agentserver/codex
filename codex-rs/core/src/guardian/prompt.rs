@@ -15,12 +15,12 @@ use codex_utils_output_truncation::approx_token_count;
 use codex_utils_output_truncation::approx_tokens_from_byte_count;
 
 use super::AUTO_REVIEW_DENIED_ACTION_APPROVAL_DEVELOPER_PREFIX;
+use super::ApprovalRequest;
 use super::GUARDIAN_MAX_MESSAGE_ENTRY_TOKENS;
 use super::GUARDIAN_MAX_MESSAGE_TRANSCRIPT_TOKENS;
 use super::GUARDIAN_MAX_TOOL_ENTRY_TOKENS;
 use super::GUARDIAN_MAX_TOOL_TRANSCRIPT_TOKENS;
 use super::GUARDIAN_RECENT_ENTRY_LIMIT;
-use super::GuardianApprovalRequest;
 use super::GuardianAssessment;
 use super::TRUNCATION_TAG;
 use super::approval_request::format_guardian_action_pretty;
@@ -89,7 +89,7 @@ pub(crate) enum GuardianPromptMode {
 pub(crate) async fn build_guardian_prompt_items(
     session: &Session,
     retry_reason: Option<String>,
-    request: GuardianApprovalRequest,
+    request: ApprovalRequest,
     mode: GuardianPromptMode,
 ) -> serde_json::Result<GuardianPromptItems> {
     let history = session.clone_history().await;
@@ -173,7 +173,7 @@ pub(crate) async fn build_guardian_prompt_items(
         push_text(format!("\n{note}\n"));
     }
     match &request {
-        GuardianApprovalRequest::NetworkAccess { trigger, .. } => {
+        ApprovalRequest::NetworkAccess { trigger, .. } => {
             push_text(">>> APPROVAL REQUEST START\n".to_string());
             push_text("Below is a proposed network access request under review.\n".to_string());
             if trigger.is_some() {

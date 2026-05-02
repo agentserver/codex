@@ -394,8 +394,11 @@ impl ToolOrchestrator {
     where
         T: ToolRuntime<Rq, Out>,
     {
+        let approval_request = tool.approval_request(req, &approval_ctx);
         if evaluate_permission_request_hooks
-            && let Some(permission_request) = tool.permission_request_payload(req)
+            && let Some(permission_request) = approval_request
+                .as_ref()
+                .and_then(crate::guardian::ApprovalRequest::permission_request_payload)
         {
             match run_permission_request_hooks(
                 approval_ctx.session,

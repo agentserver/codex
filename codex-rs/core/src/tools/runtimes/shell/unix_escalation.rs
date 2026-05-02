@@ -3,7 +3,7 @@ use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
 use crate::exec::cancel_when_either;
 use crate::exec::is_likely_sandbox_denied;
-use crate::guardian::GuardianApprovalRequest;
+use crate::guardian::ApprovalRequest;
 use crate::guardian::guardian_rejection_message;
 use crate::guardian::guardian_timeout_message;
 use crate::guardian::new_guardian_review_id;
@@ -16,7 +16,6 @@ use crate::sandboxing::SandboxPermissions;
 use crate::shell::ShellType;
 use crate::tools::runtimes::build_sandbox_command;
 use crate::tools::runtimes::exec_env_for_sandbox_permissions;
-use crate::tools::sandboxing::PermissionRequestPayload;
 use crate::tools::sandboxing::SandboxAttempt;
 use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
@@ -396,7 +395,6 @@ impl CoreShellActionProvider {
         stopwatch: &Stopwatch,
         additional_permissions: Option<AdditionalPermissionProfile>,
     ) -> anyhow::Result<PromptDecision> {
-        let command = join_program_and_argv(program, argv);
         let workdir = workdir.clone();
         let session = self.session.clone();
         let turn = self.turn.clone();
@@ -407,17 +405,23 @@ impl CoreShellActionProvider {
         Ok(stopwatch
             .pause_for(async move {
                 // 1) Run PermissionRequest hooks
-                let permission_request = PermissionRequestPayload::bash(
-                    codex_shell_command::parse_command::shlex_join(&command),
-                    /*description*/ None,
-                );
                 let effective_approval_id = approval_id.clone().unwrap_or_else(|| call_id.clone());
-                match run_permission_request_hooks(
-                    &session,
-                    &turn,
-                    &effective_approval_id,
-                    permission_request,
-                )
+                let approval_request = ApprovalRequest::Execve {
+                    id: call_id.clone(),
+                    source,
+                    program: program.to_string_lossy().into_owned(),
+                    argv: argv.to_vec(),
+                    cwd: workdir.clone(),
+                    additional_permissions: additional_permissions.clone(),
+                };
+                match run_permission_request_hooks(&session, &turn, &effective_approval_id, {
+                    let Some(payload) = approval_request.permission_request_payload() else {
+                        unreachable!(
+                            "execve approvals always project a permission request payload"
+                        );
+                    };
+                    payload
+                })
                 .await
                 {
                     Some(PermissionRequestDecision::Allow) => {
@@ -443,14 +447,7 @@ impl CoreShellActionProvider {
                         &session,
                         &turn,
                         review_id.clone(),
-                        GuardianApprovalRequest::Execve {
-                            id: call_id.clone(),
-                            source,
-                            program: program.to_string_lossy().into_owned(),
-                            argv: argv.to_vec(),
-                            cwd: workdir.clone(),
-                            additional_permissions,
-                        },
+                        approval_request,
                         /*retry_reason*/ None,
                     )
                     .await;
@@ -463,17 +460,15 @@ impl CoreShellActionProvider {
 
                 // 3) Fall back to regular user prompt
                 let decision = session
-                    .request_command_approval(
+                    .request_command_approval_for_request(
                         &turn,
-                        call_id,
+                        approval_request,
                         approval_id,
-                        command,
-                        workdir.clone(),
                         /*reason*/ None,
                         /*network_approval_context*/ None,
                         /*proposed_execpolicy_amendment*/ None,
-                        additional_permissions,
                         Some(vec![ReviewDecision::Approved, ReviewDecision::Abort]),
+                        /*fallback_cwd*/ None,
                     )
                     .await;
                 PromptDecision {

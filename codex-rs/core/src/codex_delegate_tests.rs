@@ -1,14 +1,16 @@
 use super::*;
-use crate::mcp_tool_call::MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC;
-use crate::mcp_tool_call::MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX;
+use crate::guardian::MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC;
+use crate::guardian::MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX;
 use async_channel::bounded;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::models::NetworkPermissions;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AgentStatus;
+use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecApprovalRequestEvent;
+use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::GuardianAssessmentAction;
 use codex_protocol::protocol::GuardianAssessmentStatus;
 use codex_protocol::protocol::GuardianCommandSource;
@@ -380,6 +382,91 @@ async fn handle_exec_approval_uses_call_id_for_guardian_review_and_approval_id_f
             id: "callback-approval-1".to_string(),
             turn_id: Some("child-turn-1".to_string()),
             decision: ReviewDecision::Abort,
+        }
+    );
+}
+
+#[tokio::test]
+async fn handle_patch_approval_uses_tool_call_id_for_round_trip() {
+    let (parent_session, parent_ctx, rx_events) =
+        crate::session::tests::make_session_and_context_with_rx().await;
+    *parent_session.active_turn.lock().await = Some(crate::state::ActiveTurn::default());
+
+    let (tx_sub, rx_sub) = bounded(SUBMISSION_CHANNEL_CAPACITY);
+    let (_tx_events, rx_events_child) = bounded(SUBMISSION_CHANNEL_CAPACITY);
+    let (_agent_status_tx, agent_status) = watch::channel(AgentStatus::PendingInit);
+    let codex = Arc::new(Codex {
+        tx_sub,
+        rx_event: rx_events_child,
+        agent_status,
+        session: Arc::clone(&parent_session),
+        session_loop_termination: completed_session_loop_termination(),
+    });
+
+    let call_id = "patch-call-1".to_string();
+    let changes = HashMap::from([(
+        std::path::PathBuf::from("file.txt"),
+        FileChange::Update {
+            unified_diff: "@@ -1 +1 @@\n-old\n+new\n".to_string(),
+            move_path: None,
+        },
+    )]);
+    let expected_changes = changes.clone();
+    let cancel_token = CancellationToken::new();
+
+    let handle = tokio::spawn({
+        let codex = Arc::clone(&codex);
+        let parent_session = Arc::clone(&parent_session);
+        let parent_ctx = Arc::clone(&parent_ctx);
+        let cancel_token = cancel_token.clone();
+        let call_id = call_id.clone();
+        async move {
+            handle_patch_approval(
+                codex.as_ref(),
+                "child-turn-1".to_string(),
+                &parent_session,
+                &parent_ctx,
+                ApplyPatchApprovalRequestEvent {
+                    call_id,
+                    turn_id: "child-turn-1".to_string(),
+                    changes,
+                    reason: Some("needs write".to_string()),
+                    grant_root: None,
+                },
+                &cancel_token,
+            )
+            .await;
+        }
+    });
+
+    let request_event = timeout(Duration::from_secs(1), rx_events.recv())
+        .await
+        .expect("patch approval event timed out")
+        .expect("patch approval event missing");
+    let EventMsg::ApplyPatchApprovalRequest(request) = request_event.msg else {
+        panic!("expected ApplyPatchApprovalRequest event");
+    };
+    assert_eq!(request.call_id, call_id.clone());
+    assert_eq!(request.changes, expected_changes);
+
+    parent_session
+        .notify_approval(&call_id, ReviewDecision::Approved)
+        .await;
+
+    timeout(Duration::from_secs(1), handle)
+        .await
+        .expect("handle_patch_approval hung")
+        .expect("handle_patch_approval join error");
+
+    let submission = timeout(Duration::from_secs(1), rx_sub.recv())
+        .await
+        .expect("patch approval response timed out")
+        .expect("patch approval response missing");
+    assert_eq!(
+        submission.op,
+        Op::PatchApproval {
+            id: call_id,
+            decision: ReviewDecision::Approved,
         }
     );
 }

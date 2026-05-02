@@ -4,13 +4,11 @@
 //! selected turn environment filesystem for both local and remote turns, with
 //! sandboxing enforced by the explicit filesystem sandbox context.
 use crate::exec::is_likely_sandbox_denied;
-use crate::guardian::GuardianApprovalRequest;
+use crate::guardian::ApprovalRequest;
 use crate::guardian::review_approval_request;
-use crate::tools::hook_names::HookToolName;
 use crate::tools::sandboxing::Approvable;
 use crate::tools::sandboxing::ApprovalCtx;
 use crate::tools::sandboxing::ExecApprovalRequirement;
-use crate::tools::sandboxing::PermissionRequestPayload;
 use crate::tools::sandboxing::SandboxAttempt;
 use crate::tools::sandboxing::Sandboxable;
 use crate::tools::sandboxing::ToolCtx;
@@ -53,14 +51,12 @@ impl ApplyPatchRuntime {
         Self
     }
 
-    fn build_guardian_review_request(
-        req: &ApplyPatchRequest,
-        call_id: &str,
-    ) -> GuardianApprovalRequest {
-        GuardianApprovalRequest::ApplyPatch {
+    fn build_approval_request(req: &ApplyPatchRequest, call_id: &str) -> ApprovalRequest {
+        ApprovalRequest::ApplyPatch {
             id: call_id.to_string(),
             cwd: req.action.cwd.clone(),
             files: req.file_paths.clone(),
+            changes: req.changes.clone(),
             patch: req.action.patch.clone(),
         }
     }
@@ -108,26 +104,29 @@ impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
     ) -> BoxFuture<'a, ReviewDecision> {
         let session = ctx.session;
         let turn = ctx.turn;
-        let call_id = ctx.call_id.to_string();
         let retry_reason = ctx.retry_reason.clone();
         let approval_keys = self.approval_keys(req);
-        let changes = req.changes.clone();
         let guardian_review_id = ctx.guardian_review_id.clone();
+        let approval_request = Self::build_approval_request(req, ctx.call_id);
         Box::pin(async move {
             if let Some(review_id) = guardian_review_id {
-                let action = ApplyPatchRuntime::build_guardian_review_request(req, ctx.call_id);
-                return review_approval_request(session, turn, review_id, action, retry_reason)
-                    .await;
+                return review_approval_request(
+                    session,
+                    turn,
+                    review_id,
+                    approval_request.clone(),
+                    retry_reason,
+                )
+                .await;
             }
             if req.permissions_preapproved && retry_reason.is_none() {
                 return ReviewDecision::Approved;
             }
             if let Some(reason) = retry_reason {
                 let rx_approve = session
-                    .request_patch_approval(
+                    .request_patch_approval_for_request(
                         turn,
-                        call_id,
-                        changes.clone(),
+                        approval_request.clone(),
                         Some(reason),
                         /*grant_root*/ None,
                     )
@@ -141,8 +140,11 @@ impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
                 approval_keys,
                 || async move {
                     let rx_approve = session
-                        .request_patch_approval(
-                            turn, call_id, changes, /*reason*/ None, /*grant_root*/ None,
+                        .request_patch_approval_for_request(
+                            turn,
+                            approval_request.clone(),
+                            /*reason*/ None,
+                            /*grant_root*/ None,
                         )
                         .await;
                     rx_approve.await.unwrap_or_default()
@@ -173,14 +175,12 @@ impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
         Some(req.exec_approval_requirement.clone())
     }
 
-    fn permission_request_payload(
+    fn approval_request(
         &self,
         req: &ApplyPatchRequest,
-    ) -> Option<PermissionRequestPayload> {
-        Some(PermissionRequestPayload {
-            tool_name: HookToolName::apply_patch(),
-            tool_input: serde_json::json!({ "command": req.action.patch }),
-        })
+        ctx: &ApprovalCtx<'_>,
+    ) -> Option<ApprovalRequest> {
+        Some(Self::build_approval_request(req, ctx.call_id))
     }
 }
 

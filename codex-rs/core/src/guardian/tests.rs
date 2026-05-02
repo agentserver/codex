@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use super::*;
 use crate::config::Config;
 use crate::config::ConfigOverrides;
@@ -60,7 +62,6 @@ use insta::Settings;
 use insta::assert_snapshot;
 use pretty_assertions::assert_eq;
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -312,9 +313,10 @@ async fn build_guardian_prompt_full_mode_preserves_initial_review_format() -> an
     let prompt = build_guardian_prompt_items(
         session.as_ref(),
         Some("Sandbox denied outbound git push to github.com.".to_string()),
-        GuardianApprovalRequest::Shell {
+        ApprovalRequest::Shell {
             id: "shell-1".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            hook_command: "git push".to_string(),
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -366,9 +368,10 @@ async fn build_guardian_prompt_delta_mode_preserves_original_numbering() -> anyh
     let prompt = build_guardian_prompt_items(
         session.as_ref(),
         /*retry_reason*/ None,
-        GuardianApprovalRequest::Shell {
+        ApprovalRequest::Shell {
             id: "shell-2".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            hook_command: "git push".to_string(),
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -404,9 +407,10 @@ async fn build_guardian_prompt_delta_mode_handles_empty_delta() -> anyhow::Resul
     let prompt = build_guardian_prompt_items(
         session.as_ref(),
         /*retry_reason*/ None,
-        GuardianApprovalRequest::Shell {
+        ApprovalRequest::Shell {
             id: "shell-2".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            hook_command: "git push".to_string(),
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -439,9 +443,10 @@ async fn build_guardian_prompt_stale_delta_cursor_falls_back_to_full_prompt() ->
     let prompt = build_guardian_prompt_items(
         session.as_ref(),
         /*retry_reason*/ None,
-        GuardianApprovalRequest::Shell {
+        ApprovalRequest::Shell {
             id: "shell-3".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            hook_command: "git push".to_string(),
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -520,9 +525,10 @@ async fn build_guardian_prompt_stale_delta_version_falls_back_to_full_prompt() -
     let prompt = build_guardian_prompt_items(
         session.as_ref(),
         /*retry_reason*/ None,
-        GuardianApprovalRequest::Shell {
+        ApprovalRequest::Shell {
             id: "shell-4".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            hook_command: "git push".to_string(),
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -684,10 +690,11 @@ fn guardian_truncate_text_keeps_prefix_suffix_and_xml_marker() {
 #[test]
 fn format_guardian_action_pretty_truncates_large_string_fields() -> serde_json::Result<()> {
     let patch = "line\n".repeat(100_000);
-    let action = GuardianApprovalRequest::ApplyPatch {
+    let action = ApprovalRequest::ApplyPatch {
         id: "patch-1".to_string(),
         cwd: test_path_buf("/tmp").abs(),
         files: Vec::new(),
+        changes: HashMap::new(),
         patch: patch.clone(),
     };
 
@@ -703,10 +710,11 @@ fn format_guardian_action_pretty_truncates_large_string_fields() -> serde_json::
 #[test]
 fn format_guardian_action_pretty_reports_no_truncation_for_small_payload() -> serde_json::Result<()>
 {
-    let action = GuardianApprovalRequest::ApplyPatch {
+    let action = ApprovalRequest::ApplyPatch {
         id: "patch-1".to_string(),
         cwd: test_path_buf("/tmp").abs(),
         files: Vec::new(),
+        changes: HashMap::new(),
         patch: "line\n".to_string(),
     };
 
@@ -719,10 +727,11 @@ fn format_guardian_action_pretty_reports_no_truncation_for_small_payload() -> se
 
 #[test]
 fn guardian_approval_request_to_json_renders_mcp_tool_call_shape() -> serde_json::Result<()> {
-    let action = GuardianApprovalRequest::McpToolCall {
+    let action = ApprovalRequest::McpToolCall {
         id: "call-1".to_string(),
         server: "mcp_server".to_string(),
         tool_name: "browser_navigate".to_string(),
+        hook_tool_name: "browser_navigate".to_string(),
         arguments: Some(serde_json::json!({
             "url": "https://example.com",
         })),
@@ -761,10 +770,11 @@ fn guardian_approval_request_to_json_renders_mcp_tool_call_shape() -> serde_json
 #[test]
 fn guardian_approval_request_to_json_renders_network_access_trigger() -> serde_json::Result<()> {
     let cwd = test_path_buf("/repo").abs();
-    let action = GuardianApprovalRequest::NetworkAccess {
+    let action = ApprovalRequest::NetworkAccess {
         id: "network-1".to_string(),
         turn_id: "turn-1".to_string(),
         target: "https://example.com:443".to_string(),
+        hook_command: "curl https://example.com".to_string(),
         host: "example.com".to_string(),
         protocol: NetworkApprovalProtocol::Https,
         port: 443,
@@ -811,10 +821,11 @@ async fn build_guardian_prompt_items_explains_network_access_review_scope() -> a
     let prompt = build_guardian_prompt_items(
         session.as_ref(),
         Some("Network access to \"example.com\" is blocked by policy.".to_string()),
-        GuardianApprovalRequest::NetworkAccess {
+        ApprovalRequest::NetworkAccess {
             id: "network-1".to_string(),
             turn_id: "turn-1".to_string(),
             target: "https://example.com:443".to_string(),
+            hook_command: "curl https://example.com".to_string(),
             host: "example.com".to_string(),
             protocol: NetworkApprovalProtocol::Https,
             port: 443,
@@ -875,10 +886,11 @@ async fn build_guardian_prompt_items_explains_network_access_review_scope() -> a
 fn guardian_assessment_action_redacts_apply_patch_patch_text() {
     let cwd = test_path_buf("/tmp").abs();
     let file = test_path_buf("/tmp/guardian.txt").abs();
-    let action = GuardianApprovalRequest::ApplyPatch {
+    let action = ApprovalRequest::ApplyPatch {
         id: "patch-1".to_string(),
         cwd: cwd.clone(),
         files: vec![file.clone()],
+        changes: HashMap::new(),
         patch: "*** Begin Patch\n*** Update File: guardian.txt\n@@\n+secret\n*** End Patch"
             .to_string(),
     };
@@ -895,19 +907,21 @@ fn guardian_assessment_action_redacts_apply_patch_patch_text() {
 
 #[test]
 fn guardian_request_turn_id_prefers_network_access_owner_turn() {
-    let network_access = GuardianApprovalRequest::NetworkAccess {
+    let network_access = ApprovalRequest::NetworkAccess {
         id: "network-1".to_string(),
         turn_id: "owner-turn".to_string(),
         target: "https://example.com:443".to_string(),
+        hook_command: "network-access https://example.com:443".to_string(),
         host: "example.com".to_string(),
         protocol: NetworkApprovalProtocol::Https,
         port: 443,
         trigger: None,
     };
-    let apply_patch = GuardianApprovalRequest::ApplyPatch {
+    let apply_patch = ApprovalRequest::ApplyPatch {
         id: "patch-1".to_string(),
         cwd: test_path_buf("/tmp").abs(),
         files: vec![test_path_buf("/tmp/guardian.txt").abs()],
+        changes: HashMap::new(),
         patch: "*** Begin Patch\n*** Update File: guardian.txt\n@@\n+hello\n*** End Patch"
             .to_string(),
     };
@@ -924,10 +938,11 @@ fn guardian_request_turn_id_prefers_network_access_owner_turn() {
 
 #[test]
 fn guardian_request_target_item_id_omits_network_access_trigger_call_id() {
-    let network_access = GuardianApprovalRequest::NetworkAccess {
+    let network_access = ApprovalRequest::NetworkAccess {
         id: "network-1".to_string(),
         turn_id: "owner-turn".to_string(),
         target: "https://example.com:443".to_string(),
+        hook_command: "network-access https://example.com:443".to_string(),
         host: "example.com".to_string(),
         protocol: NetworkApprovalProtocol::Https,
         port: 443,
@@ -956,10 +971,11 @@ async fn cancelled_guardian_review_emits_terminal_abort_without_warning() {
         &session,
         &turn,
         "review-cancelled-guardian".to_string(),
-        GuardianApprovalRequest::ApplyPatch {
+        ApprovalRequest::ApplyPatch {
             id: "patch-1".to_string(),
             cwd: test_path_buf("/tmp").abs(),
             files: vec![test_path_buf("/tmp/guardian.txt").abs()],
+            changes: HashMap::new(),
             patch: "*** Begin Patch\n*** Update File: guardian.txt\n@@\n+hello\n*** End Patch"
                 .to_string(),
         },
@@ -1245,7 +1261,7 @@ async fn guardian_review_request_layout_matches_model_visible_request_snapshot()
     let turn = Arc::new(turn);
     seed_guardian_parent_history(&session, &turn).await;
 
-    let request = GuardianApprovalRequest::Shell {
+    let request = ApprovalRequest::Shell {
         id: "shell-1".to_string(),
         command: vec![
             "git".to_string(),
@@ -1253,6 +1269,7 @@ async fn guardian_review_request_layout_matches_model_visible_request_snapshot()
             "origin".to_string(),
             "guardian-approval-mvp".to_string(),
         ],
+        hook_command: "git push origin guardian-approval-mvp".to_string(),
         cwd: test_path_buf("/repo/codex-rs/core").abs(),
         sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
         additional_permissions: None,
@@ -1355,9 +1372,10 @@ async fn build_guardian_prompt_items_includes_parent_session_id() -> anyhow::Res
     let prompt = build_guardian_prompt_items(
         &session,
         /*retry_reason*/ None,
-        GuardianApprovalRequest::Shell {
+        ApprovalRequest::Shell {
             id: "shell-1".to_string(),
             command: vec!["git".to_string(), "status".to_string()],
+            hook_command: "git status".to_string(),
             cwd: test_path_buf("/repo").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -1429,9 +1447,10 @@ async fn guardian_reuses_prompt_cache_key_and_appends_prior_reviews() -> anyhow:
     let (session, turn) = guardian_test_session_and_turn(&server).await;
     seed_guardian_parent_history(&session, &turn).await;
 
-    let first_request = GuardianApprovalRequest::Shell {
+    let first_request = ApprovalRequest::Shell {
         id: "shell-1".to_string(),
         command: vec!["git".to_string(), "push".to_string()],
+        hook_command: "git push".to_string(),
         cwd: test_path_buf("/repo/codex-rs/core").abs(),
         sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
         additional_permissions: None,
@@ -1469,13 +1488,14 @@ async fn guardian_reuses_prompt_cache_key_and_appends_prior_reviews() -> anyhow:
             turn.as_ref(),
         )
         .await;
-    let second_request = GuardianApprovalRequest::Shell {
+    let second_request = ApprovalRequest::Shell {
         id: "shell-2".to_string(),
         command: vec![
             "git".to_string(),
             "push".to_string(),
             "--force-with-lease".to_string(),
         ],
+        hook_command: "git push --force-with-lease".to_string(),
         cwd: test_path_buf("/repo/codex-rs/core").abs(),
         sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
         additional_permissions: None,
@@ -1513,9 +1533,10 @@ async fn guardian_reuses_prompt_cache_key_and_appends_prior_reviews() -> anyhow:
             turn.as_ref(),
         )
         .await;
-    let third_request = GuardianApprovalRequest::Shell {
+    let third_request = ApprovalRequest::Shell {
         id: "shell-3".to_string(),
         command: vec!["git".to_string(), "push".to_string()],
+        hook_command: "git push".to_string(),
         cwd: test_path_buf("/repo/codex-rs/core").abs(),
         sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
         additional_permissions: None,
@@ -1708,9 +1729,10 @@ async fn guardian_reused_trunk_ignores_stale_prior_turn_completion() -> anyhow::
     let first_outcome = run_guardian_review_session_for_test(
         Arc::clone(&session),
         Arc::clone(&turn),
-        GuardianApprovalRequest::Shell {
+        ApprovalRequest::Shell {
             id: "shell-1".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            hook_command: "git push".to_string(),
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -1750,9 +1772,10 @@ async fn guardian_reused_trunk_ignores_stale_prior_turn_completion() -> anyhow::
     let second_outcome = run_guardian_review_session_for_test(
         Arc::clone(&session),
         Arc::clone(&turn),
-        GuardianApprovalRequest::Shell {
+        ApprovalRequest::Shell {
             id: "shell-2".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            hook_command: "git push".to_string(),
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -1829,9 +1852,10 @@ async fn guardian_review_surfaces_responses_api_errors_in_rejection_reason() -> 
         &session,
         &turn,
         "review-shell-guardian-error".to_string(),
-        GuardianApprovalRequest::Shell {
+        ApprovalRequest::Shell {
             id: "shell-guardian-error".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            hook_command: "git push".to_string(),
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -1963,9 +1987,10 @@ async fn guardian_parallel_reviews_fork_from_last_committed_trunk_history() -> a
         let (session, turn) = guardian_test_session_and_turn_with_base_url(server.uri()).await;
         seed_guardian_parent_history(&session, &turn).await;
 
-        let initial_request = GuardianApprovalRequest::Shell {
+        let initial_request = ApprovalRequest::Shell {
             id: "shell-guardian-1".to_string(),
             command: vec!["git".to_string(), "status".to_string()],
+            hook_command: "git status".to_string(),
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -2006,17 +2031,19 @@ async fn guardian_parallel_reviews_fork_from_last_committed_trunk_history() -> a
             )
             .await;
 
-        let second_request = GuardianApprovalRequest::Shell {
+        let second_request = ApprovalRequest::Shell {
             id: "shell-guardian-2".to_string(),
             command: vec!["git".to_string(), "diff".to_string()],
+            hook_command: "git diff".to_string(),
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
             justification: Some("Inspect pending changes before proceeding.".to_string()),
         };
-        let third_request = GuardianApprovalRequest::Shell {
+        let third_request = ApprovalRequest::Shell {
             id: "shell-guardian-3".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            hook_command: "git push".to_string(),
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,

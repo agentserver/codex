@@ -32,6 +32,7 @@ use crate::context::PersonalitySpecInstructions;
 use crate::default_skill_metadata_budget;
 use crate::environment_selection::ResolvedTurnEnvironments;
 use crate::exec_policy::ExecPolicyManager;
+use crate::guardian::ApprovalRequest;
 use crate::installation_id::resolve_installation_id;
 use crate::parse_turn_item;
 use crate::path_utils::normalize_for_native_workdir;
@@ -99,7 +100,6 @@ use codex_protocol::models::format_allow_prefixes;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::HasLegacyEvent;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::ItemCompletedEvent;
@@ -116,7 +116,6 @@ use codex_protocol::protocol::W3cTraceContext;
 use codex_protocol::request_permissions::PermissionGrantScope;
 use codex_protocol::request_permissions::RequestPermissionProfile;
 use codex_protocol::request_permissions::RequestPermissionsArgs;
-use codex_protocol::request_permissions::RequestPermissionsEvent;
 use codex_protocol::request_permissions::RequestPermissionsResponse;
 use codex_protocol::request_user_input::RequestUserInputArgs;
 use codex_protocol::request_user_input::RequestUserInputResponse;
@@ -126,7 +125,6 @@ use codex_rollout_trace::AgentResultTracePayload;
 use codex_rollout_trace::ThreadStartedTraceMetadata;
 use codex_rollout_trace::ThreadTraceContext;
 use codex_sandboxing::policy_transforms::intersect_permission_profiles;
-use codex_shell_command::parse_command::parse_command;
 use codex_terminal_detection::user_agent;
 use codex_thread_store::CreateThreadParams;
 use codex_thread_store::LiveThread;
@@ -1844,26 +1842,56 @@ impl Session {
     /// be used to derive the available decisions via
     /// [ExecApprovalRequestEvent::default_available_decisions].
     #[allow(clippy::too_many_arguments)]
+    pub async fn request_command_approval_for_request(
+        &self,
+        turn_context: &TurnContext,
+        approval_request: ApprovalRequest,
+        approval_id: Option<String>,
+        reason: Option<String>,
+        network_approval_context: Option<NetworkApprovalContext>,
+        proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
+        available_decisions: Option<Vec<ReviewDecision>>,
+        fallback_cwd: Option<AbsolutePathBuf>,
+    ) -> ReviewDecision {
+        let proposed_network_policy_amendments = network_approval_context.as_ref().map(|context| {
+            vec![
+                NetworkPolicyAmendment {
+                    host: context.host.clone(),
+                    action: NetworkPolicyRuleAction::Allow,
+                },
+                NetworkPolicyAmendment {
+                    host: context.host.clone(),
+                    action: NetworkPolicyRuleAction::Deny,
+                },
+            ]
+        });
+        let Some(event) = approval_request.exec_approval_event(
+            turn_context.sub_id.clone(),
+            approval_id,
+            reason,
+            network_approval_context,
+            proposed_execpolicy_amendment,
+            proposed_network_policy_amendments,
+            available_decisions,
+            fallback_cwd,
+        ) else {
+            unreachable!("request_command_approval_for_request requires command-like approvals");
+        };
+        self.request_exec_approval_event(turn_context, event).await
+    }
+
     #[expect(
         clippy::await_holding_invalid_type,
         reason = "active turn checks and turn state updates must remain atomic"
     )]
-    pub async fn request_command_approval(
+    async fn request_exec_approval_event(
         &self,
         turn_context: &TurnContext,
-        call_id: String,
-        approval_id: Option<String>,
-        command: Vec<String>,
-        cwd: AbsolutePathBuf,
-        reason: Option<String>,
-        network_approval_context: Option<NetworkApprovalContext>,
-        proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
-        additional_permissions: Option<AdditionalPermissionProfile>,
-        available_decisions: Option<Vec<ReviewDecision>>,
+        event: ExecApprovalRequestEvent,
     ) -> ReviewDecision {
         //  command-level approvals use `call_id`.
         // `approval_id` is only present for subcommand callbacks (execve intercept)
-        let effective_approval_id = approval_id.clone().unwrap_or_else(|| call_id.clone());
+        let effective_approval_id = event.effective_approval_id();
         // Add the tx_approve callback to the map before sending the request.
         let (tx_approve, rx_approve) = oneshot::channel();
         let prev_entry = {
@@ -1880,60 +1908,55 @@ impl Session {
             warn!("Overwriting existing pending approval for call_id: {effective_approval_id}");
         }
 
-        let parsed_cmd = parse_command(&command);
-        let proposed_network_policy_amendments = network_approval_context.as_ref().map(|context| {
-            vec![
-                NetworkPolicyAmendment {
-                    host: context.host.clone(),
-                    action: NetworkPolicyRuleAction::Allow,
-                },
-                NetworkPolicyAmendment {
-                    host: context.host.clone(),
-                    action: NetworkPolicyRuleAction::Deny,
-                },
-            ]
-        });
-        let available_decisions = available_decisions.unwrap_or_else(|| {
+        let available_decisions = event.available_decisions.clone().unwrap_or_else(|| {
             ExecApprovalRequestEvent::default_available_decisions(
-                network_approval_context.as_ref(),
-                proposed_execpolicy_amendment.as_ref(),
-                proposed_network_policy_amendments.as_deref(),
-                additional_permissions.as_ref(),
+                event.network_approval_context.as_ref(),
+                event.proposed_execpolicy_amendment.as_ref(),
+                event.proposed_network_policy_amendments.as_deref(),
+                event.additional_permissions.as_ref(),
             )
         });
-        let event = EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
-            call_id,
-            approval_id,
-            turn_id: turn_context.sub_id.clone(),
-            command,
-            cwd,
-            reason,
-            network_approval_context,
-            proposed_execpolicy_amendment,
-            proposed_network_policy_amendments,
-            additional_permissions,
-            available_decisions: Some(available_decisions),
-            parsed_cmd,
-        });
-        self.send_event(turn_context, event).await;
+        self.send_event(
+            turn_context,
+            EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
+                available_decisions: Some(available_decisions),
+                ..event
+            }),
+        )
+        .await;
         rx_approve.await.unwrap_or(ReviewDecision::Abort)
+    }
+
+    pub async fn request_patch_approval_for_request(
+        &self,
+        turn_context: &TurnContext,
+        approval_request: ApprovalRequest,
+        reason: Option<String>,
+        grant_root: Option<PathBuf>,
+    ) -> oneshot::Receiver<ReviewDecision> {
+        let Some(event) = approval_request.apply_patch_approval_event(
+            turn_context.sub_id.clone(),
+            reason,
+            grant_root,
+        ) else {
+            unreachable!("request_patch_approval_for_request requires apply_patch approvals");
+        };
+        self.request_apply_patch_approval_event(turn_context, event)
+            .await
     }
 
     #[expect(
         clippy::await_holding_invalid_type,
         reason = "active turn checks and turn state updates must remain atomic"
     )]
-    pub async fn request_patch_approval(
+    async fn request_apply_patch_approval_event(
         &self,
         turn_context: &TurnContext,
-        call_id: String,
-        changes: HashMap<PathBuf, FileChange>,
-        reason: Option<String>,
-        grant_root: Option<PathBuf>,
+        event: ApplyPatchApprovalRequestEvent,
     ) -> oneshot::Receiver<ReviewDecision> {
         // Add the tx_approve callback to the map before sending the request.
         let (tx_approve, rx_approve) = oneshot::channel();
-        let approval_id = call_id.clone();
+        let approval_id = event.call_id.clone();
         let prev_entry = {
             let mut active = self.active_turn.lock().await;
             match active.as_mut() {
@@ -1948,14 +1971,8 @@ impl Session {
             warn!("Overwriting existing pending approval for call_id: {approval_id}");
         }
 
-        let event = EventMsg::ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent {
-            call_id,
-            turn_id: turn_context.sub_id.clone(),
-            changes,
-            reason,
-            grant_root,
-        });
-        self.send_event(turn_context, event).await;
+        self.send_event(turn_context, EventMsg::ApplyPatchApprovalRequest(event))
+            .await;
         rx_approve
     }
 
@@ -2012,6 +2029,13 @@ impl Session {
         }
 
         let requested_permissions = args.permissions;
+        let approval_request = ApprovalRequest::RequestPermissions {
+            id: call_id.clone(),
+            turn_id: turn_context.sub_id.clone(),
+            reason: args.reason.clone(),
+            permissions: requested_permissions.clone(),
+            cwd: cwd.clone(),
+        };
 
         if crate::guardian::routes_approval_to_guardian(turn_context.as_ref()) {
             let originating_turn_state = {
@@ -2021,17 +2045,11 @@ impl Session {
             let review_id = crate::guardian::new_guardian_review_id();
             let session = Arc::clone(self);
             let turn = Arc::clone(turn_context);
-            let request = crate::guardian::GuardianApprovalRequest::RequestPermissions {
-                id: call_id,
-                turn_id: turn_context.sub_id.clone(),
-                reason: args.reason,
-                permissions: requested_permissions.clone(),
-            };
             let review_rx = crate::guardian::spawn_approval_request_review(
                 session,
                 turn,
                 review_id,
-                request,
+                approval_request.clone(),
                 /*retry_reason*/ None,
                 codex_analytics::GuardianApprovalRequestSource::MainTurn,
                 cancellation_token.clone(),
@@ -2111,14 +2129,11 @@ impl Session {
             warn!("Overwriting existing pending request_permissions for call_id: {call_id}");
         }
 
-        let event = EventMsg::RequestPermissions(RequestPermissionsEvent {
-            call_id: call_id.clone(),
-            turn_id: turn_context.sub_id.clone(),
-            reason: args.reason,
-            permissions: requested_permissions,
-            cwd: Some(cwd),
-        });
-        self.send_event(turn_context.as_ref(), event).await;
+        let Some(event) = approval_request.request_permissions_event() else {
+            unreachable!("request_permissions event projection must exist");
+        };
+        self.send_event(turn_context.as_ref(), EventMsg::RequestPermissions(event))
+            .await;
         tokio::select! {
             biased;
             _ = cancellation_token.cancelled() => {

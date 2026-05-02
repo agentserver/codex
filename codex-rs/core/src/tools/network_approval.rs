@@ -1,4 +1,4 @@
-use crate::guardian::GuardianApprovalRequest;
+use crate::guardian::ApprovalRequest;
 use crate::guardian::GuardianNetworkAccessTrigger;
 use crate::guardian::guardian_rejection_message;
 use crate::guardian::guardian_timeout_message;
@@ -8,7 +8,6 @@ use crate::guardian::routes_approval_to_guardian;
 use crate::hook_runtime::run_permission_request_hooks;
 use crate::network_policy_decision::denied_network_policy_message;
 use crate::session::session::Session;
-use crate::tools::sandboxing::PermissionRequestPayload;
 use crate::tools::sandboxing::ToolError;
 use codex_hooks::PermissionRequestDecision;
 use codex_network_proxy::BlockedRequest;
@@ -460,17 +459,30 @@ impl NetworkApprovalService {
             protocol,
         };
         let guardian_approval_id = Self::approval_id_for_key(&key);
-        let prompt_command = vec!["network-access".to_string(), target.clone()];
-        let command = owner_call
-            .as_ref()
-            .map_or_else(|| prompt_command.join(" "), |call| call.command.clone());
-        if let Some(permission_request_decision) = run_permission_request_hooks(
-            &session,
-            &turn_context,
-            &guardian_approval_id,
-            PermissionRequestPayload::bash(command, Some(format!("network-access {target}"))),
-        )
-        .await
+        let command = owner_call.as_ref().map_or_else(
+            || format!("network-access {target}"),
+            |call| call.command.clone(),
+        );
+        let approval_request = ApprovalRequest::NetworkAccess {
+            id: guardian_approval_id.clone(),
+            turn_id: owner_call
+                .as_ref()
+                .map_or_else(|| turn_context.sub_id.clone(), |call| call.turn_id.clone()),
+            target: target.clone(),
+            hook_command: command,
+            host: request.host.clone(),
+            protocol,
+            port: key.port,
+            trigger: owner_call.as_ref().map(|call| call.trigger.clone()),
+        };
+        if let Some(permission_request_decision) =
+            run_permission_request_hooks(&session, &turn_context, &guardian_approval_id, {
+                let Some(payload) = approval_request.permission_request_payload() else {
+                    unreachable!("network approvals always project a permission request payload");
+                };
+                payload
+            })
+            .await
         {
             match permission_request_decision {
                 PermissionRequestDecision::Allow => {
@@ -503,34 +515,22 @@ impl NetworkApprovalService {
                 &session,
                 &turn_context,
                 review_id,
-                GuardianApprovalRequest::NetworkAccess {
-                    id: guardian_approval_id.clone(),
-                    turn_id: owner_call
-                        .as_ref()
-                        .map_or_else(|| turn_context.sub_id.clone(), |call| call.turn_id.clone()),
-                    target,
-                    host: request.host,
-                    protocol,
-                    port: key.port,
-                    trigger: owner_call.as_ref().map(|call| call.trigger.clone()),
-                },
+                approval_request,
                 Some(policy_denial_message.clone()),
             )
             .await
         } else {
             let available_decisions = None;
             session
-                .request_command_approval(
+                .request_command_approval_for_request(
                     turn_context.as_ref(),
-                    guardian_approval_id,
+                    approval_request,
                     /*approval_id*/ None,
-                    prompt_command,
-                    turn_context.cwd.clone(),
                     Some(prompt_reason),
-                    Some(network_approval_context.clone()),
+                    /*network_approval_context*/ None,
                     /*proposed_execpolicy_amendment*/ None,
-                    /*additional_permissions*/ None,
                     available_decisions,
+                    Some(turn_context.cwd.clone()),
                 )
                 .await
         };

@@ -3555,7 +3555,7 @@ pub struct ProcessTerminalSize {
 /// `processHandle` has been registered. Process output and exit are reported via
 /// `process/outputDelta` and `process/exited` notifications.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct ProcessSpawnParams {
     /// Command argv vector. Empty arrays are rejected.
@@ -3614,7 +3614,7 @@ pub struct ProcessSpawnResponse {
 /// Write stdin bytes to a running `process/spawn` session, close stdin, or
 /// both.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct ProcessWriteStdinParams {
     /// Client-supplied, connection-scoped `processHandle` from `process/spawn`.
@@ -3635,7 +3635,7 @@ pub struct ProcessWriteStdinResponse {}
 
 /// Terminate a running `process/spawn` session.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct ProcessKillParams {
     /// Client-supplied, connection-scoped `processHandle` from `process/spawn`.
@@ -3650,7 +3650,7 @@ pub struct ProcessKillResponse {}
 
 /// Resize a running PTY-backed `process/spawn` session.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct ProcessResizePtyParams {
     /// Client-supplied, connection-scoped `processHandle` from `process/spawn`.
@@ -3705,10 +3705,20 @@ pub struct ProcessExitedNotification {
     ///
     /// Empty when stdout was streamed via `process/outputDelta`.
     pub stdout: String,
+    /// Whether stdout reached `outputBytesCap`.
+    ///
+    /// In streaming mode, stdout is empty and cap state is also reported on the
+    /// final stdout `process/outputDelta` notification.
+    pub stdout_cap_reached: bool,
     /// Buffered stderr capture.
     ///
     /// Empty when stderr was streamed via `process/outputDelta`.
     pub stderr: String,
+    /// Whether stderr reached `outputBytesCap`.
+    ///
+    /// In streaming mode, stderr is empty and cap state is also reported on the
+    /// final stderr `process/outputDelta` notification.
+    pub stderr_cap_reached: bool,
 }
 
 // === Threads, Turns, and Items ===
@@ -9295,19 +9305,6 @@ mod tests {
     }
 
     #[test]
-    fn process_spawn_rejects_sandbox_policy() {
-        let err = serde_json::from_value::<ProcessSpawnParams>(json!({
-            "command": ["sleep", "30"],
-            "processHandle": "sleep-1",
-            "cwd": absolute_path_string("readable"),
-            "sandboxPolicy": { "type": "dangerFullAccess" },
-        }))
-        .expect_err("process/spawn should reject unknown sandboxPolicy field");
-
-        assert!(err.to_string().contains("unknown field `sandboxPolicy`"));
-    }
-
-    #[test]
     fn command_exec_params_round_trips_disable_output_cap() {
         let params = CommandExecParams {
             command: vec!["yes".to_string()],
@@ -9622,7 +9619,9 @@ mod tests {
             process_handle: "proc-1".to_string(),
             exit_code: 0,
             stdout: "out".to_string(),
+            stdout_cap_reached: false,
             stderr: "err".to_string(),
+            stderr_cap_reached: true,
         };
         let value = serde_json::to_value(&exited).expect("serialize process/exited");
         assert_eq!(
@@ -9631,7 +9630,9 @@ mod tests {
                 "processHandle": "proc-1",
                 "exitCode": 0,
                 "stdout": "out",
+                "stdoutCapReached": false,
                 "stderr": "err",
+                "stderrCapReached": true,
             })
         );
         let decoded = serde_json::from_value::<ProcessExitedNotification>(value)

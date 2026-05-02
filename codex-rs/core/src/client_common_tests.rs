@@ -17,11 +17,10 @@ fn serializes_text_verbosity_when_set() {
         instructions: "i".to_string(),
         input,
         tools,
-        tool_choice: "auto".to_string(),
         parallel_tool_calls: true,
         reasoning: None,
         store: Some(false),
-        stream: true,
+        stream: Some(true),
         include: vec![],
         prompt_cache_key: None,
         service_tier: None,
@@ -64,11 +63,10 @@ fn serializes_text_schema_with_strict_format() {
         instructions: "i".to_string(),
         input,
         tools,
-        tool_choice: "auto".to_string(),
         parallel_tool_calls: true,
         reasoning: None,
         store: Some(false),
-        stream: true,
+        stream: Some(true),
         include: vec![],
         prompt_cache_key: None,
         service_tier: None,
@@ -125,11 +123,10 @@ fn omits_text_when_not_set() {
         instructions: "i".to_string(),
         input,
         tools,
-        tool_choice: "auto".to_string(),
         parallel_tool_calls: true,
         reasoning: None,
         store: Some(false),
-        stream: true,
+        stream: Some(true),
         include: vec![],
         prompt_cache_key: None,
         service_tier: None,
@@ -148,11 +145,10 @@ fn serializes_flex_service_tier_when_set() {
         instructions: "i".to_string(),
         input: vec![],
         tools: vec![],
-        tool_choice: "auto".to_string(),
         parallel_tool_calls: true,
         reasoning: None,
         store: Some(false),
-        stream: true,
+        stream: Some(true),
         include: vec![],
         prompt_cache_key: None,
         service_tier: Some(ServiceTier::Flex.to_string()),
@@ -174,11 +170,10 @@ fn omits_store_when_not_set() {
         instructions: "i".to_string(),
         input: vec![],
         tools: vec![],
-        tool_choice: "auto".to_string(),
         parallel_tool_calls: true,
         reasoning: None,
         store: None,
-        stream: true,
+        stream: Some(true),
         include: vec![],
         prompt_cache_key: None,
         service_tier: None,
@@ -188,6 +183,28 @@ fn omits_store_when_not_set() {
 
     let v = serde_json::to_value(&req).expect("json");
     assert!(v.get("store").is_none());
+}
+
+#[test]
+fn omits_stream_when_not_set() {
+    let req = ResponsesApiRequest {
+        model: "gpt-5.4".to_string(),
+        instructions: "i".to_string(),
+        input: vec![],
+        tools: vec![],
+        parallel_tool_calls: true,
+        reasoning: None,
+        store: Some(false),
+        stream: None,
+        include: vec![],
+        prompt_cache_key: None,
+        service_tier: None,
+        text: None,
+        client_metadata: None,
+    };
+
+    let v = serde_json::to_value(&req).expect("json");
+    assert!(v.get("stream").is_none());
 }
 
 #[test]

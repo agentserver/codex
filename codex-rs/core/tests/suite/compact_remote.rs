@@ -596,6 +596,10 @@ async fn remote_manual_compact_matches_last_sampling_request_after_varied_histor
         .as_object_mut()
         .expect("responses request body should be an object")
         .remove("store");
+    last_turn_body_without_input
+        .as_object_mut()
+        .expect("responses request body should be an object")
+        .remove("stream");
     let mut compact_body_without_input = compact_request.body_json();
     compact_body_without_input
         .as_object_mut()
@@ -606,6 +610,12 @@ async fn remote_manual_compact_matches_last_sampling_request_after_varied_histor
             .as_object()
             .is_some_and(|body| !body.contains_key("store")),
         "compact request should omit store"
+    );
+    assert!(
+        compact_body_without_input
+            .as_object()
+            .is_some_and(|body| !body.contains_key("stream")),
+        "compact request should omit stream"
     );
     assert_eq!(compact_body_without_input, last_turn_body_without_input);
 

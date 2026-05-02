@@ -441,6 +441,7 @@ impl ModelClient {
             None,
         )?;
         request.store = None;
+        request.stream = None;
         let options = self.build_responses_options(
             /*turn_state*/ None,
             /*turn_metadata_header*/ None,
@@ -669,7 +670,7 @@ impl ModelClient {
             parallel_tool_calls: prompt.parallel_tool_calls,
             reasoning,
             store: Some(provider.is_azure_responses_endpoint()),
-            stream: true,
+            stream: Some(true),
             include,
             service_tier: match service_tier {
                 Some(ServiceTier::Fast) => Some("priority".to_string()),

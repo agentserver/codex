@@ -707,29 +707,6 @@ fn environment_selection_error_message(err: CodexErr) -> String {
     }
 }
 
-#[derive(Debug)]
-struct CommandExecRequestParams {
-    command: Vec<String>,
-    process_id: Option<String>,
-    tty: bool,
-    stream_stdin: bool,
-    stream_stdout_stderr: bool,
-    output_bytes_cap: Option<usize>,
-    disable_output_cap: bool,
-    disable_timeout: bool,
-    timeout_ms: Option<i64>,
-    cwd: Option<PathBuf>,
-    env_overrides: Option<HashMap<String, Option<String>>>,
-    size: Option<codex_app_server_protocol::CommandExecTerminalSize>,
-}
-
-enum CommandExecMode {
-    Sandboxed {
-        sandbox_policy: Option<codex_app_server_protocol::SandboxPolicy>,
-        permission_profile: Option<codex_app_server_protocol::PermissionProfile>,
-    },
-}
-
 impl CodexMessageProcessor {
     async fn instruction_sources_from_config(config: &Config) -> Vec<AbsolutePathBuf> {
         codex_core::AgentsMdManager::new(config)
@@ -2266,6 +2243,10 @@ impl CodexMessageProcessor {
         request_id: ConnectionRequestId,
         params: CommandExecParams,
     ) -> Result<(), JSONRPCErrorError> {
+        tracing::debug!("command/exec params: {params:?}");
+
+        let request = request_id.clone();
+
         let CommandExecParams {
             command,
             process_id,
@@ -2282,64 +2263,10 @@ impl CodexMessageProcessor {
             sandbox_policy,
             permission_profile,
         } = params;
-        self.exec_command(
-            request_id,
-            CommandExecRequestParams {
-                command,
-                process_id,
-                tty,
-                stream_stdin,
-                stream_stdout_stderr,
-                output_bytes_cap,
-                disable_output_cap,
-                disable_timeout,
-                timeout_ms,
-                cwd,
-                env_overrides,
-                size,
-            },
-            CommandExecMode::Sandboxed {
-                sandbox_policy,
-                permission_profile,
-            },
-        )
-        .await
-    }
-
-    async fn exec_command(
-        &self,
-        request_id: ConnectionRequestId,
-        params: CommandExecRequestParams,
-        mode: CommandExecMode,
-    ) -> Result<(), JSONRPCErrorError> {
         let method_name = "command/exec";
-        tracing::debug!("{method_name} params: {params:?}");
-
-        let request = request_id.clone();
-
-        if params.command.is_empty() {
+        if command.is_empty() {
             return Err(invalid_request("command must not be empty"));
         }
-
-        let CommandExecRequestParams {
-            command,
-            process_id,
-            tty,
-            stream_stdin,
-            stream_stdout_stderr,
-            output_bytes_cap,
-            disable_output_cap,
-            disable_timeout,
-            timeout_ms,
-            cwd,
-            env_overrides,
-            size,
-        } = params;
-
-        let CommandExecMode::Sandboxed {
-            sandbox_policy,
-            permission_profile,
-        } = &mode;
         if sandbox_policy.is_some() && permission_profile.is_some() {
             return Err(invalid_request(
                 "`permissionProfile` cannot be combined with `sandboxPolicy`",
@@ -2418,10 +2345,6 @@ impl CodexMessageProcessor {
             None => None,
         };
 
-        let CommandExecMode::Sandboxed {
-            sandbox_policy,
-            permission_profile,
-        } = mode;
         let managed_network_requirements_enabled =
             self.config.managed_network_requirements_enabled();
         let started_network_proxy = match self.config.permissions.network.as_ref() {

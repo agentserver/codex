@@ -19,13 +19,11 @@ use codex_app_server_protocol::ProcessTerminalSize;
 use codex_app_server_protocol::ProcessWriteStdinParams;
 use codex_app_server_protocol::ProcessWriteStdinResponse;
 use codex_app_server_protocol::ServerNotification;
-use codex_core::exec::ExecCapturePolicy;
 use codex_core::exec::ExecExpiration;
 use codex_core::exec::ExecExpirationOutcome;
 use codex_core::exec::IO_DRAIN_TIMEOUT_MS;
-use codex_core::sandboxing::ExecRequest;
-use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::exec_output::bytes_to_string_smart;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_pty::DEFAULT_OUTPUT_BYTES_CAP;
 use codex_utils_pty::ProcessHandle;
 use codex_utils_pty::SpawnedProcess;
@@ -55,7 +53,10 @@ impl CodexMessageProcessor {
         request_id: ConnectionRequestId,
         params: ProcessSpawnParams,
     ) {
-        let result = self.process_spawn_inner(request_id.clone(), params).await;
+        let result = self
+            .process_spawn_inner(request_id.clone(), params)
+            .await
+            .map(|()| None::<ClientResponsePayload>);
         self.send_optional_result(request_id, result).await;
     }
 
@@ -63,7 +64,7 @@ impl CodexMessageProcessor {
         &self,
         request_id: ConnectionRequestId,
         params: ProcessSpawnParams,
-    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+    ) -> Result<(), JSONRPCErrorError> {
         let ProcessSpawnParams {
             command,
             process_handle,
@@ -124,26 +125,19 @@ impl CodexMessageProcessor {
             Some(Err(error)) => return Err(error),
             None => None,
         };
-        let exec_request = ExecRequest::new(
+        let launch = ProcessLaunchRequest {
             command,
             cwd,
             env,
-            /*network*/ None,
             expiration,
-            ExecCapturePolicy::ShellTool,
-            codex_sandboxing::SandboxType::None,
-            WindowsSandboxLevel::Disabled,
-            /*windows_sandbox_private_desktop*/ false,
-            codex_protocol::models::PermissionProfile::Disabled,
-            /*arg0*/ None,
-        );
+        };
 
         self.process_exec_manager
             .start(StartProcessParams {
                 outgoing: self.outgoing.clone(),
                 request_id,
                 process_handle,
-                exec_request,
+                launch,
                 tty,
                 stream_stdin,
                 stream_stdout_stderr,
@@ -152,7 +146,7 @@ impl CodexMessageProcessor {
             })
             .await?;
 
-        Ok(None)
+        Ok(())
     }
 
     pub(super) async fn process_write_stdin(
@@ -223,12 +217,19 @@ struct StartProcessParams {
     outgoing: Arc<OutgoingMessageSender>,
     request_id: ConnectionRequestId,
     process_handle: String,
-    exec_request: ExecRequest,
+    launch: ProcessLaunchRequest,
     tty: bool,
     stream_stdin: bool,
     stream_stdout_stderr: bool,
     output_bytes_cap: Option<usize>,
     size: Option<TerminalSize>,
+}
+
+struct ProcessLaunchRequest {
+    command: Vec<String>,
+    cwd: AbsolutePathBuf,
+    env: HashMap<String, String>,
+    expiration: ExecExpiration,
 }
 
 struct RunProcessParams {
@@ -266,7 +267,7 @@ impl ProcessExecManager {
             outgoing,
             request_id,
             process_handle,
-            exec_request,
+            launch,
             tty,
             stream_stdin,
             stream_stdout_stderr,
@@ -274,20 +275,19 @@ impl ProcessExecManager {
             size,
         } = params;
 
-        let ExecRequest {
+        let ProcessLaunchRequest {
             command,
             cwd,
             env,
             expiration,
-            arg0,
-            ..
-        } = exec_request;
+        } = launch;
 
         let (program, args) = command
             .split_first()
             .ok_or_else(|| invalid_request("command must not be empty"))?;
         let stream_stdin = tty || stream_stdin;
         let stream_stdout_stderr = tty || stream_stdout_stderr;
+        let arg0 = None;
         let (control_tx, control_rx) = mpsc::channel(32);
         let process_key = ConnectionProcessHandle {
             connection_id: request_id.connection_id,

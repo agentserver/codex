@@ -6,7 +6,6 @@
 use super::*;
 use crate::bottom_pane::status_line_from_segments;
 use crate::status::format_tokens_compact;
-use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
 
 /// Items shown in the terminal title when the user has not configured a
 /// custom selection. Intentionally minimal: activity indicator + project name.
@@ -558,17 +557,7 @@ impl ChatWidget {
                 format_tokens_compact(self.status_line_total_usage().output_tokens)
             )),
             StatusLineItem::SessionId => self.thread_id.map(|id| id.to_string()),
-            StatusLineItem::FastMode => Some(
-                if self
-                    .current_service_tier()
-                    .as_ref()
-                    .is_some_and(|tier| tier.as_ref() == SERVICE_TIER_PRIORITY)
-                {
-                    "Fast on".to_string()
-                } else {
-                    "Fast off".to_string()
-                },
-            ),
+            StatusLineItem::FastMode => Some(self.current_service_tier_status_label()),
             StatusLineItem::ThreadTitle => self.thread_name.as_ref().and_then(|name| {
                 let trimmed = name.trim();
                 (!trimmed.is_empty()).then(|| trimmed.to_string())
@@ -682,13 +671,11 @@ impl ChatWidget {
 
     fn model_with_reasoning_display_name(&self) -> String {
         let label = Self::status_line_reasoning_effort_label(self.effective_reasoning_effort());
-        let fast_label =
-            if self.should_show_fast_status(self.current_model(), self.current_service_tier()) {
-                " fast"
-            } else {
-                ""
-            };
-        format!("{} {label}{fast_label}", self.model_display_name())
+        let service_tier_label = self
+            .current_service_tier_name()
+            .map(|name| format!(" {}", name.to_ascii_lowercase()))
+            .unwrap_or_default();
+        format!("{} {label}{service_tier_label}", self.model_display_name())
     }
 
     /// Computes the compact runtime status label used by word-based status items.

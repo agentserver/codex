@@ -5,7 +5,6 @@
 
 use super::resize_reflow::trailing_run_start;
 use super::*;
-use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
 
 const SHUTDOWN_FIRST_EXIT_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 2);
 
@@ -1263,15 +1262,16 @@ impl App {
                 }
                 match edits.apply().await {
                     Ok(()) => {
-                        let status = if service_tier
-                            .as_ref()
-                            .is_some_and(|tier| tier.as_ref() == SERVICE_TIER_PRIORITY)
-                        {
-                            "on"
-                        } else {
-                            "off"
+                        let mut message = match service_tier.as_ref() {
+                            Some(service_tier) => format!(
+                                "Service tier set to {}",
+                                self.chat_widget.service_tier_display_name(
+                                    self.chat_widget.current_model(),
+                                    service_tier,
+                                )
+                            ),
+                            None => "Service tier cleared".to_string(),
                         };
-                        let mut message = format!("Fast mode set to {status}");
                         if let Some(profile) = profile {
                             message.push_str(" for ");
                             message.push_str(profile);
@@ -1280,14 +1280,14 @@ impl App {
                         self.chat_widget.add_info_message(message, /*hint*/ None);
                     }
                     Err(err) => {
-                        tracing::error!(error = %err, "failed to persist fast mode selection");
+                        tracing::error!(error = %err, "failed to persist service tier selection");
                         if let Some(profile) = profile {
                             self.chat_widget.add_error_message(format!(
-                                "Failed to save Fast mode for profile `{profile}`: {err}"
+                                "Failed to save service tier for profile `{profile}`: {err}"
                             ));
                         } else {
                             self.chat_widget.add_error_message(format!(
-                                "Failed to save default Fast mode: {err}"
+                                "Failed to save default service tier: {err}"
                             ));
                         }
                     }

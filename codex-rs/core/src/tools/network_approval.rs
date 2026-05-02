@@ -406,6 +406,14 @@ impl NetworkApprovalService {
             NetworkProtocol::Socks5Udp => NetworkApprovalProtocol::Socks5Udp,
         };
         let key = HostApprovalKey::from_request(&request, protocol);
+        let owner_call = self.resolve_single_active_call().await;
+        let pre_tool_use_permission_decision = owner_call
+            .as_ref()
+            .and_then(|call| call.pre_tool_use_permission_decision.as_ref());
+        let pre_tool_use_asks_user = matches!(
+            pre_tool_use_permission_decision,
+            Some(PreToolUsePermissionDecision::Ask { .. })
+        );
 
         {
             let denied_hosts = self.session_denied_hosts.lock().await;
@@ -416,7 +424,7 @@ impl NetworkApprovalService {
 
         {
             let approved_hosts = self.session_approved_hosts.lock().await;
-            if approved_hosts.contains(&key) {
+            if approved_hosts.contains(&key) && !pre_tool_use_asks_user {
                 return NetworkDecision::Allow;
             }
         }
@@ -459,7 +467,6 @@ impl NetworkApprovalService {
             return NetworkDecision::deny(REASON_NOT_ALLOWED);
         }
 
-        let owner_call = self.resolve_single_active_call().await;
         let network_approval_context = NetworkApprovalContext {
             host: request.host.clone(),
             protocol,
@@ -469,13 +476,6 @@ impl NetworkApprovalService {
         let command = owner_call
             .as_ref()
             .map_or_else(|| prompt_command.join(" "), |call| call.command.clone());
-        let pre_tool_use_permission_decision = owner_call
-            .as_ref()
-            .and_then(|call| call.pre_tool_use_permission_decision.as_ref());
-        let pre_tool_use_asks_user = matches!(
-            pre_tool_use_permission_decision,
-            Some(PreToolUsePermissionDecision::Ask { .. })
-        );
         let pre_tool_use_allows = matches!(
             pre_tool_use_permission_decision,
             Some(PreToolUsePermissionDecision::Allow { .. })

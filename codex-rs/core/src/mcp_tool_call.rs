@@ -994,7 +994,8 @@ async fn maybe_request_mcp_tool_approval(
         )
         .await
         {
-            ArcMonitorOutcome::Ok => return None,
+            ArcMonitorOutcome::Ok if !pre_tool_use_asks_user => return None,
+            ArcMonitorOutcome::Ok => {}
             ArcMonitorOutcome::AskUser(reason) => {
                 monitor_reason = Some(reason);
             }

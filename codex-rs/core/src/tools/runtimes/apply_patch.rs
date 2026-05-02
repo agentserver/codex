@@ -119,7 +119,7 @@ impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
                 return review_approval_request(session, turn, review_id, action, retry_reason)
                     .await;
             }
-            if req.permissions_preapproved && retry_reason.is_none() {
+            if req.permissions_preapproved && retry_reason.is_none() && !ctx.bypass_approval_cache {
                 return ReviewDecision::Approved;
             }
             if let Some(reason) = retry_reason {

@@ -31,13 +31,14 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
 use crate::environment_selection::ResolvedTurnEnvironments;
-use crate::guardian::ApprovalRequest;
-use crate::guardian::is_mcp_tool_approval_question_id;
+use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::new_guardian_review_id;
 use crate::guardian::routes_approval_to_guardian;
 use crate::guardian::spawn_approval_request_review;
 use crate::mcp_tool_call::build_mcp_tool_approval_request;
+use crate::mcp_tool_call::is_mcp_tool_approval_question_id;
 use crate::mcp_tool_call::lookup_mcp_tool_metadata;
+use crate::mcp_tool_call::mcp_tool_approval_compat_response;
 use crate::session::Codex;
 use crate::session::CodexSpawnArgs;
 use crate::session::CodexSpawnOk;
@@ -450,7 +451,7 @@ async fn handle_exec_approval(
         ..
     } = event;
     let hook_command = shlex_join(&command);
-    let approval_request = ApprovalRequest::Shell {
+    let approval_request = GuardianApprovalRequest::Shell {
         id: call_id.clone(),
         command,
         hook_command,
@@ -555,7 +556,7 @@ async fn handle_patch_approval(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let approval_request = ApprovalRequest::ApplyPatch {
+    let approval_request = GuardianApprovalRequest::ApplyPatch {
         id: approval_id.clone(),
         cwd: parent_ctx.cwd.clone(),
         files: changes
@@ -707,7 +708,7 @@ async fn maybe_auto_review_mcp_request_user_input(
         Some(&review_cancel),
     )
     .await;
-    approval_request.mcp_tool_approval_compat_response(question, decision)
+    mcp_tool_approval_compat_response(&approval_request, question, decision)
 }
 
 async fn handle_request_permissions(

@@ -3,7 +3,7 @@ use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
 use crate::exec::cancel_when_either;
 use crate::exec::is_likely_sandbox_denied;
-use crate::guardian::ApprovalRequest;
+use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::guardian_rejection_message;
 use crate::guardian::guardian_timeout_message;
 use crate::guardian::new_guardian_review_id;
@@ -406,7 +406,7 @@ impl CoreShellActionProvider {
             .pause_for(async move {
                 // 1) Run PermissionRequest hooks
                 let effective_approval_id = approval_id.clone().unwrap_or_else(|| call_id.clone());
-                let approval_request = ApprovalRequest::Execve {
+                let approval_request = GuardianApprovalRequest::Execve {
                     id: call_id.clone(),
                     source,
                     program: program.to_string_lossy().into_owned(),

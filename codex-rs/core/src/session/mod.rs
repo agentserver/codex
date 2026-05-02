@@ -32,7 +32,7 @@ use crate::context::PersonalitySpecInstructions;
 use crate::default_skill_metadata_budget;
 use crate::environment_selection::ResolvedTurnEnvironments;
 use crate::exec_policy::ExecPolicyManager;
-use crate::guardian::ApprovalRequest;
+use crate::guardian::GuardianApprovalRequest;
 use crate::installation_id::resolve_installation_id;
 use crate::parse_turn_item;
 use crate::path_utils::normalize_for_native_workdir;
@@ -1845,7 +1845,7 @@ impl Session {
     pub async fn request_command_approval_for_request(
         &self,
         turn_context: &TurnContext,
-        approval_request: ApprovalRequest,
+        approval_request: GuardianApprovalRequest,
         approval_id: Option<String>,
         reason: Option<String>,
         network_approval_context: Option<NetworkApprovalContext>,
@@ -1930,7 +1930,7 @@ impl Session {
     pub async fn request_patch_approval_for_request(
         &self,
         turn_context: &TurnContext,
-        approval_request: ApprovalRequest,
+        approval_request: GuardianApprovalRequest,
         reason: Option<String>,
         grant_root: Option<PathBuf>,
     ) -> oneshot::Receiver<ReviewDecision> {
@@ -2029,7 +2029,7 @@ impl Session {
         }
 
         let requested_permissions = args.permissions;
-        let approval_request = ApprovalRequest::RequestPermissions {
+        let approval_request = GuardianApprovalRequest::RequestPermissions {
             id: call_id.clone(),
             turn_id: turn_context.sub_id.clone(),
             reason: args.reason.clone(),

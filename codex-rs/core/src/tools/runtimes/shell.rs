@@ -10,7 +10,7 @@ pub(crate) mod zsh_fork_backend;
 
 use crate::command_canonicalization::canonicalize_command_for_approval;
 use crate::exec::ExecCapturePolicy;
-use crate::guardian::ApprovalRequest;
+use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::GuardianNetworkAccessTrigger;
 use crate::guardian::review_approval_request;
 use crate::sandboxing::ExecOptions;
@@ -120,8 +120,8 @@ impl ShellRuntime {
         })
     }
 
-    fn build_approval_request(req: &ShellRequest, call_id: String) -> ApprovalRequest {
-        ApprovalRequest::Shell {
+    fn build_approval_request(req: &ShellRequest, call_id: String) -> GuardianApprovalRequest {
+        GuardianApprovalRequest::Shell {
             id: call_id,
             command: req.command.clone(),
             hook_command: req.hook_command.clone(),
@@ -206,7 +206,7 @@ impl Approvable<ShellRequest> for ShellRuntime {
         &self,
         req: &ShellRequest,
         ctx: &ApprovalCtx<'_>,
-    ) -> Option<ApprovalRequest> {
+    ) -> Option<GuardianApprovalRequest> {
         Some(Self::build_approval_request(req, ctx.call_id.to_string()))
     }
 

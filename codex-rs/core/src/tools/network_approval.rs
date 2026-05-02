@@ -1,4 +1,4 @@
-use crate::guardian::ApprovalRequest;
+use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::GuardianNetworkAccessTrigger;
 use crate::guardian::guardian_rejection_message;
 use crate::guardian::guardian_timeout_message;
@@ -463,7 +463,7 @@ impl NetworkApprovalService {
             || format!("network-access {target}"),
             |call| call.command.clone(),
         );
-        let approval_request = ApprovalRequest::NetworkAccess {
+        let approval_request = GuardianApprovalRequest::NetworkAccess {
             id: guardian_approval_id.clone(),
             turn_id: owner_call
                 .as_ref()

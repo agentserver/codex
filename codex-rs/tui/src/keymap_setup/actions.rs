@@ -379,6 +379,7 @@ pub(super) fn format_binding_summary(bindings: &[KeyBinding]) -> String {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum KeymapDebugBindingSource {
     Custom,
+    CustomGlobal,
     Default,
 }
 
@@ -386,6 +387,7 @@ impl KeymapDebugBindingSource {
     pub(super) const fn label(&self) -> &'static str {
         match self {
             Self::Custom => "Custom",
+            Self::CustomGlobal => "Custom global",
             Self::Default => "Default",
         }
     }
@@ -433,8 +435,31 @@ fn debug_binding_source(
         return KeymapDebugBindingSource::Default;
     };
     if slot.is_some() {
-        KeymapDebugBindingSource::Custom
+        return KeymapDebugBindingSource::Custom;
+    }
+
+    let Some(global_slot) = global_fallback_slot(&mut keymap_config, descriptor) else {
+        return KeymapDebugBindingSource::Default;
+    };
+    if global_slot.is_some() {
+        KeymapDebugBindingSource::CustomGlobal
     } else {
         KeymapDebugBindingSource::Default
+    }
+}
+
+fn global_fallback_slot<'a>(
+    keymap: &'a mut TuiKeymap,
+    descriptor: &KeymapActionDescriptor,
+) -> Option<&'a mut Option<KeybindingsSpec>> {
+    if descriptor.context != "composer" {
+        return None;
+    }
+
+    match descriptor.action {
+        "submit" => Some(&mut keymap.global.submit),
+        "queue" => Some(&mut keymap.global.queue),
+        "toggle_shortcuts" => Some(&mut keymap.global.toggle_shortcuts),
+        _ => None,
     }
 }

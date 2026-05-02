@@ -1317,6 +1317,20 @@ mod tests {
     }
 
     #[test]
+    fn debug_view_labels_custom_global_fallback_source() {
+        let mut keymap = TuiKeymap::default();
+        keymap.global.queue = Some(KeybindingsSpec::One(KeybindingSpec("ctrl-q".to_string())));
+        let runtime = RuntimeKeymap::from_config(&keymap).unwrap();
+        let mut view = build_keymap_debug_view(&runtime, &keymap);
+
+        view.handle_key_event(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL));
+
+        let rendered = render_debug(&view, /*width*/ 100);
+        assert!(rendered.contains("composer.queue (Queue)"));
+        assert!(rendered.contains("[Custom global]"));
+    }
+
+    #[test]
     fn capture_completion_returns_to_selected_keymap_picker_row() {
         let (mut pane, tx, mut rx) = test_pane();
         let runtime = RuntimeKeymap::defaults();

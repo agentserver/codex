@@ -974,10 +974,9 @@ async fn maybe_request_mcp_tool_approval(
     );
 
     let annotations = metadata.and_then(|metadata| metadata.annotations.as_ref());
-    let approval_required = requires_mcp_tool_approval(annotations);
     let approval_required = !auto_approved_by_permissions
-        && (approval_required || approval_mode == AppToolApproval::Prompt);
-    if !pre_tool_use_allows && !approval_required && !pre_tool_use_asks_user {
+        && (requires_mcp_tool_approval(annotations) || approval_mode == AppToolApproval::Prompt);
+    if !approval_required && !pre_tool_use_asks_user {
         return None;
     }
 
@@ -1006,21 +1005,27 @@ async fn maybe_request_mcp_tool_approval(
             }
         }
     }
-    if pre_tool_use_allows {
+    let must_prompt_user = monitor_reason.is_some() || pre_tool_use_asks_user;
+
+    if auto_approved_by_policy && approval_required && !must_prompt_user {
+        return None;
+    }
+    if pre_tool_use_allows && !must_prompt_user {
         return None;
     }
 
     let session_approval_key = session_mcp_tool_approval_key(invocation, metadata, approval_mode);
     let persistent_approval_key =
         persistent_mcp_tool_approval_key(invocation, metadata, approval_mode);
-    if pre_tool_use_permission_decision.is_none()
+    if !must_prompt_user
+        && pre_tool_use_permission_decision.is_none()
         && let Some(key) = session_approval_key.as_ref()
         && mcp_tool_approval_is_remembered(sess, key).await
     {
         return Some(McpToolApprovalDecision::Accept);
     }
 
-    if pre_tool_use_permission_decision.is_none() {
+    if !must_prompt_user && pre_tool_use_permission_decision.is_none() {
         match run_permission_request_hooks(
             sess,
             turn_context,
@@ -1052,7 +1057,7 @@ async fn maybe_request_mcp_tool_approval(
         .features
         .enabled(Feature::ToolCallMcpElicitation);
 
-    if routes_approval_to_guardian(turn_context) && !pre_tool_use_asks_user {
+    if routes_approval_to_guardian(turn_context) && !must_prompt_user {
         let review_id = new_guardian_review_id();
         let decision = review_approval_request(
             sess,
@@ -1074,9 +1079,14 @@ async fn maybe_request_mcp_tool_approval(
         return Some(decision);
     }
 
+    let (prompt_session_approval_key, prompt_persistent_approval_key) = if must_prompt_user {
+        (None, None)
+    } else {
+        (session_approval_key, persistent_approval_key)
+    };
     let prompt_options = mcp_tool_approval_prompt_options(
-        session_approval_key.as_ref(),
-        persistent_approval_key.as_ref(),
+        prompt_session_approval_key.as_ref(),
+        prompt_persistent_approval_key.as_ref(),
         tool_call_mcp_elicitation_enabled,
     );
     let question_id = format!("{MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX}_{call_id}");
@@ -1101,12 +1111,11 @@ async fn maybe_request_mcp_tool_approval(
             .as_ref()
             .map(|rendered_template| rendered_template.question.as_str()),
     );
-    let prompt_reason = match &pre_tool_use_permission_decision {
-        Some(PreToolUsePermissionDecision::Ask { reason }) => {
-            reason.as_deref().or(monitor_reason.as_deref())
-        }
-        Some(PreToolUsePermissionDecision::Allow { .. }) | None => monitor_reason.as_deref(),
+    let pre_tool_use_reason = match &pre_tool_use_permission_decision {
+        Some(PreToolUsePermissionDecision::Ask { reason }) => reason.as_deref(),
+        Some(PreToolUsePermissionDecision::Allow { .. }) | None => None,
     };
+    let prompt_reason = monitor_reason.as_deref().or(pre_tool_use_reason);
     question.question = mcp_tool_approval_question_text(question.question, prompt_reason);
     if tool_call_mcp_elicitation_enabled {
         let request_id = rmcp::model::RequestId::String(
@@ -1142,8 +1151,8 @@ async fn maybe_request_mcp_tool_approval(
             sess,
             turn_context,
             &decision,
-            session_approval_key,
-            persistent_approval_key,
+            prompt_session_approval_key,
+            prompt_persistent_approval_key,
         )
         .await;
         return Some(decision);
@@ -1163,8 +1172,8 @@ async fn maybe_request_mcp_tool_approval(
         sess,
         turn_context,
         &decision,
-        session_approval_key,
-        persistent_approval_key,
+        prompt_session_approval_key,
+        prompt_persistent_approval_key,
     )
     .await;
     Some(decision)

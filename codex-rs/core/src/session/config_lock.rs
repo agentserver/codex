@@ -213,6 +213,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_features::CommonFeatureConfigToml;
+    use codex_features::FeatureConfigTable;
+    use codex_features::FeatureToml;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
 

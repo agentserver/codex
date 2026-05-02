@@ -5689,6 +5689,47 @@ async fn build_initial_context_omits_multi_agent_v2_usage_hints_when_feature_dis
 }
 
 #[tokio::test]
+async fn build_initial_context_renders_feature_hint_developer_message_with_resolved_config_values()
+{
+    let (session, turn_context, _rx_event) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        |config| {
+            let _ = config.features.enable(Feature::MemoryTool);
+            config.agent_max_threads = Some(7);
+
+            let user_config_path = match config.config_layer_stack.get_user_layer() {
+                Some(layer) => match &layer.name {
+                    codex_config::ConfigLayerSource::User { file } => file.clone(),
+                    other => panic!("expected user config layer, got {other:?}"),
+                },
+                None => panic!("expected user config layer"),
+            };
+            config.config_layer_stack = config.config_layer_stack.with_user_config(
+                &user_config_path,
+                toml::toml! {
+                    [features.memories]
+                    enabled = true
+                    hint = "This is a super hint {{ agents.max_threads }}"
+                }
+                .into(),
+            );
+        },
+    )
+    .await;
+
+    let initial_context = session.build_initial_context(turn_context.as_ref()).await;
+
+    let developer_messages = developer_message_texts(&initial_context);
+    assert!(
+        developer_messages
+            .iter()
+            .any(|message| message.as_slice() == ["This is a super hint 7"]),
+        "expected rendered feature hint developer message, got {developer_messages:?}"
+    );
+}
+
+#[tokio::test]
 async fn configured_multi_agent_v2_usage_hint_texts_use_effective_enabled_feature_state() {
     let (mut session, _turn_context) =
         make_multi_agent_v2_usage_hint_test_session(/*enable_multi_agent_v2*/ false).await;

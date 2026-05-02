@@ -184,6 +184,7 @@ use codex_protocol::error::Result as CodexResult;
 use codex_protocol::exec_output::StreamOutput;
 
 mod config_lock;
+mod feature_hints;
 mod handlers;
 mod mcp;
 mod multi_agents;
@@ -2540,6 +2541,7 @@ impl Session {
             collaboration_mode,
             base_instructions,
             session_source,
+            session_configuration,
         ) = {
             let state = self.state.lock().await;
             (
@@ -2548,6 +2550,7 @@ impl Session {
                 state.session_configuration.collaboration_mode.clone(),
                 state.session_configuration.base_instructions.clone(),
                 state.session_configuration.session_source.clone(),
+                state.session_configuration.clone(),
             )
         };
         if let Some(model_switch_message) =
@@ -2702,13 +2705,16 @@ impl Session {
 
         let multi_agent_v2_usage_hint_text =
             multi_agents::usage_hint_text(turn_context, &session_source);
+        let feature_hint_messages =
+            feature_hints::render_feature_hint_messages(&session_configuration, turn_context);
 
-        let mut items = Vec::with_capacity(4);
+        let mut items = Vec::with_capacity(4 + feature_hint_messages.len());
         if let Some(developer_message) =
             crate::context_manager::updates::build_developer_update_item(developer_sections)
         {
             items.push(developer_message);
         }
+        items.extend(feature_hint_messages);
         if let Some(usage_hint_text) = multi_agent_v2_usage_hint_text
             && let Some(usage_hint_message) =
                 crate::context_manager::updates::build_developer_update_item(vec![

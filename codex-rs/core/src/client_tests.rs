@@ -424,7 +424,7 @@ fn model_client_with_counting_attestation() -> (ModelClient, Arc<AtomicUsize>) {
             let calls = calls.clone();
             Box::pin(async move {
                 let call = calls.fetch_add(1, Ordering::Relaxed) + 1;
-                format!(r#"{{"token":"token-{call}"}}"#)
+                Some(format!("v1.header-{call}"))
             })
         })),
     );
@@ -472,13 +472,13 @@ async fn responses_generate_fresh_attestation_headers_for_chatgpt_codex() {
         first_headers
             .get(crate::attestation::X_OAI_ATTESTATION_HEADER)
             .and_then(|value| value.to_str().ok()),
-        Some(r#"{"token":"token-1"}"#),
+        Some("v1.header-1"),
     );
     assert_eq!(
         second_headers
             .get(crate::attestation::X_OAI_ATTESTATION_HEADER)
             .and_then(|value| value.to_str().ok()),
-        Some(r#"{"token":"token-2"}"#),
+        Some("v1.header-2"),
     );
     assert_eq!(attestation_calls.load(Ordering::Relaxed), 2);
 }
@@ -501,13 +501,13 @@ async fn compact_generate_fresh_attestation_headers_for_chatgpt_codex() {
         first_headers
             .get(crate::attestation::X_OAI_ATTESTATION_HEADER)
             .and_then(|value| value.to_str().ok()),
-        Some(r#"{"token":"token-1"}"#),
+        Some("v1.header-1"),
     );
     assert_eq!(
         second_headers
             .get(crate::attestation::X_OAI_ATTESTATION_HEADER)
             .and_then(|value| value.to_str().ok()),
-        Some(r#"{"token":"token-2"}"#),
+        Some("v1.header-2"),
     );
     assert_eq!(attestation_calls.load(Ordering::Relaxed), 2);
 }
@@ -530,13 +530,13 @@ async fn realtime_setup_generate_fresh_attestation_headers_for_chatgpt_codex() {
         first_headers
             .get(crate::attestation::X_OAI_ATTESTATION_HEADER)
             .and_then(|value| value.to_str().ok()),
-        Some(r#"{"token":"token-1"}"#),
+        Some("v1.header-1"),
     );
     assert_eq!(
         second_headers
             .get(crate::attestation::X_OAI_ATTESTATION_HEADER)
             .and_then(|value| value.to_str().ok()),
-        Some(r#"{"token":"token-2"}"#),
+        Some("v1.header-2"),
     );
     assert_eq!(attestation_calls.load(Ordering::Relaxed), 2);
 }

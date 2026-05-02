@@ -7,12 +7,12 @@ use http::HeaderValue;
 
 pub(crate) const X_OAI_ATTESTATION_HEADER: &str = "x-oai-attestation";
 
-type GenerateAttestationFuture = Pin<Box<dyn Future<Output = String> + Send>>;
+type GenerateAttestationFuture = Pin<Box<dyn Future<Output = Option<String>> + Send>>;
 type GenerateAttestationCallback = dyn Fn() -> GenerateAttestationFuture + Send + Sync + 'static;
 
 /// Session-scoped source for just-in-time attestation header values.
 ///
-/// Host integrations provide the opaque JSON string expected by the upstream
+/// Host integrations provide the opaque string expected by the upstream
 /// `x-oai-attestation` header. Core validates only that it is legal as an HTTP
 /// header value before forwarding it.
 #[derive(Clone)]
@@ -34,6 +34,6 @@ impl AttestationProvider {
     }
 
     pub(crate) async fn generate_header(&self) -> Option<HeaderValue> {
-        HeaderValue::from_str(&(self.generate)().await).ok()
+        HeaderValue::from_str(&(self.generate)().await?).ok()
     }
 }

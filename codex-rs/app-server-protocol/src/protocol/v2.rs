@@ -2409,22 +2409,11 @@ pub struct ChatgptAuthTokensRefreshResponse {
 pub struct AttestationGenerateParams {}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
-#[serde(tag = "type", rename_all = "camelCase")]
-#[ts(tag = "type", export_to = "v2/")]
-pub enum AttestationGenerateResponse {
-    #[serde(rename_all = "camelCase")]
-    #[ts(rename_all = "camelCase")]
-    Token {
-        token: String,
-        latency_ms: Option<f64>,
-    },
-    #[serde(rename_all = "camelCase")]
-    #[ts(rename_all = "camelCase")]
-    Failure {
-        failure_reason: String,
-        failure_detail: Option<String>,
-        latency_ms: Option<f64>,
-    },
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct AttestationGenerateResponse {
+    /// Opaque upstream `x-oai-attestation` header value.
+    pub header_value: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

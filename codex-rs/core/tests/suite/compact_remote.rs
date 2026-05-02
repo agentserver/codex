@@ -129,6 +129,23 @@ fn format_labeled_requests_snapshot(
     )
 }
 
+fn format_request_input_diff_snapshot(
+    scenario: &str,
+    before_title: &str,
+    before_request: &responses::ResponsesRequest,
+    after_title: &str,
+    after_request: &responses::ResponsesRequest,
+) -> String {
+    context_snapshot::format_request_input_diff_snapshot(
+        scenario,
+        before_title,
+        before_request,
+        after_title,
+        after_request,
+        &context_snapshot_options(),
+    )
+}
+
 fn compacted_summary_only_output(summary: &str) -> Vec<ResponseItem> {
     vec![ResponseItem::Compaction {
         encrypted_content: summary_with_prefix(summary),
@@ -401,6 +418,195 @@ async fn remote_compact_replaces_history_for_followups() -> Result<()> {
                 ("Remote Compaction Request", &compact_request),
                 ("Remote Post-Compaction History Layout", follow_up_request),
             ]
+        )
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_manual_compact_matches_last_sampling_request_after_varied_history() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let harness = TestCodexHarness::with_builder(
+        test_codex().with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing()),
+    )
+    .await?;
+    let codex = harness.test().codex.clone();
+    let image_url =
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
+            .to_string();
+
+    let responses_mock = responses::mount_sse_sequence(
+        harness.server(),
+        vec![
+            responses::sse(vec![
+                responses::ev_assistant_message("turn-one-assistant", "TURN_ONE_ASSISTANT"),
+                responses::ev_completed("turn-one-response"),
+            ]),
+            responses::sse(vec![
+                responses::ev_reasoning_item(
+                    "turn-two-reasoning",
+                    &["TURN_TWO_REASONING"],
+                    &["turn two raw content"],
+                ),
+                responses::ev_assistant_message("turn-two-assistant", "TURN_TWO_ASSISTANT"),
+                responses::ev_completed("turn-two-response"),
+            ]),
+            responses::sse(vec![
+                responses::ev_function_call("turn-three-call", DUMMY_FUNCTION_NAME, "{}"),
+                responses::ev_completed("turn-three-call-response"),
+            ]),
+            responses::sse(vec![
+                responses::ev_assistant_message("turn-three-assistant", "TURN_THREE_ASSISTANT"),
+                responses::ev_completed("turn-three-final-response"),
+            ]),
+            responses::sse(vec![
+                responses::ev_local_shell_call(
+                    "turn-four-local-shell",
+                    "completed",
+                    vec!["/bin/echo", "TURN_FOUR_LOCAL_SHELL"],
+                ),
+                responses::ev_completed("turn-four-local-shell-response"),
+            ]),
+            responses::sse(vec![
+                responses::ev_assistant_message("turn-four-assistant", "TURN_FOUR_ASSISTANT"),
+                responses::ev_completed("turn-four-final-response"),
+            ]),
+            responses::sse(vec![
+                responses::ev_reasoning_item(
+                    "turn-five-reasoning",
+                    &["TURN_FIVE_REASONING"],
+                    &["turn five raw content"],
+                ),
+                responses::ev_assistant_message("turn-five-assistant", "TURN_FIVE_ASSISTANT"),
+                responses::ev_completed("turn-five-response"),
+            ]),
+        ],
+    )
+    .await;
+
+    let compact_mock = responses::mount_compact_user_history_with_summary_once(
+        harness.server(),
+        "REMOTE_DIFF_SUMMARY",
+    )
+    .await;
+
+    codex
+        .submit(Op::UserInput {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "TURN_ONE_USER".to_string(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        })
+        .await?;
+    wait_for_turn_complete(&codex).await;
+
+    codex
+        .submit(Op::UserInput {
+            environments: None,
+            items: vec![
+                UserInput::Text {
+                    text: "TURN_TWO_PREFIX".to_string(),
+                    text_elements: Vec::new(),
+                },
+                UserInput::Text {
+                    text: "TURN_TWO_SUFFIX".to_string(),
+                    text_elements: Vec::new(),
+                },
+            ],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        })
+        .await?;
+    wait_for_turn_complete(&codex).await;
+
+    codex
+        .submit(Op::UserInput {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "TURN_THREE_TOOL_USER".to_string(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        })
+        .await?;
+    wait_for_turn_complete(&codex).await;
+
+    codex
+        .submit(Op::UserInput {
+            environments: None,
+            items: vec![
+                UserInput::Image { image_url },
+                UserInput::Text {
+                    text: "TURN_FOUR_IMAGE_USER".to_string(),
+                    text_elements: Vec::new(),
+                },
+            ],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        })
+        .await?;
+    wait_for_turn_complete(&codex).await;
+
+    codex
+        .submit(Op::UserInput {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "TURN_FIVE_USER".to_string(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        })
+        .await?;
+    wait_for_turn_complete(&codex).await;
+
+    codex.submit(Op::Compact).await?;
+    wait_for_turn_complete(&codex).await;
+
+    let response_requests = responses_mock.requests();
+    assert_eq!(
+        response_requests.len(),
+        7,
+        "expected five turns with one unsupported tool continuation and one local shell continuation"
+    );
+    assert_eq!(
+        compact_mock.requests().len(),
+        1,
+        "expected exactly one remote compact request"
+    );
+
+    let last_turn_request = response_requests
+        .last()
+        .cloned()
+        .expect("last turn request missing");
+    let compact_request = compact_mock.single_request();
+
+    let mut last_turn_body_without_input = last_turn_request.body_json();
+    last_turn_body_without_input
+        .as_object_mut()
+        .expect("responses request body should be an object")
+        .remove("input");
+    let mut compact_body_without_input = compact_request.body_json();
+    compact_body_without_input
+        .as_object_mut()
+        .expect("compact request body should be an object")
+        .remove("input");
+    assert_eq!(compact_body_without_input, last_turn_body_without_input);
+
+    insta::assert_snapshot!(
+        "remote_manual_compact_varied_history_request_diff",
+        format_request_input_diff_snapshot(
+            "After five varied turns, remote manual compaction reuses the last sampling request input and only appends the completed final-turn outputs.",
+            "Last Normal /responses Request",
+            &last_turn_request,
+            "Remote /responses/compact Request",
+            &compact_request,
         )
     );
 

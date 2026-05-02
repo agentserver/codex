@@ -1,5 +1,6 @@
 use regex_lite::Regex;
 use serde_json::Value;
+use similar::TextDiff;
 use std::sync::OnceLock;
 
 use crate::responses::ResponsesRequest;
@@ -240,6 +241,28 @@ pub fn format_labeled_items_snapshot(
         .collect::<Vec<String>>()
         .join("\n\n");
     format!("Scenario: {scenario}\n\n{sections}")
+}
+
+pub fn format_request_input_diff_snapshot(
+    scenario: &str,
+    before_title: &str,
+    before_request: &ResponsesRequest,
+    after_title: &str,
+    after_request: &ResponsesRequest,
+    options: &ContextSnapshotOptions,
+) -> String {
+    let before = format_request_input_snapshot(before_request, options);
+    let after = format_request_input_snapshot(after_request, options);
+    let context_radius = before.lines().count().max(after.lines().count());
+    let mut diff = TextDiff::from_lines(&before, &after)
+        .unified_diff()
+        .context_radius(context_radius)
+        .header(before_title, after_title)
+        .to_string();
+    if !diff.ends_with('\n') {
+        diff.push('\n');
+    }
+    format!("Scenario: {scenario}\n\n{diff}")
 }
 
 fn format_snapshot_text(text: &str, options: &ContextSnapshotOptions) -> String {

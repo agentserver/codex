@@ -1,0 +1,32 @@
+---
+source: core/tests/suite/compact_remote.rs
+expression: "format_request_input_diff_snapshot(...)"
+---
+Scenario: After five varied turns, remote manual compaction reuses the last sampling request input and only appends the completed final-turn outputs.
+
+--- Last Normal /responses Request
++++ Remote /responses/compact Request
+@@ -1,21 +1,23 @@
+ 00:message/developer:<PERMISSIONS_INSTRUCTIONS>
+ 01:message/user:<ENVIRONMENT_CONTEXT:cwd=<CWD>>
+ 02:message/user:TURN_ONE_USER
+ 03:message/assistant:TURN_ONE_ASSISTANT
+ 04:message/user[2]:
+     [01] TURN_TWO_PREFIX
+     [02] TURN_TWO_SUFFIX
+ 05:reasoning:summary=TURN_TWO_REASONING:encrypted=true
+ 06:message/assistant:TURN_TWO_ASSISTANT
+ 07:message/user:TURN_THREE_TOOL_USER
+ 08:function_call/test_tool
+ 09:function_call_output:unsupported call: test_tool
+ 10:message/assistant:TURN_THREE_ASSISTANT
+ 11:message/user[4]:
+     [01] <image>
+     [02] <input_image:detail,image_url>
+     [03] </image>
+     [04] TURN_FOUR_IMAGE_USER
+ 12:local_shell_call:/bin/echo TURN_FOUR_LOCAL_SHELL
+ 13:message/assistant:TURN_FOUR_ASSISTANT
+ 14:message/user:TURN_FIVE_USER
++15:reasoning:summary=TURN_FIVE_REASONING:encrypted=true
++16:message/assistant:TURN_FIVE_ASSISTANT

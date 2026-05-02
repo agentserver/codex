@@ -6795,7 +6795,7 @@ impl CodexMessageProcessor {
                         model: model.clone(),
                         effort,
                         summary,
-                        service_tier,
+                        service_tier: service_tier.clone(),
                         collaboration_mode: collaboration_mode.clone(),
                         personality,
                     })

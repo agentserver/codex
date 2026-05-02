@@ -8,6 +8,8 @@ use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
+use std::time::Duration;
+use std::time::Instant;
 
 use crate::bottom_pane::BottomPaneView;
 use crate::bottom_pane::CancellationEvent;
@@ -18,6 +20,10 @@ use crate::render::renderable::Renderable;
 use super::actions;
 use super::actions::matching_actions_for_key_event;
 use super::key_event_to_config_key_spec;
+
+const MISSING_KEY_HINT_DELAY: Duration = Duration::from_secs(3);
+const SHORT_MISSING_KEY_HINT: &str = "Tip: Codex can only inspect keys your terminal sends.";
+const DELAYED_MISSING_KEY_HINT: &str = "Still waiting? If nothing changes when you press a key, your terminal is not sending that key to Codex. Only received keys can be assigned as shortcuts.";
 
 struct KeymapDebugReport {
     detected: KeyBinding,
@@ -30,6 +36,7 @@ struct KeymapDebugReport {
 pub(crate) struct KeymapDebugView {
     runtime_keymap: RuntimeKeymap,
     keymap_config: TuiKeymap,
+    opened_at: Instant,
     last_report: Option<KeymapDebugReport>,
     complete: bool,
 }
@@ -41,6 +48,7 @@ pub(crate) fn build_keymap_debug_view(
     KeymapDebugView {
         runtime_keymap: runtime_keymap.clone(),
         keymap_config: keymap_config.clone(),
+        opened_at: Instant::now(),
         last_report: None,
         complete: false,
     }
@@ -48,6 +56,10 @@ pub(crate) fn build_keymap_debug_view(
 
 impl KeymapDebugView {
     fn lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.lines_at(width, Instant::now())
+    }
+
+    fn lines_at(&self, width: u16, now: Instant) -> Vec<Line<'static>> {
         let wrap_width = usize::from(width.max(1));
         let mut lines = vec![
             Line::from("Keypress Inspector".bold()),
@@ -55,6 +67,12 @@ impl KeymapDebugView {
                 "Press any key to see what Codex receives. Esc is inspected; Ctrl+C closes.".dim(),
             ),
         ];
+        let hint = if self.should_show_delayed_hint(now) {
+            DELAYED_MISSING_KEY_HINT
+        } else {
+            SHORT_MISSING_KEY_HINT
+        };
+        push_wrapped_dim(&mut lines, hint.to_string(), wrap_width, "", "");
 
         let Some(report) = &self.last_report else {
             lines.push(Line::from(""));
@@ -110,6 +128,15 @@ impl KeymapDebugView {
         }
         lines
     }
+
+    fn should_show_delayed_hint(&self, now: Instant) -> bool {
+        self.last_report.is_none() && now.duration_since(self.opened_at) >= MISSING_KEY_HINT_DELAY
+    }
+
+    #[cfg(test)]
+    pub(crate) fn show_delayed_hint_for_test(&mut self) {
+        self.opened_at = Instant::now() - MISSING_KEY_HINT_DELAY;
+    }
 }
 
 impl Renderable for KeymapDebugView {
@@ -151,6 +178,17 @@ impl BottomPaneView for KeymapDebugView {
 
     fn prefer_esc_to_handle_key_event(&self) -> bool {
         true
+    }
+
+    fn next_frame_delay(&self) -> Option<Duration> {
+        if self.last_report.is_some() {
+            return None;
+        }
+
+        self.opened_at
+            .checked_add(MISSING_KEY_HINT_DELAY)
+            .and_then(|show_at| show_at.checked_duration_since(Instant::now()))
+            .filter(|delay| !delay.is_zero())
     }
 }
 

@@ -1281,12 +1281,24 @@ mod tests {
     }
 
     #[test]
+    fn debug_view_shows_delayed_missing_key_hint() {
+        let mut view = build_keymap_debug_view(&RuntimeKeymap::defaults(), &TuiKeymap::default());
+        view.show_delayed_hint_for_test();
+
+        let rendered = render_debug(&view, /*width*/ 100);
+        assert!(rendered.contains("Still waiting?"));
+        assert_snapshot!("keymap_debug_view_delayed_hint", rendered);
+    }
+
+    #[test]
     fn debug_view_reports_detected_key_and_matching_actions() {
         let mut view = build_keymap_debug_view(&RuntimeKeymap::defaults(), &TuiKeymap::default());
+        view.show_delayed_hint_for_test();
 
         view.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
 
         let rendered = render_debug(&view, /*width*/ 100);
+        assert!(!rendered.contains("Still waiting?"));
         assert_snapshot!("keymap_debug_view_match", rendered);
     }
 

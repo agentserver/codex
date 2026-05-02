@@ -4,14 +4,15 @@ expression: "render_lines(&view, 112)"
 ---
                                                                                                                 
   PreToolUse hooks                                                                                              
-  Turn hooks on or off. Your changes are saved automatically.                                                   
+  1 hook needs review before it can run.                                                                        
                                                                                                                 
-  [ ] Hook 1                                                                                                    
+  [!] Hook 1 · new                                                                                              
                                                                                                                 
   Event     PreToolUse                                                                                          
   Matcher   Bash                                                                                                
   Source    User config - /tmp/hooks.json                                                                       
   Command   ~/bin/untrusted.sh                                                                                  
   Timeout   30s                                                                                                 
+  Trust     New hook - review required                                                                          
                                                                                                                 
-  Press space or enter to toggle; esc to go back
+  Press t to trust; esc to go back

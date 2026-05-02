@@ -368,13 +368,13 @@ impl App {
         &mut self,
         app_server: &AppServerSession,
         key: String,
-        trusted_hash: String,
+        current_hash: String,
         enable: bool,
     ) {
         let request_handle = app_server.request_handle();
         let app_event_tx = self.app_event_tx.clone();
         tokio::spawn(async move {
-            let result = write_hook_trust(request_handle, key, trusted_hash, enable)
+            let result = write_hook_trust(request_handle, key, current_hash, enable)
                 .await
                 .map(|_| ())
                 .map_err(|err| format!("Failed to trust hook: {err}"));
@@ -868,7 +868,7 @@ pub(super) async fn write_hook_enabled(
 pub(super) async fn write_hook_trust(
     request_handle: AppServerRequestHandle,
     key: String,
-    trusted_hash: String,
+    current_hash: String,
     enable: bool,
 ) -> Result<ConfigWriteResponse> {
     let request_id = RequestId::String(format!("hooks-config-write-{}", Uuid::new_v4()));
@@ -876,13 +876,13 @@ pub(super) async fn write_hook_trust(
         serde_json::json!({
             key: {
                 "enabled": true,
-                "trusted_hash": trusted_hash,
+                "trusted_hash": current_hash,
             }
         })
     } else {
         serde_json::json!({
             key: {
-                "trusted_hash": trusted_hash,
+                "trusted_hash": current_hash,
             }
         })
     };

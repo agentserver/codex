@@ -1694,10 +1694,10 @@ impl App {
             }
             AppEvent::TrustHook {
                 key,
-                trusted_hash,
+                current_hash,
                 enable,
             } => {
-                self.trust_hook(app_server, key, trusted_hash, enable);
+                self.trust_hook(app_server, key, current_hash, enable);
             }
             AppEvent::HookEnabledSet {
                 key,

@@ -922,7 +922,6 @@ mod tests {
             /*is_managed*/ false,
             /*display_order*/ 0,
         );
-        untrusted_hook.trusted_hash = None;
         untrusted_hook.trust_status = HookTrustStatus::Untrusted;
         let view = HooksBrowserView::new(
             vec![untrusted_hook],
@@ -1316,11 +1315,11 @@ mod tests {
         match rx.try_recv().expect("trust event") {
             AppEvent::TrustHook {
                 key,
-                current_hash: trusted_hash,
+                current_hash: hash_to_trust,
                 enable,
             } => {
                 assert_eq!(key, "path:untrusted");
-                assert_eq!(trusted_hash, current_hash);
+                assert_eq!(hash_to_trust, current_hash);
                 assert!(enable);
             }
             other => panic!("expected hook trust event, got {other:?}"),

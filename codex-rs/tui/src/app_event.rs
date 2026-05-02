@@ -752,7 +752,7 @@ pub(crate) enum AppEvent {
     /// Trust the current definition for a hook by stable hook key.
     TrustHook {
         key: String,
-        trusted_hash: String,
+        current_hash: String,
         enable: bool,
     },
 

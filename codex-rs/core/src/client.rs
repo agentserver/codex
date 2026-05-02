@@ -423,7 +423,7 @@ impl ModelClient {
     ///
     /// Per-turn request settings are passed explicitly, matching the normal `/responses` streaming
     /// callsite while keeping `ModelClient` session-scoped.
-    pub async fn compact_conversation_history(
+    pub(crate) async fn compact_conversation_history(
         &self,
         request: CompactConversationRequest<'_>,
     ) -> Result<Vec<ResponseItem>> {

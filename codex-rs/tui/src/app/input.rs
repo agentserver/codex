@@ -127,6 +127,13 @@ impl App {
             return;
         }
 
+        if self.keymap.app.toggle_fast_mode.is_pressed(key_event)
+            && self.chat_widget.can_toggle_fast_mode_from_keybinding()
+        {
+            self.chat_widget.toggle_fast_mode_from_ui();
+            return;
+        }
+
         if self.keymap.app.open_transcript.is_pressed(key_event) {
             // Enter alternate screen and set viewport to full size.
             let _ = tui.enter_alt_screen();

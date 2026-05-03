@@ -122,6 +122,23 @@ impl App {
         }
     }
 
+    pub(super) async fn pause_active_goal_if_needed(
+        &mut self,
+        app_server: &mut AppServerSession,
+        thread_id: ThreadId,
+    ) {
+        let result = app_server
+            .pause_active_goal_if_needed(&self.config, thread_id)
+            .await;
+        if self.current_displayed_thread_id() != Some(thread_id) {
+            return;
+        }
+        if let Err(err) = result {
+            self.chat_widget
+                .add_error_message(format!("Failed to pause thread goal: {err}"));
+        }
+    }
+
     pub(super) async fn clear_thread_goal(
         &mut self,
         app_server: &mut AppServerSession,

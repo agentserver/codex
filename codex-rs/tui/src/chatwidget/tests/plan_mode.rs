@@ -1305,31 +1305,15 @@ async fn collab_mode_shift_tab_cycles_only_when_idle() {
 }
 
 #[tokio::test]
-async fn entering_plan_mode_pauses_active_goal() {
+async fn entering_plan_mode_requests_goal_pause() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
     let thread_id = ThreadId::new();
     chat.thread_id = Some(thread_id);
     chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);
-    chat.handle_server_notification(active_goal_update(thread_id), /*replay_kind*/ None);
 
     let plan_mask = collaboration_modes::plan_mask(chat.model_catalog.as_ref())
         .expect("expected plan collaboration mode");
     chat.set_collaboration_mask(plan_mask);
-
-    expect_goal_pause_event(&mut rx, thread_id);
-}
-
-#[tokio::test]
-async fn active_goal_update_while_in_plan_mode_pauses_goal() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
-    let thread_id = ThreadId::new();
-    chat.thread_id = Some(thread_id);
-    chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);
-    let plan_mask = collaboration_modes::plan_mask(chat.model_catalog.as_ref())
-        .expect("expected plan collaboration mode");
-    chat.set_collaboration_mask(plan_mask);
-
-    chat.handle_server_notification(active_goal_update(thread_id), /*replay_kind*/ None);
 
     expect_goal_pause_event(&mut rx, thread_id);
 }
@@ -1338,41 +1322,16 @@ fn expect_goal_pause_event(
     rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
     expected_thread_id: ThreadId,
 ) {
-    let (event_thread_id, event_status) = loop {
+    let event_thread_id = loop {
         match rx.try_recv() {
-            Ok(AppEvent::SetThreadGoalStatus { thread_id, status }) => {
-                break (thread_id, status);
+            Ok(AppEvent::PauseActiveGoalIfNeeded { thread_id }) => {
+                break thread_id;
             }
             Ok(_) => {}
-            Err(err) => panic!("expected SetThreadGoalStatus event, got {err:?}"),
+            Err(err) => panic!("expected PauseActiveGoalIfNeeded event, got {err:?}"),
         }
     };
-    assert_eq!(
-        (event_thread_id, event_status),
-        (
-            expected_thread_id,
-            codex_app_server_protocol::ThreadGoalStatus::Paused
-        )
-    );
-}
-
-fn active_goal_update(thread_id: ThreadId) -> ServerNotification {
-    ServerNotification::ThreadGoalUpdated(
-        codex_app_server_protocol::ThreadGoalUpdatedNotification {
-            thread_id: thread_id.to_string(),
-            turn_id: None,
-            goal: codex_app_server_protocol::ThreadGoal {
-                thread_id: thread_id.to_string(),
-                objective: "Keep the goal honest in Plan mode".to_string(),
-                status: codex_app_server_protocol::ThreadGoalStatus::Active,
-                token_budget: None,
-                tokens_used: 0,
-                time_used_seconds: 0,
-                created_at: 0,
-                updated_at: 0,
-            },
-        },
-    )
+    assert_eq!(event_thread_id, expected_thread_id);
 }
 
 #[tokio::test]

@@ -9639,26 +9639,20 @@ impl ChatWidget {
         }
         self.current_goal_status = Some(GoalStatusState::new(goal, Instant::now()));
         self.update_collaboration_mode_indicator();
-        self.pause_active_goal_for_plan_mode_if_needed();
     }
 
     fn pause_active_goal_for_plan_mode_if_needed(&mut self) {
         if !self.is_plan_mode_active() {
             return;
         }
+        if !self.config.features.enabled(Feature::Goals) {
+            return;
+        }
         let Some(thread_id) = self.thread_id else {
             return;
         };
-        if self
-            .current_goal_status
-            .as_ref()
-            .is_some_and(GoalStatusState::is_active)
-        {
-            self.app_event_tx.send(AppEvent::SetThreadGoalStatus {
-                thread_id,
-                status: AppThreadGoalStatus::Paused,
-            });
-        }
+        self.app_event_tx
+            .send(AppEvent::PauseActiveGoalIfNeeded { thread_id });
     }
 
     fn personality_label(personality: Personality) -> &'static str {

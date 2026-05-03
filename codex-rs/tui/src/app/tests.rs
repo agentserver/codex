@@ -1109,6 +1109,7 @@ async fn replay_thread_snapshot_restores_collaboration_mode_without_input() {
         .chat_widget
         .capture_thread_input_state()
         .expect("expected collaboration-only input state");
+    assert!(input_state.is_plan_mode_active());
 
     let (chat_widget, _app_event_tx, _rx, _new_op_rx) = make_chatwidget_manual_with_sender().await;
     app.chat_widget = chat_widget;
@@ -1160,12 +1161,22 @@ fn refresh_snapshot_session_pauses_active_goal_before_plan_mode_resume() -> Resu
         let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
         app.chat_widget
             .set_feature_enabled(Feature::Goals, /*enabled*/ true);
+        app.chat_widget
+            .set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
         app.config = app.chat_widget.config_ref().clone();
 
         let mut app_server =
             Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
         let started = app_server.start_thread(&app.config).await?;
         let thread_id = started.session.thread_id;
+        app.chat_widget
+            .handle_thread_session(started.session.clone());
+        let plan_mask =
+            crate::collaboration_modes::plan_mask(app.chat_widget.model_catalog().as_ref())
+                .expect("expected plan collaboration mask");
+        app.chat_widget.set_collaboration_mask(plan_mask);
+        assert!(app.chat_widget.is_plan_mode_active());
+
         let state_db = codex_state::StateRuntime::init(
             app.config.sqlite_home.clone(),
             app.config.model_provider_id.clone(),
@@ -1198,23 +1209,11 @@ fn refresh_snapshot_session_pauses_active_goal_before_plan_mode_resume() -> Resu
             .await
             .expect("active goal should seed");
 
-        let (mut plan_chat, _app_event_tx, _rx, _op_rx) =
-            make_chatwidget_manual_with_sender().await;
-        plan_chat.set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
-        let plan_mask = crate::collaboration_modes::plan_mask(plan_chat.model_catalog().as_ref())
-            .expect("expected plan collaboration mask");
-        plan_chat.set_collaboration_mask(plan_mask);
-        let input_state = plan_chat.capture_thread_input_state();
-        assert!(
-            input_state
-                .as_ref()
-                .is_some_and(ThreadInputState::is_plan_mode_active)
-        );
         let mut snapshot = ThreadEventSnapshot {
             session: None,
             turns: Vec::new(),
             events: Vec::new(),
-            input_state,
+            input_state: None,
         };
 
         app.refresh_snapshot_session_if_needed(

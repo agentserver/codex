@@ -1122,10 +1122,14 @@ impl App {
             return;
         }
 
-        if snapshot
-            .input_state
-            .as_ref()
-            .is_some_and(ThreadInputState::is_plan_mode_active)
+        let plan_mode_active = snapshot.input_state.as_ref().map_or_else(
+            || {
+                self.current_displayed_thread_id() == Some(thread_id)
+                    && self.chat_widget.is_plan_mode_active()
+            },
+            ThreadInputState::is_plan_mode_active,
+        );
+        if plan_mode_active
             && let Err(err) = app_server
                 .pause_active_goal_if_needed(&self.config, thread_id)
                 .await

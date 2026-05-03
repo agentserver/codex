@@ -1122,6 +1122,22 @@ impl App {
             return;
         }
 
+        if snapshot
+            .input_state
+            .as_ref()
+            .is_some_and(ThreadInputState::is_plan_mode_active)
+            && let Err(err) = app_server
+                .pause_active_goal_if_needed(&self.config, thread_id)
+                .await
+        {
+            tracing::warn!(
+                thread_id = %thread_id,
+                error = %err,
+                "failed to pause active goal before Plan-mode thread resume"
+            );
+            return;
+        }
+
         match app_server
             .resume_thread(self.config.clone(), thread_id)
             .await

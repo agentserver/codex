@@ -1153,6 +1153,15 @@ pub(crate) struct ThreadInputState {
     agent_turn_running: bool,
 }
 
+impl ThreadInputState {
+    pub(crate) fn is_plan_mode_active(&self) -> bool {
+        self.active_collaboration_mask
+            .as_ref()
+            .and_then(|mask| mask.mode)
+            == Some(ModeKind::Plan)
+    }
+}
+
 impl From<String> for UserMessage {
     fn from(text: String) -> Self {
         Self {

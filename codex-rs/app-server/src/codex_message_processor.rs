@@ -2539,7 +2539,7 @@ impl CodexMessageProcessor {
         let mut typesafe_overrides = self.build_thread_config_overrides(
             model,
             model_provider,
-            Self::resolve_service_tier_override(service_tier),
+            service_tier,
             cwd,
             approval_policy,
             approvals_reviewer,
@@ -3018,12 +3018,6 @@ impl CodexMessageProcessor {
                 .map_err(|err| invalid_request(environment_selection_error_message(err)))?;
         }
         Ok(environment_selections)
-    }
-
-    fn resolve_service_tier_override(
-        service_tier: Option<Option<ServiceTier>>,
-    ) -> Option<Option<ServiceTier>> {
-        service_tier
     }
 
     async fn thread_archive(&self, request_id: ConnectionRequestId, params: ThreadArchiveParams) {
@@ -4388,7 +4382,7 @@ impl CodexMessageProcessor {
         let mut typesafe_overrides = self.build_thread_config_overrides(
             model,
             model_provider,
-            Self::resolve_service_tier_override(service_tier),
+            service_tier,
             cwd,
             approval_policy,
             approvals_reviewer,
@@ -5020,7 +5014,7 @@ impl CodexMessageProcessor {
             let mut typesafe_overrides = self.build_thread_config_overrides(
                 model,
                 model_provider,
-                Self::resolve_service_tier_override(service_tier),
+                service_tier,
                 cwd,
                 approval_policy,
                 approvals_reviewer,
@@ -6776,7 +6770,7 @@ impl CodexMessageProcessor {
             let model = params.model;
             let effort = params.effort.map(Some);
             let summary = params.summary;
-            let service_tier = Self::resolve_service_tier_override(params.service_tier);
+            let service_tier = params.service_tier;
             let personality = params.personality;
 
             // If any overrides are provided, validate them synchronously so the

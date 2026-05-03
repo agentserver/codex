@@ -315,7 +315,6 @@ pub(crate) fn legacy_session_executable_read_roots(
             }
         }
     }
-    add_profile_runtime_read_roots(env_map, &mut roots);
 
     canonical_existing_deduped(roots)
 }
@@ -345,14 +344,6 @@ fn add_git_for_windows_support_roots(
 
     if let Some(program_data) = env_path(env_map, "PROGRAMDATA") {
         roots.push(program_data.join("Git"));
-    }
-}
-
-fn add_profile_runtime_read_roots(env_map: &HashMap<String, String>, roots: &mut Vec<PathBuf>) {
-    for name in ["APPDATA", "LOCALAPPDATA"] {
-        if let Some(path) = env_path(env_map, name) {
-            roots.push(path);
-        }
     }
 }
 
@@ -576,19 +567,13 @@ mod tests {
         let git_root = tmp.path().join("Git");
         let git_cmd = git_root.join("cmd");
         let program_data_git = tmp.path().join("ProgramData").join("Git");
-        let local_app_data = tmp.path().join("profile").join("AppData").join("Local");
         std::fs::create_dir_all(&git_cmd).expect("create git cmd");
         std::fs::create_dir_all(&program_data_git).expect("create programdata git");
-        std::fs::create_dir_all(&local_app_data).expect("create local appdata");
         let env_map = HashMap::from([
             ("PATH".to_string(), git_cmd.to_string_lossy().to_string()),
             (
                 "PROGRAMDATA".to_string(),
                 tmp.path().join("ProgramData").to_string_lossy().to_string(),
-            ),
-            (
-                "LOCALAPPDATA".to_string(),
-                local_app_data.to_string_lossy().to_string(),
             ),
         ]);
 
@@ -597,9 +582,6 @@ mod tests {
         assert!(roots.contains(&dunce::canonicalize(git_root).expect("canonical git root")));
         assert!(
             roots.contains(&dunce::canonicalize(program_data_git).expect("canonical programdata"))
-        );
-        assert!(
-            roots.contains(&dunce::canonicalize(local_app_data).expect("canonical local appdata"))
         );
     }
 

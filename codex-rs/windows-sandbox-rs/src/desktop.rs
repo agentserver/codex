@@ -39,6 +39,7 @@ use windows_sys::Win32::System::StationsAndDesktops::DESKTOP_SWITCHDESKTOP;
 use windows_sys::Win32::System::StationsAndDesktops::DESKTOP_WRITE_DAC;
 use windows_sys::Win32::System::StationsAndDesktops::DESKTOP_WRITE_OWNER;
 use windows_sys::Win32::System::StationsAndDesktops::DESKTOP_WRITEOBJECTS;
+use windows_sys::Win32::System::StationsAndDesktops::OpenDesktopW;
 
 const DESKTOP_ALL_ACCESS: u32 = DESKTOP_READOBJECTS
     | DESKTOP_CREATEWINDOW
@@ -69,6 +70,12 @@ impl LaunchDesktop {
                 startup_name,
             })
         } else {
+            if let Err(err) = grant_default_desktop_access(logs_base_dir) {
+                logging::debug_log(
+                    &format!("grant default desktop access failed: {err:#}"),
+                    logs_base_dir,
+                );
+            }
             Ok(Self {
                 _private_desktop: None,
                 startup_name: to_wide("Winsta0\\Default"),
@@ -79,6 +86,29 @@ impl LaunchDesktop {
     pub fn startup_info_desktop(&self) -> *mut u16 {
         self.startup_name.as_ptr() as *mut u16
     }
+}
+
+fn grant_default_desktop_access(logs_base_dir: Option<&Path>) -> Result<()> {
+    let name_wide = to_wide("Default");
+    let handle = unsafe { OpenDesktopW(name_wide.as_ptr(), 0, 0, DESKTOP_ALL_ACCESS) };
+    if handle == 0 {
+        let err = unsafe { GetLastError() } as i32;
+        logging::debug_log(
+            &format!(
+                "OpenDesktopW failed for Default: {} ({})",
+                err,
+                format_last_error(err),
+            ),
+            logs_base_dir,
+        );
+        return Err(anyhow::anyhow!("OpenDesktopW failed: {err}"));
+    }
+
+    let result = unsafe { grant_desktop_access(handle, logs_base_dir) };
+    unsafe {
+        let _ = CloseDesktop(handle);
+    }
+    result
 }
 
 struct PrivateDesktop {

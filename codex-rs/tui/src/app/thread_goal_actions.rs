@@ -6,8 +6,11 @@ use crate::bottom_pane::SelectionAction;
 use crate::bottom_pane::SelectionItem;
 use crate::bottom_pane::SelectionViewParams;
 use crate::bottom_pane::popup_consts::standard_popup_hint_line;
+use crate::goal_display::GOAL_CONTINUATION_PAUSED_IN_PLAN_MODE_HINT;
 use crate::goal_display::goal_status_label;
 use crate::goal_display::goal_usage_summary;
+use crate::goal_display::show_goal_plan_mode_hint;
+use codex_app_server_protocol::ThreadGoal;
 use codex_app_server_protocol::ThreadGoalStatus;
 use codex_protocol::ThreadId;
 
@@ -69,11 +72,13 @@ impl App {
             }
         }
 
+        let plan_mode_active = self.chat_widget.is_plan_mode_active();
+        let status = goal_status_for_plan_mode(ThreadGoalStatus::Active, plan_mode_active);
         let result = app_server
             .thread_goal_set(
                 thread_id,
                 Some(objective),
-                Some(ThreadGoalStatus::Active),
+                Some(status),
                 /*token_budget*/ None,
             )
             .await;
@@ -82,10 +87,7 @@ impl App {
         }
 
         match result {
-            Ok(response) => self.chat_widget.add_info_message(
-                format!("Goal {}", goal_status_label(response.goal.status)),
-                Some(goal_usage_summary(&response.goal)),
-            ),
+            Ok(response) => self.show_thread_goal_updated(&response.goal),
             Err(err) => self
                 .chat_widget
                 .add_error_message(format!("Failed to set thread goal: {err}")),
@@ -98,6 +100,8 @@ impl App {
         thread_id: ThreadId,
         status: ThreadGoalStatus,
     ) {
+        let plan_mode_active = self.chat_widget.is_plan_mode_active();
+        let status = goal_status_for_plan_mode(status, plan_mode_active);
         let result = app_server
             .thread_goal_set(
                 thread_id,
@@ -111,10 +115,7 @@ impl App {
         }
 
         match result {
-            Ok(response) => self.chat_widget.add_info_message(
-                format!("Goal {}", goal_status_label(response.goal.status)),
-                Some(goal_usage_summary(&response.goal)),
-            ),
+            Ok(response) => self.show_thread_goal_updated(&response.goal),
             Err(err) => self
                 .chat_widget
                 .add_error_message(format!("Failed to update thread goal: {err}")),
@@ -180,5 +181,31 @@ impl App {
             items,
             ..Default::default()
         });
+    }
+
+    fn show_thread_goal_updated(&mut self, goal: &ThreadGoal) {
+        let show_plan_mode_hint =
+            show_goal_plan_mode_hint(goal.status, self.chat_widget.is_plan_mode_active());
+        self.chat_widget.add_info_message(
+            format!("Goal {}", goal_status_label(goal.status)),
+            Some(goal_update_hint(goal, show_plan_mode_hint)),
+        );
+    }
+}
+
+fn goal_update_hint(goal: &ThreadGoal, show_plan_mode_hint: bool) -> String {
+    let mut hint = goal_usage_summary(goal);
+    if show_plan_mode_hint {
+        hint.push(' ');
+        hint.push_str(GOAL_CONTINUATION_PAUSED_IN_PLAN_MODE_HINT);
+    }
+    hint
+}
+
+fn goal_status_for_plan_mode(status: ThreadGoalStatus, plan_mode_active: bool) -> ThreadGoalStatus {
+    if status == ThreadGoalStatus::Active && plan_mode_active {
+        ThreadGoalStatus::Paused
+    } else {
+        status
     }
 }

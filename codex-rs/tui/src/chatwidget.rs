@@ -9438,6 +9438,10 @@ impl ChatWidget {
         self.active_mode_kind()
     }
 
+    pub(crate) fn is_plan_mode_active(&self) -> bool {
+        self.active_mode_kind() == ModeKind::Plan
+    }
+
     fn is_session_configured(&self) -> bool {
         self.thread_id.is_some()
     }
@@ -9581,11 +9585,7 @@ impl ChatWidget {
 
     fn update_collaboration_mode_indicator(&mut self) {
         let indicator = self.collaboration_mode_indicator();
-        let goal_indicator = if indicator.is_none() {
-            self.goal_status_indicator(Instant::now())
-        } else {
-            None
-        };
+        let goal_indicator = self.goal_status_indicator(Instant::now());
         self.current_goal_status_indicator = goal_indicator.clone();
         self.bottom_pane.set_collaboration_mode_indicator(indicator);
         self.bottom_pane.set_goal_status_indicator(goal_indicator);
@@ -9687,8 +9687,21 @@ impl ChatWidget {
         self.refresh_plan_mode_nudge();
         self.refresh_model_dependent_surfaces();
         let next_mode = self.active_mode_kind();
-        let next_model = self.current_model();
+        let next_model = self.current_model().to_string();
         let next_effort = self.effective_reasoning_effort();
+        if previous_mode != ModeKind::Plan
+            && next_mode == ModeKind::Plan
+            && let Some(thread_id) = self.thread_id
+            && self
+                .current_goal_status
+                .as_ref()
+                .is_some_and(GoalStatusState::is_active)
+        {
+            self.app_event_tx.send(AppEvent::SetThreadGoalStatus {
+                thread_id,
+                status: AppThreadGoalStatus::Paused,
+            });
+        }
         if previous_mode != next_mode
             && (previous_model != next_model || previous_effort != next_effort)
         {

@@ -2,6 +2,12 @@ use crate::status::format_tokens_compact;
 use codex_app_server_protocol::ThreadGoal;
 use codex_app_server_protocol::ThreadGoalStatus;
 
+pub(crate) const GOAL_CONTINUATION_PAUSED_IN_PLAN_MODE_HINT: &str = "Goal continuation is paused in Plan mode. Switch out of Plan mode, then use /goal resume to continue.";
+
+pub(crate) fn show_goal_plan_mode_hint(status: ThreadGoalStatus, plan_mode_active: bool) -> bool {
+    plan_mode_active && matches!(status, ThreadGoalStatus::Active | ThreadGoalStatus::Paused)
+}
+
 pub(crate) fn format_goal_elapsed_seconds(seconds: i64) -> String {
     let seconds = seconds.max(0) as u64;
     if seconds < 60 {

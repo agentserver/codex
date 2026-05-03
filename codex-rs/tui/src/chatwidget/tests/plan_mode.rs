@@ -1305,6 +1305,54 @@ async fn collab_mode_shift_tab_cycles_only_when_idle() {
 }
 
 #[tokio::test]
+async fn entering_plan_mode_pauses_active_goal() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
+    let thread_id = ThreadId::new();
+    chat.thread_id = Some(thread_id);
+    chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);
+    chat.handle_server_notification(
+        ServerNotification::ThreadGoalUpdated(
+            codex_app_server_protocol::ThreadGoalUpdatedNotification {
+                thread_id: thread_id.to_string(),
+                turn_id: None,
+                goal: codex_app_server_protocol::ThreadGoal {
+                    thread_id: thread_id.to_string(),
+                    objective: "Keep the goal honest in Plan mode".to_string(),
+                    status: codex_app_server_protocol::ThreadGoalStatus::Active,
+                    token_budget: None,
+                    tokens_used: 0,
+                    time_used_seconds: 0,
+                    created_at: 0,
+                    updated_at: 0,
+                },
+            },
+        ),
+        /*replay_kind*/ None,
+    );
+
+    let plan_mask = collaboration_modes::plan_mask(chat.model_catalog.as_ref())
+        .expect("expected plan collaboration mode");
+    chat.set_collaboration_mask(plan_mask);
+
+    let (event_thread_id, event_status) = loop {
+        match rx.try_recv() {
+            Ok(AppEvent::SetThreadGoalStatus { thread_id, status }) => {
+                break (thread_id, status);
+            }
+            Ok(_) => {}
+            Err(err) => panic!("expected SetThreadGoalStatus event, got {err:?}"),
+        }
+    };
+    assert_eq!(
+        (event_thread_id, event_status),
+        (
+            thread_id,
+            codex_app_server_protocol::ThreadGoalStatus::Paused
+        )
+    );
+}
+
+#[tokio::test]
 async fn mode_switch_surfaces_model_change_notification_when_effective_model_changes() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
     chat.set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);

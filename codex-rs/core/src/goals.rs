@@ -12,7 +12,6 @@ use crate::state::TurnState;
 use crate::tasks::RegularTask;
 use anyhow::Context;
 use codex_features::Feature;
-use codex_protocol::config_types::ModeKind;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::protocol::Event;
@@ -99,7 +98,6 @@ pub(crate) enum GoalRuntimeEvent<'a> {
         status: codex_state::ThreadGoalStatus,
     },
     ExternalClear,
-    ThreadResumed,
 }
 
 pub(crate) struct GoalRuntimeState {
@@ -266,12 +264,11 @@ impl Session {
     /// Applies runtime policy for a goal lifecycle event.
     ///
     /// Goal data methods validate and persist state; this dispatcher owns the
-    /// cross-cutting runtime behavior: plan mode ignores continuations, turn
-    /// starts capture the active goal and token baseline, tool completions
-    /// account usage and may inject budget steering, completion accounting
-    /// suppresses that steering, external mutations account best-effort before
-    /// changing state, interrupts pause active goals, resumes reactivate paused
-    /// goals, explicit maybe-continue events start idle goal continuation turns,
+    /// cross-cutting runtime behavior: turn starts capture the active goal and
+    /// token baseline, tool completions account usage and may inject budget
+    /// steering, completion accounting suppresses that steering, external
+    /// mutations account best-effort before changing state, interrupts pause
+    /// active goals, maybe-continue events start idle goal continuation turns,
     /// and continuation turns with no counted autonomous activity suppress the
     /// next automatic continuation until user/tool/external activity resets it.
     pub(crate) fn goal_runtime_apply<'a>(
@@ -336,10 +333,6 @@ impl Session {
             }),
             GoalRuntimeEvent::ExternalClear => Box::pin(async move {
                 self.clear_stopped_thread_goal_runtime_state().await;
-                Ok(())
-            }),
-            GoalRuntimeEvent::ThreadResumed => Box::pin(async move {
-                self.activate_paused_thread_goal_after_resume().await?;
                 Ok(())
             }),
         }
@@ -658,10 +651,6 @@ impl Session {
         if !self.enabled(Feature::Goals) {
             return;
         }
-        if should_ignore_goal_for_mode(turn_context.collaboration_mode.mode) {
-            self.clear_active_goal_accounting(turn_context).await;
-            return;
-        }
         let state_db = match self.state_db_for_thread_goals().await {
             Ok(Some(state_db)) => state_db,
             Ok(None) => return,
@@ -788,9 +777,6 @@ impl Session {
         budget_limit_steering: BudgetLimitSteering,
     ) -> anyhow::Result<()> {
         if !self.enabled(Feature::Goals) {
-            return Ok(());
-        }
-        if should_ignore_goal_for_mode(turn_context.collaboration_mode.mode) {
             return Ok(());
         }
         let Some(state_db) = self.state_db_for_thread_goals().await? else {
@@ -968,10 +954,6 @@ impl Session {
     }
 
     async fn pause_active_thread_goal_for_interrupt(&self) -> anyhow::Result<()> {
-        if should_ignore_goal_for_mode(self.collaboration_mode().await.mode) {
-            return Ok(());
-        }
-
         if !self.enabled(Feature::Goals) {
             return Ok(());
         }
@@ -1014,99 +996,6 @@ impl Session {
         })
         .await;
         Ok(())
-    }
-
-    async fn activate_paused_thread_goal_after_resume(&self) -> anyhow::Result<bool> {
-        if !self.enabled(Feature::Goals) {
-            return Ok(false);
-        }
-        if should_ignore_goal_for_mode(self.collaboration_mode().await.mode) {
-            tracing::debug!(
-                "skipping paused goal auto-resume while current collaboration mode ignores goals"
-            );
-            return Ok(false);
-        }
-
-        let _continuation_guard = self
-            .goal_runtime
-            .continuation_lock
-            .acquire()
-            .await
-            .context("goal continuation semaphore closed")?;
-        let Some(state_db) = self.state_db_for_thread_goals().await? else {
-            return Ok(false);
-        };
-        let Some(goal) = state_db.get_thread_goal(self.conversation_id).await? else {
-            *self.goal_runtime.budget_limit_reported_goal_id.lock().await = None;
-            self.goal_runtime
-                .accounting
-                .lock()
-                .await
-                .wall_clock
-                .clear_active_goal();
-            return Ok(false);
-        };
-        if goal.status != codex_state::ThreadGoalStatus::Paused {
-            let goal_id = goal.goal_id.clone();
-            let is_active = goal.status == codex_state::ThreadGoalStatus::Active;
-            if is_active {
-                self.goal_runtime
-                    .accounting
-                    .lock()
-                    .await
-                    .wall_clock
-                    .mark_active_goal(goal_id);
-            } else {
-                self.goal_runtime
-                    .accounting
-                    .lock()
-                    .await
-                    .wall_clock
-                    .clear_active_goal();
-            }
-            return Ok(false);
-        }
-
-        let Some(goal) = state_db
-            .update_thread_goal(
-                self.conversation_id,
-                codex_state::ThreadGoalUpdate {
-                    status: Some(codex_state::ThreadGoalStatus::Active),
-                    token_budget: None,
-                    expected_goal_id: Some(goal.goal_id.clone()),
-                },
-            )
-            .await?
-        else {
-            *self.goal_runtime.budget_limit_reported_goal_id.lock().await = None;
-            self.goal_runtime
-                .accounting
-                .lock()
-                .await
-                .wall_clock
-                .clear_active_goal();
-            return Ok(false);
-        };
-        let goal_id = goal.goal_id.clone();
-        let goal = protocol_goal_from_state(goal);
-        *self.goal_runtime.budget_limit_reported_goal_id.lock().await = None;
-        let active_turn_id = self
-            .active_turn_context()
-            .await
-            .map(|turn_context| turn_context.sub_id.clone());
-        let current_token_usage = self.total_token_usage().await.unwrap_or_default();
-        self.mark_active_goal_accounting(goal_id, active_turn_id, current_token_usage)
-            .await;
-        self.send_event_raw(Event {
-            id: uuid::Uuid::new_v4().to_string(),
-            msg: EventMsg::ThreadGoalUpdated(ThreadGoalUpdatedEvent {
-                thread_id: self.conversation_id,
-                turn_id: None,
-                goal,
-            }),
-        })
-        .await;
-        Ok(true)
     }
 
     async fn maybe_continue_goal_if_idle_runtime(self: &Arc<Self>) {
@@ -1197,10 +1086,6 @@ impl Session {
         self: &Arc<Self>,
     ) -> Option<GoalContinuationCandidate> {
         if !self.enabled(Feature::Goals) {
-            return None;
-        }
-        if should_ignore_goal_for_mode(self.collaboration_mode().await.mode) {
-            tracing::debug!("skipping active goal continuation while plan mode is active");
             return None;
         }
         if self.active_turn.lock().await.is_some() {
@@ -1339,10 +1224,6 @@ impl Session {
     }
 }
 
-fn should_ignore_goal_for_mode(mode: ModeKind) -> bool {
-    mode == ModeKind::Plan
-}
-
 // Builds the hidden developer prompt used to continue an active goal after the
 // previous turn completes. Runtime-owned state such as budget exhaustion is
 // reported as context, but the model is only asked to mark goals active,
@@ -1465,22 +1346,12 @@ mod tests {
     use super::continuation_prompt;
     use super::escape_xml_text;
     use super::goal_token_delta_for_usage;
-    use super::should_ignore_goal_for_mode;
     use codex_protocol::ThreadId;
-    use codex_protocol::config_types::ModeKind;
     use codex_protocol::protocol::ThreadGoal;
     use codex_protocol::protocol::ThreadGoalStatus;
     use codex_protocol::protocol::TokenUsage;
     use std::time::Duration;
     use std::time::Instant;
-
-    #[test]
-    fn goal_continuation_is_ignored_only_in_plan_mode() {
-        assert!(should_ignore_goal_for_mode(ModeKind::Plan));
-        assert!(!should_ignore_goal_for_mode(ModeKind::Default));
-        assert!(!should_ignore_goal_for_mode(ModeKind::PairProgramming));
-        assert!(!should_ignore_goal_for_mode(ModeKind::Execute));
-    }
 
     #[test]
     fn goal_token_delta_excludes_cached_input_and_does_not_double_count_reasoning() {

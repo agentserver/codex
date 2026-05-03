@@ -273,7 +273,7 @@ mod windows_impl {
     use super::process::create_process_as_user;
     use super::protected_metadata::prepare_protected_metadata_targets;
     use super::sandbox_utils::ensure_codex_home_exists;
-    use super::setup::gather_read_roots;
+    use super::spawn_prep::legacy_session_executable_read_roots;
     use super::spawn_prep::prepare_legacy_spawn_context;
     use super::token::convert_string_sid_to_sid;
     use super::token::create_workspace_write_token_with_caps_from;
@@ -439,7 +439,7 @@ mod windows_impl {
         let persist_aces = is_workspace_write;
         let AllowDenyPaths { allow, mut deny } =
             compute_allow_paths(&policy, sandbox_policy_cwd, &current_dir, &env_map);
-        let read_roots = gather_read_roots(&current_dir, &policy, codex_home);
+        let read_roots = legacy_session_executable_read_roots(&env_map, &command);
         let protected_metadata_guard =
             prepare_protected_metadata_targets(protected_metadata_targets);
         for path in protected_metadata_guard.deny_paths() {

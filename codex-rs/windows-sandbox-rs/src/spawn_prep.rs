@@ -19,7 +19,6 @@ use crate::policy::parse_policy;
 use crate::sandbox_utils::ensure_codex_home_exists;
 use crate::sandbox_utils::inject_git_safe_directory;
 use crate::setup::ProtectedMetadataTarget;
-use crate::setup::gather_read_roots;
 use crate::token::convert_string_sid_to_sid;
 use crate::token::create_readonly_token_with_cap;
 use crate::token::create_workspace_write_token_with_caps_from;
@@ -219,9 +218,9 @@ pub(crate) fn allow_null_device_for_workspace_write(is_workspace_write: bool) {
 pub(crate) fn apply_legacy_session_acl_rules(
     policy: &SandboxPolicy,
     sandbox_policy_cwd: &Path,
-    codex_home: &Path,
     current_dir: &Path,
     env_map: &HashMap<String, String>,
+    command: &[String],
     psid_generic: &LocalSid,
     psid_workspace: Option<&LocalSid>,
     persist_aces: bool,
@@ -231,7 +230,7 @@ pub(crate) fn apply_legacy_session_acl_rules(
         compute_allow_paths(policy, sandbox_policy_cwd, current_dir, env_map);
     deny.extend(additional_deny_paths.iter().cloned());
     let mut guards: Vec<PathBuf> = Vec::new();
-    let read_roots = gather_read_roots(current_dir, policy, codex_home);
+    let read_roots = legacy_session_executable_read_roots(env_map, command);
     let read_execute_mask = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
     let canonical_cwd = canonicalize_path(current_dir);
     unsafe {
@@ -274,6 +273,58 @@ pub(crate) fn apply_legacy_session_acl_rules(
         }
     }
     guards
+}
+
+pub(crate) fn legacy_session_executable_read_roots(
+    env_map: &HashMap<String, String>,
+    command: &[String],
+) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(program) = command.first() {
+        let program_path = PathBuf::from(program);
+        if program_path.is_absolute()
+            && let Some(parent) = program_path.parent()
+        {
+            roots.push(parent.to_path_buf());
+        }
+    }
+
+    for (name, value) in env_map {
+        if !name.eq_ignore_ascii_case("PATH") {
+            continue;
+        }
+        for path in std::env::split_paths(value) {
+            roots.push(path.clone());
+            if let Some(tool_root) = windows_tool_root_for_path_dir(&path) {
+                roots.push(tool_root);
+            }
+        }
+    }
+
+    let mut deduped = Vec::new();
+    for root in roots {
+        if !root.exists() {
+            continue;
+        }
+        let root = dunce::canonicalize(&root).unwrap_or(root);
+        if !deduped.iter().any(|existing| existing == &root) {
+            deduped.push(root);
+        }
+    }
+    deduped
+}
+
+fn windows_tool_root_for_path_dir(path: &Path) -> Option<PathBuf> {
+    let name = path.file_name()?.to_string_lossy();
+    if !name.eq_ignore_ascii_case("cmd") && !name.eq_ignore_ascii_case("bin") {
+        return None;
+    }
+    let parent = path.parent()?;
+    let parent_name = parent.file_name()?.to_string_lossy();
+    if parent_name.eq_ignore_ascii_case("Git") {
+        return Some(parent.to_path_buf());
+    }
+    None
 }
 
 pub(crate) fn prepare_elevated_spawn_context(

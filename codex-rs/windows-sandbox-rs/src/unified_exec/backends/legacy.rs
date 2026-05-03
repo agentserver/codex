@@ -332,9 +332,9 @@ pub(crate) async fn spawn_windows_sandbox_session_legacy(
     let guards = apply_legacy_session_acl_rules(
         &common.policy,
         sandbox_policy_cwd,
-        codex_home,
         &common.current_dir,
         &env_map,
+        &command,
         &security.psid_generic,
         security.psid_workspace.as_ref(),
         persist_aces,

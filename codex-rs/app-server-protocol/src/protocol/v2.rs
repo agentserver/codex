@@ -50,7 +50,7 @@ use codex_protocol::models::PermissionProfile as CorePermissionProfile;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::ModelAvailabilityNux as CoreModelAvailabilityNux;
-use codex_protocol::openai_models::ModelServiceTier as CoreModelServiceTier;
+pub use codex_protocol::openai_models::ModelServiceTier;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::openai_models::default_input_modalities;
 use codex_protocol::parse_command::ParsedCommand as CoreParsedCommand;
@@ -2506,35 +2506,6 @@ impl From<CoreModelAvailabilityNux> for ModelAvailabilityNux {
     fn from(value: CoreModelAvailabilityNux) -> Self {
         Self {
             message: value.message,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "v2/")]
-pub struct ModelServiceTier {
-    pub id: ServiceTier,
-    pub name: String,
-    pub description: String,
-}
-
-impl From<CoreModelServiceTier> for ModelServiceTier {
-    fn from(value: CoreModelServiceTier) -> Self {
-        Self {
-            id: value.id,
-            name: value.name,
-            description: value.description,
-        }
-    }
-}
-
-impl From<ModelServiceTier> for CoreModelServiceTier {
-    fn from(value: ModelServiceTier) -> Self {
-        Self {
-            id: value.id,
-            name: value.name,
-            description: value.description,
         }
     }
 }

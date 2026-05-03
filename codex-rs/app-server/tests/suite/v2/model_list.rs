@@ -14,7 +14,7 @@ use codex_app_server_protocol::ReasoningEffortOption;
 use codex_app_server_protocol::RequestId;
 use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
 use codex_protocol::openai_models::ModelPreset;
-use codex_protocol::openai_models::ModelServiceTier as CoreModelServiceTier;
+use codex_protocol::openai_models::ModelServiceTier;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 use tokio::time::timeout;
@@ -53,17 +53,12 @@ fn model_from_preset(preset: &ModelPreset) -> Model {
         // todo(sayan): fix, maybe make roundtrip use ModelInfo only
         supports_personality: false,
         additional_speed_tiers: legacy_additional_speed_tiers(&preset.service_tiers),
-        service_tiers: preset
-            .service_tiers
-            .clone()
-            .into_iter()
-            .map(Into::into)
-            .collect(),
+        service_tiers: preset.service_tiers.clone(),
         is_default: preset.is_default,
     }
 }
 
-fn legacy_additional_speed_tiers(service_tiers: &[CoreModelServiceTier]) -> Vec<String> {
+fn legacy_additional_speed_tiers(service_tiers: &[ModelServiceTier]) -> Vec<String> {
     service_tiers
         .iter()
         .filter_map(|tier| {

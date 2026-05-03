@@ -43,6 +43,7 @@ export type { LocalShellExecAction } from "./LocalShellExecAction";
 export type { LocalShellStatus } from "./LocalShellStatus";
 export type { MessagePhase } from "./MessagePhase";
 export type { ModeKind } from "./ModeKind";
+export type { ModelServiceTier } from "./ModelServiceTier";
 export type { NetworkPolicyAmendment } from "./NetworkPolicyAmendment";
 export type { NetworkPolicyRuleAction } from "./NetworkPolicyRuleAction";
 export type { ParsedCommand } from "./ParsedCommand";

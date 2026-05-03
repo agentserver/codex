@@ -132,10 +132,7 @@
       "type": "string"
     },
     "ServiceTier": {
-      "enum": [
-        "fast",
-        "flex"
-      ],
+      "description": "String-backed service tier identifier. Known values include `priority` and `flex`, but other backend-provided ids are allowed.",
       "type": "string"
     }
   },

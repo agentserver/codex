@@ -11212,17 +11212,9 @@
         "properties": {
           "additionalSpeedTiers": {
             "default": [],
-            "deprecated": true,
             "description": "Deprecated: use `serviceTiers` for structured service-tier metadata.\n\n@deprecated use `serviceTiers` instead.",
             "items": {
               "type": "string"
-            },
-            "type": "array"
-          },
-          "serviceTiers": {
-            "default": [],
-            "items": {
-              "$ref": "#/definitions/v2/ModelServiceTier"
             },
             "type": "array"
           },
@@ -11266,6 +11258,13 @@
           },
           "model": {
             "type": "string"
+          },
+          "serviceTiers": {
+            "default": [],
+            "items": {
+              "$ref": "#/definitions/v2/ModelServiceTier"
+            },
+            "type": "array"
           },
           "supportedReasoningEfforts": {
             "items": {
@@ -11314,25 +11313,6 @@
         },
         "required": [
           "message"
-        ],
-        "type": "object"
-      },
-      "ModelServiceTier": {
-        "properties": {
-          "description": {
-            "type": "string"
-          },
-          "id": {
-            "$ref": "#/definitions/v2/ServiceTier"
-          },
-          "name": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "description",
-          "id",
-          "name"
         ],
         "type": "object"
       },
@@ -11448,6 +11428,25 @@
           "turnId"
         ],
         "title": "ModelReroutedNotification",
+        "type": "object"
+      },
+      "ModelServiceTier": {
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/definitions/v2/ServiceTier"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "id",
+          "name"
+        ],
         "type": "object"
       },
       "ModelUpgradeInfo": {

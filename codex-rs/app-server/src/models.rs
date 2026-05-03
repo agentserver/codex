@@ -7,7 +7,7 @@ use codex_core::ThreadManager;
 use codex_models_manager::manager::RefreshStrategy;
 use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
 use codex_protocol::openai_models::ModelPreset;
-use codex_protocol::openai_models::ModelServiceTier as CoreModelServiceTier;
+use codex_protocol::openai_models::ModelServiceTier;
 use codex_protocol::openai_models::ReasoningEffortPreset;
 
 pub async fn supported_models(
@@ -46,12 +46,12 @@ fn model_from_preset(preset: ModelPreset) -> Model {
         input_modalities: preset.input_modalities,
         supports_personality: preset.supports_personality,
         additional_speed_tiers,
-        service_tiers: preset.service_tiers.into_iter().map(Into::into).collect(),
+        service_tiers: preset.service_tiers,
         is_default: preset.is_default,
     }
 }
 
-fn legacy_additional_speed_tiers(service_tiers: &[CoreModelServiceTier]) -> Vec<String> {
+fn legacy_additional_speed_tiers(service_tiers: &[ModelServiceTier]) -> Vec<String> {
     service_tiers
         .iter()
         .filter_map(|tier| {

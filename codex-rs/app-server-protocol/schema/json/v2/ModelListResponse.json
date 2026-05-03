@@ -24,17 +24,9 @@
       "properties": {
         "additionalSpeedTiers": {
           "default": [],
-          "deprecated": true,
           "description": "Deprecated: use `serviceTiers` for structured service-tier metadata.\n\n@deprecated use `serviceTiers` instead.",
           "items": {
             "type": "string"
-          },
-          "type": "array"
-        },
-        "serviceTiers": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/ModelServiceTier"
           },
           "type": "array"
         },
@@ -78,6 +70,13 @@
         },
         "model": {
           "type": "string"
+        },
+        "serviceTiers": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ModelServiceTier"
+          },
+          "type": "array"
         },
         "supportedReasoningEfforts": {
           "items": {

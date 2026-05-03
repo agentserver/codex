@@ -656,6 +656,12 @@ pub struct Tui {
     #[serde(default)]
     pub theme: Option<String>,
 
+    /// Pet id to preselect in the terminal pet picker.
+    ///
+    /// Custom pet ids resolve against CODEX_HOME/pets/<pet-id>/pet.json.
+    #[serde(default)]
+    pub pet: Option<String>,
+
     /// Keybinding overrides for the TUI.
     ///
     /// This supports rebinding selected actions globally and by context.

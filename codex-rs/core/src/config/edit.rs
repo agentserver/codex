@@ -91,6 +91,14 @@ pub fn syntax_theme_edit(name: &str) -> ConfigEdit {
     }
 }
 
+/// Produces a config edit that sets [tui].pet = "<name>".
+pub fn tui_pet_edit(name: &str) -> ConfigEdit {
+    ConfigEdit::SetPath {
+        segments: vec!["tui".to_string(), "pet".to_string()],
+        value: value(name.to_string()),
+    }
+}
+
 /// Produces a config edit that sets `[tui].status_line` to an explicit ordered list.
 ///
 /// The array is written even when it is empty so "hide the status line" stays

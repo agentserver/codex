@@ -583,9 +583,10 @@ pub(crate) fn status_line_right_indicator_line(
     show_cycle_hint: bool,
 ) -> Option<Line<'static>> {
     let primary_indicator = match (collaboration_mode_indicator, goal_status_indicator) {
-        (Some(CollaborationModeIndicator::Plan), Some(GoalStatusIndicator::Active { usage })) => {
-            Some(goal_paused_in_plan_mode_line(usage.as_deref()))
-        }
+        (
+            Some(CollaborationModeIndicator::Plan),
+            active @ Some(GoalStatusIndicator::Active { .. }),
+        ) => goal_status_indicator_line(active),
         (Some(CollaborationModeIndicator::Plan), Some(GoalStatusIndicator::Paused)) => {
             Some(goal_paused_in_plan_mode_line(/*usage*/ None))
         }

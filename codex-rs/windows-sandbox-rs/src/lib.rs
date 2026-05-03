@@ -261,6 +261,7 @@ mod windows_impl {
     use super::acl::add_deny_write_ace;
     use super::acl::allow_null_device;
     use super::acl::ensure_allow_mask_aces;
+    use super::acl::ensure_allow_mask_aces_with_inheritance;
     use super::acl::revoke_ace;
     use super::allow::AllowDenyPaths;
     use super::allow::compute_allow_paths;
@@ -273,6 +274,7 @@ mod windows_impl {
     use super::process::create_process_as_user;
     use super::protected_metadata::prepare_protected_metadata_targets;
     use super::sandbox_utils::ensure_codex_home_exists;
+    use super::spawn_prep::legacy_session_direct_read_paths;
     use super::spawn_prep::legacy_session_executable_read_roots;
     use super::spawn_prep::prepare_legacy_spawn_context;
     use super::token::convert_string_sid_to_sid;
@@ -440,6 +442,7 @@ mod windows_impl {
         let AllowDenyPaths { allow, mut deny } =
             compute_allow_paths(&policy, sandbox_policy_cwd, &current_dir, &env_map);
         let read_roots = legacy_session_executable_read_roots(&env_map, &command);
+        let direct_read_paths = legacy_session_direct_read_paths(&env_map);
         let protected_metadata_guard =
             prepare_protected_metadata_targets(protected_metadata_targets);
         for path in protected_metadata_guard.deny_paths() {
@@ -457,6 +460,18 @@ mod windows_impl {
             for p in &read_roots {
                 if let Ok(added) = ensure_allow_mask_aces(p, &[psid_generic], read_execute_mask)
                     && added
+                    && !persist_aces
+                {
+                    guards.push((p.clone(), psid_generic));
+                }
+            }
+            for p in &direct_read_paths {
+                if let Ok(added) = ensure_allow_mask_aces_with_inheritance(
+                    p,
+                    &[psid_generic],
+                    read_execute_mask,
+                    /*inheritance*/ 0,
+                ) && added
                     && !persist_aces
                 {
                     guards.push((p.clone(), psid_generic));

@@ -43,7 +43,6 @@ const DISABLE_MAX_PRIVILEGE: u32 = 0x01;
 const LUA_TOKEN: u32 = 0x04;
 const WRITE_RESTRICTED: u32 = 0x08;
 const GENERIC_ALL: u32 = 0x1000_0000;
-const ALL_RESTRICTED_APPLICATION_PACKAGES_SID: &str = "S-1-15-2-2";
 const WIN_WORLD_SID: i32 = 1;
 const SE_GROUP_LOGON_ID: u32 = 0xC0000000;
 
@@ -142,24 +141,6 @@ pub unsafe fn convert_string_sid_to_sid(s: &str) -> Option<*mut c_void> {
     } else {
         None
     }
-}
-
-unsafe fn sid_bytes_from_string(s: &str) -> Result<Vec<u8>> {
-    let psid = convert_string_sid_to_sid(s)
-        .ok_or_else(|| anyhow!("ConvertStringSidToSidW failed for {s}: {}", GetLastError()))?;
-    let sid_len = GetLengthSid(psid);
-    if sid_len == 0 {
-        LocalFree(psid as HLOCAL);
-        return Err(anyhow!("GetLengthSid failed for {s}: {}", GetLastError()));
-    }
-    let mut out = vec![0u8; sid_len as usize];
-    if CopySid(sid_len, out.as_mut_ptr() as *mut c_void, psid) == 0 {
-        let err = GetLastError();
-        LocalFree(psid as HLOCAL);
-        return Err(anyhow!("CopySid failed for {s}: {err}"));
-    }
-    LocalFree(psid as HLOCAL);
-    Ok(out)
 }
 
 /// # Safety
@@ -429,18 +410,10 @@ unsafe fn create_token_with_caps_from(
     let psid_logon = logon_sid_bytes.as_mut_ptr() as *mut c_void;
     let mut everyone = world_sid()?;
     let psid_everyone = everyone.as_mut_ptr() as *mut c_void;
-    let mut all_restricted_app_packages =
-        sid_bytes_from_string(ALL_RESTRICTED_APPLICATION_PACKAGES_SID)?;
-    let psid_all_restricted_app_packages =
-        all_restricted_app_packages.as_mut_ptr() as *mut c_void;
 
-    // Exact order: Capabilities..., ExtraRestricting..., platform read SID, Logon, Everyone.
-    //
-    // Windows platform binaries commonly grant RX to ALL RESTRICTED APPLICATION PACKAGES.
-    // Carrying that SID lets child processes launched by the sandboxed shell initialize
-    // without per-file ACL edits while write access still requires an explicit writable root.
+    // Exact order: Capabilities..., ExtraRestricting..., Logon, Everyone
     let mut entries: Vec<SID_AND_ATTRIBUTES> =
-        vec![std::mem::zeroed(); psid_capabilities.len() + extra_restricting_sids.len() + 3];
+        vec![std::mem::zeroed(); psid_capabilities.len() + extra_restricting_sids.len() + 2];
     for (i, psid) in psid_capabilities.iter().enumerate() {
         entries[i].Sid = *psid;
         entries[i].Attributes = 0;
@@ -450,10 +423,7 @@ unsafe fn create_token_with_caps_from(
         entries[extras_idx + i].Sid = *psid;
         entries[extras_idx + i].Attributes = 0;
     }
-    let all_restricted_idx = extras_idx + extra_restricting_sids.len();
-    entries[all_restricted_idx].Sid = psid_all_restricted_app_packages;
-    entries[all_restricted_idx].Attributes = 0;
-    let logon_idx = all_restricted_idx + 1;
+    let logon_idx = extras_idx + extra_restricting_sids.len();
     entries[logon_idx].Sid = psid_logon;
     entries[logon_idx].Attributes = 0;
     entries[logon_idx + 1].Sid = psid_everyone;

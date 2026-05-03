@@ -8,6 +8,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use codex_otel::StatsigMetricsSettings;
 use codex_windows_sandbox::LOG_FILE_NAME;
+use codex_windows_sandbox::ProtectedMetadataMode;
 use codex_windows_sandbox::ProtectedMetadataTarget;
 use codex_windows_sandbox::SETUP_VERSION;
 use codex_windows_sandbox::SetupErrorCode;
@@ -814,6 +815,58 @@ fn run_setup_full(payload: &Payload, log: &mut File, sbx_dir: &Path) -> Result<(
                 log_line(
                     log,
                     &format!("deny ACE failed on {}: {err}", path.display()),
+                )?;
+            }
+        }
+    }
+
+    for target in &payload.protected_metadata_targets {
+        if !matches!(target.mode, ProtectedMetadataMode::ExistingDeny) {
+            continue;
+        }
+        if !seen_deny_paths.insert(target.path.clone()) {
+            continue;
+        }
+        if !target.path.exists() {
+            log_line(
+                log,
+                &format!(
+                    "protected metadata {} missing during setup; skipping",
+                    target.path.display()
+                ),
+            )?;
+            continue;
+        }
+
+        let canonical_path = canonicalize_path(&target.path);
+        let deny_psid = if canonical_path.starts_with(&canonical_command_cwd) {
+            workspace_psid
+        } else {
+            cap_psid
+        };
+
+        match unsafe { add_deny_write_ace(&target.path, deny_psid) } {
+            Ok(true) => {
+                log_line(
+                    log,
+                    &format!(
+                        "applied deny ACE to protect metadata {}",
+                        target.path.display()
+                    ),
+                )?;
+            }
+            Ok(false) => {}
+            Err(err) => {
+                refresh_errors.push(format!(
+                    "metadata deny ACE failed on {}: {err}",
+                    target.path.display()
+                ));
+                log_line(
+                    log,
+                    &format!(
+                        "metadata deny ACE failed on {}: {err}",
+                        target.path.display()
+                    ),
                 )?;
             }
         }

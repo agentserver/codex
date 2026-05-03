@@ -1133,9 +1133,8 @@ impl App {
             tracing::warn!(
                 thread_id = %thread_id,
                 error = %err,
-                "failed to pause active goal before Plan-mode thread resume"
+                "failed to pause active goal before Plan-mode thread resume; continuing resume"
             );
-            return;
         }
 
         match app_server

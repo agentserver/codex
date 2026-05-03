@@ -275,7 +275,7 @@ fn shell_request_escalation_execution_is_explicit() {
         )),
         ..Default::default()
     };
-    let mut file_system_sandbox_policy = FileSystemSandboxPolicy::restricted(vec![
+    let file_system_sandbox_policy = FileSystemSandboxPolicy::restricted(vec![
         FileSystemSandboxEntry {
             path: FileSystemPath::Path {
                 path: AbsolutePathBuf::from_absolute_path("/tmp/original/output").unwrap(),
@@ -299,6 +299,7 @@ fn shell_request_escalation_execution_is_explicit() {
         CoreShellActionProvider::shell_request_escalation_execution(
             crate::sandboxing::SandboxPermissions::UseDefault,
             &permission_profile,
+            /*allows_unsandboxed_escalation*/ true,
             /*additional_permissions*/ None,
         ),
         EscalationExecution::TurnDefault,
@@ -307,20 +308,17 @@ fn shell_request_escalation_execution_is_explicit() {
         CoreShellActionProvider::shell_request_escalation_execution(
             crate::sandboxing::SandboxPermissions::RequireEscalated,
             &permission_profile,
+            /*allows_unsandboxed_escalation*/ true,
             /*additional_permissions*/ None,
         ),
         EscalationExecution::Unsandboxed,
     );
 
-    file_system_sandbox_policy.preserve_deny_read_across_escalation = true;
-    let escalation_preserving_permission_profile = PermissionProfile::from_runtime_permissions(
-        &file_system_sandbox_policy,
-        network_sandbox_policy,
-    );
     assert_eq!(
         CoreShellActionProvider::shell_request_escalation_execution(
             crate::sandboxing::SandboxPermissions::RequireEscalated,
-            &escalation_preserving_permission_profile,
+            &permission_profile,
+            /*allows_unsandboxed_escalation*/ false,
             /*additional_permissions*/ None,
         ),
         EscalationExecution::TurnDefault,
@@ -329,6 +327,7 @@ fn shell_request_escalation_execution_is_explicit() {
         CoreShellActionProvider::shell_request_escalation_execution(
             crate::sandboxing::SandboxPermissions::WithAdditionalPermissions,
             &permission_profile,
+            /*allows_unsandboxed_escalation*/ true,
             Some(&requested_permissions),
         ),
         EscalationExecution::Permissions(EscalationPermissions::ResolvedPermissionProfile(
@@ -359,13 +358,12 @@ async fn prefix_rule_preserves_managed_deny_read_escalation() -> anyhow::Result<
             },
             access: FileSystemAccessMode::None,
         });
-    file_system_sandbox_policy.preserve_deny_read_across_escalation = true;
     turn_context.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
-    turn_context.permission_profile = PermissionProfile::from_runtime_permissions(
+    let permission_profile = PermissionProfile::from_runtime_permissions(
         &file_system_sandbox_policy,
         NetworkSandboxPolicy::Restricted,
     );
-    let permission_profile = turn_context.permission_profile.clone();
+    turn_context.permission_profile = Constrained::allow_only(permission_profile.clone());
     let workdir = AbsolutePathBuf::from_absolute_path("/tmp").context("build tmp absolute path")?;
 
     let provider = CoreShellActionProvider {
@@ -467,10 +465,11 @@ async fn execve_permission_request_hook_short_circuits_prompt() -> anyhow::Resul
         })));
 
     turn_context.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
-    turn_context.permission_profile = PermissionProfile::from_runtime_permissions(
-        &read_only_file_system_sandbox_policy(),
-        NetworkSandboxPolicy::Restricted,
-    );
+    turn_context.permission_profile =
+        Constrained::allow_any(PermissionProfile::from_runtime_permissions(
+            &read_only_file_system_sandbox_policy(),
+            NetworkSandboxPolicy::Restricted,
+        ));
     let workdir = AbsolutePathBuf::try_from(std::env::current_dir()?)?;
     let target = std::env::temp_dir().join("execve-hook-short-circuit.txt");
     let target_str = target.display().to_string();

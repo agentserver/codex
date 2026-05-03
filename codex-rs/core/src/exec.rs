@@ -109,6 +109,24 @@ pub(crate) struct WindowsSandboxFilesystemOverrides {
     pub(crate) read_roots_include_platform_defaults: bool,
     pub(crate) write_roots_override: Option<Vec<PathBuf>>,
     pub(crate) additional_deny_write_paths: Vec<AbsolutePathBuf>,
+    pub(crate) protected_metadata_targets: Vec<WindowsProtectedMetadataTarget>,
+}
+
+/// Layer: Windows adapter. This is the Windows projection of
+/// `WritableRoot::protected_metadata_names` from `FileSystemSandboxPolicy`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct WindowsProtectedMetadataTarget {
+    pub(crate) path: AbsolutePathBuf,
+    pub(crate) mode: WindowsProtectedMetadataMode,
+}
+
+/// Layer: Windows adapter. The setup/enforcement layer needs to know why a
+/// protected metadata path is absent instead of treating every missing path as
+/// an existing filesystem object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum WindowsProtectedMetadataMode {
+    ExistingDeny,
+    MissingCreationMonitor,
 }
 
 fn windows_sandbox_uses_elevated_backend(
@@ -1131,7 +1149,9 @@ pub(crate) fn resolve_windows_restricted_token_filesystem_overrides(
         }
     }
 
-    if additional_deny_write_paths.is_empty() {
+    let protected_metadata_targets = windows_protected_metadata_targets(&split_writable_roots)?;
+
+    if additional_deny_write_paths.is_empty() && protected_metadata_targets.is_empty() {
         return Ok(None);
     }
 
@@ -1143,6 +1163,7 @@ pub(crate) fn resolve_windows_restricted_token_filesystem_overrides(
             .into_iter()
             .map(|path| AbsolutePathBuf::from_absolute_path(path).map_err(|err| err.to_string()))
             .collect::<std::result::Result<_, _>>()?,
+        protected_metadata_targets,
     }))
 }
 
@@ -1263,9 +1284,12 @@ pub(crate) fn resolve_windows_elevated_filesystem_overrides(
         Vec::new()
     };
 
+    let protected_metadata_targets = windows_protected_metadata_targets(&split_writable_roots)?;
+
     if read_roots_override.is_none()
         && write_roots_override.is_none()
         && additional_deny_write_paths.is_empty()
+        && protected_metadata_targets.is_empty()
     {
         return Ok(None);
     }
@@ -1276,7 +1300,34 @@ pub(crate) fn resolve_windows_elevated_filesystem_overrides(
         read_roots_override,
         write_roots_override,
         additional_deny_write_paths,
+        protected_metadata_targets,
     }))
+}
+
+fn windows_protected_metadata_targets(
+    writable_roots: &[codex_protocol::protocol::WritableRoot],
+) -> std::result::Result<Vec<WindowsProtectedMetadataTarget>, String> {
+    let mut targets = BTreeSet::new();
+    for writable_root in writable_roots {
+        for metadata_name in &writable_root.protected_metadata_names {
+            let path =
+                normalize_windows_override_path(writable_root.root.join(metadata_name).as_path())?;
+            let path = AbsolutePathBuf::from_absolute_path(path).map_err(|err| err.to_string())?;
+            targets.insert(WindowsProtectedMetadataTarget {
+                mode: windows_protected_metadata_mode(&path),
+                path,
+            });
+        }
+    }
+    Ok(targets.into_iter().collect())
+}
+
+fn windows_protected_metadata_mode(path: &AbsolutePathBuf) -> WindowsProtectedMetadataMode {
+    if std::fs::symlink_metadata(path.as_path()).is_ok() {
+        return WindowsProtectedMetadataMode::ExistingDeny;
+    }
+
+    WindowsProtectedMetadataMode::MissingCreationMonitor
 }
 
 fn has_reopened_writable_descendant(

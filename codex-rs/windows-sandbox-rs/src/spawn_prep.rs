@@ -1,6 +1,7 @@
 use crate::acl::add_allow_ace;
 use crate::acl::add_deny_write_ace;
 use crate::acl::allow_null_device;
+use crate::acl::ensure_allow_mask_aces;
 use crate::allow::AllowDenyPaths;
 use crate::allow::compute_allow_paths;
 use crate::cap::load_or_create_cap_sids;
@@ -18,6 +19,7 @@ use crate::policy::parse_policy;
 use crate::sandbox_utils::ensure_codex_home_exists;
 use crate::sandbox_utils::inject_git_safe_directory;
 use crate::setup::ProtectedMetadataTarget;
+use crate::setup::gather_read_roots;
 use crate::token::convert_string_sid_to_sid;
 use crate::token::create_readonly_token_with_cap;
 use crate::token::create_workspace_write_token_with_caps_from;
@@ -35,6 +37,8 @@ use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::Foundation::HANDLE;
 use windows_sys::Win32::Foundation::HLOCAL;
 use windows_sys::Win32::Foundation::LocalFree;
+use windows_sys::Win32::Storage::FileSystem::FILE_GENERIC_EXECUTE;
+use windows_sys::Win32::Storage::FileSystem::FILE_GENERIC_READ;
 
 pub(crate) struct SpawnContext {
     pub(crate) policy: SandboxPolicy,
@@ -215,6 +219,7 @@ pub(crate) fn allow_null_device_for_workspace_write(is_workspace_write: bool) {
 pub(crate) fn apply_legacy_session_acl_rules(
     policy: &SandboxPolicy,
     sandbox_policy_cwd: &Path,
+    codex_home: &Path,
     current_dir: &Path,
     env_map: &HashMap<String, String>,
     psid_generic: &LocalSid,
@@ -226,8 +231,19 @@ pub(crate) fn apply_legacy_session_acl_rules(
         compute_allow_paths(policy, sandbox_policy_cwd, current_dir, env_map);
     deny.extend(additional_deny_paths.iter().cloned());
     let mut guards: Vec<PathBuf> = Vec::new();
+    let read_roots = gather_read_roots(current_dir, policy, codex_home);
+    let read_execute_mask = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
     let canonical_cwd = canonicalize_path(current_dir);
     unsafe {
+        for p in &read_roots {
+            if let Ok(added) =
+                ensure_allow_mask_aces(p, &[psid_generic.as_ptr()], read_execute_mask)
+                && added
+                && !persist_aces
+            {
+                guards.push(p.clone());
+            }
+        }
         for p in &allow {
             let psid = if matches!(policy, SandboxPolicy::WorkspaceWrite { .. })
                 && is_command_cwd_root(p, &canonical_cwd)

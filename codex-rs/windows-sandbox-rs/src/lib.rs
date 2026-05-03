@@ -260,6 +260,7 @@ mod windows_impl {
     use super::acl::add_allow_ace;
     use super::acl::add_deny_write_ace;
     use super::acl::allow_null_device;
+    use super::acl::ensure_allow_mask_aces;
     use super::acl::revoke_ace;
     use super::allow::AllowDenyPaths;
     use super::allow::compute_allow_paths;
@@ -272,6 +273,7 @@ mod windows_impl {
     use super::process::create_process_as_user;
     use super::protected_metadata::prepare_protected_metadata_targets;
     use super::sandbox_utils::ensure_codex_home_exists;
+    use super::setup::gather_read_roots;
     use super::spawn_prep::prepare_legacy_spawn_context;
     use super::token::convert_string_sid_to_sid;
     use super::token::create_workspace_write_token_with_caps_from;
@@ -288,6 +290,8 @@ mod windows_impl {
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Foundation::HANDLE_FLAG_INHERIT;
     use windows_sys::Win32::Foundation::SetHandleInformation;
+    use windows_sys::Win32::Storage::FileSystem::FILE_GENERIC_EXECUTE;
+    use windows_sys::Win32::Storage::FileSystem::FILE_GENERIC_READ;
     use windows_sys::Win32::System::Pipes::CreatePipe;
     use windows_sys::Win32::System::Threading::GetExitCodeProcess;
     use windows_sys::Win32::System::Threading::INFINITE;
@@ -435,6 +439,7 @@ mod windows_impl {
         let persist_aces = is_workspace_write;
         let AllowDenyPaths { allow, mut deny } =
             compute_allow_paths(&policy, sandbox_policy_cwd, &current_dir, &env_map);
+        let read_roots = gather_read_roots(&current_dir, &policy, codex_home);
         let protected_metadata_guard =
             prepare_protected_metadata_targets(protected_metadata_targets);
         for path in protected_metadata_guard.deny_paths() {
@@ -447,7 +452,16 @@ mod windows_impl {
         }
         let canonical_cwd = canonicalize_path(&current_dir);
         let mut guards: Vec<(PathBuf, *mut c_void)> = Vec::new();
+        let read_execute_mask = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
         unsafe {
+            for p in &read_roots {
+                if let Ok(added) = ensure_allow_mask_aces(p, &[psid_generic], read_execute_mask)
+                    && added
+                    && !persist_aces
+                {
+                    guards.push((p.clone(), psid_generic));
+                }
+            }
             for p in &allow {
                 let psid = if is_workspace_write && is_command_cwd_root(p, &canonical_cwd) {
                     psid_workspace.unwrap_or(psid_generic)

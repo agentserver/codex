@@ -25,7 +25,9 @@ use crate::workspace_command::WorkspaceCommandOutput;
 /// Additions and deletions between `HEAD` and a branch comparison base.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct GitBranchDiffStats {
+    /// Total added lines in committed changes on the current branch.
     pub(crate) additions: u64,
+    /// Total deleted lines in committed changes on the current branch.
     pub(crate) deletions: u64,
 }
 
@@ -56,6 +58,10 @@ pub(crate) struct StatusLinePullRequest {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct DefaultBranch {
+    /// Git ref used for merge-base comparison.
+    ///
+    /// This may be a remote-tracking ref such as `refs/remotes/origin/main`, which avoids
+    /// comparing against a stale or absent local `main` branch.
     merge_ref: String,
 }
 
@@ -124,6 +130,11 @@ pub(crate) async fn status_line_git_summary(
     }
 }
 
+/// Counts committed line changes between `HEAD` and the repository default branch.
+///
+/// The comparison base is the merge base with a verified default-branch ref. Uncommitted working
+/// tree edits are intentionally ignored because the status-line item summarizes the checked-out
+/// branch, not the current dirty worktree.
 async fn branch_diff_stats_to_default_branch(
     runner: &dyn WorkspaceCommandExecutor,
     cwd: &Path,
@@ -179,6 +190,11 @@ async fn branch_diff_stats_to_default_branch(
     })
 }
 
+/// Returns git remotes in the order used for default-branch discovery.
+///
+/// `origin` is prioritized because most repositories use it as the canonical upstream. Other
+/// remotes are still tried so fork or enterprise layouts with a differently named upstream can
+/// produce branch-change stats when their remote HEAD is configured.
 async fn get_git_remotes(runner: &dyn WorkspaceCommandExecutor, cwd: &Path) -> Option<Vec<String>> {
     let output = run_git_command(runner, cwd, &["remote"]).await.ok()?;
     if !output.success() {
@@ -193,6 +209,11 @@ async fn get_git_remotes(runner: &dyn WorkspaceCommandExecutor, cwd: &Path) -> O
     Some(remotes)
 }
 
+/// Resolves the default branch ref that should be used for branch-change comparisons.
+///
+/// The lookup prefers remote-tracking refs over local branches so feature-only clones and stale
+/// local `main` branches do not inflate the status-line diff. When no remote default is available,
+/// local `main` or `master` is used as a last resort.
 async fn get_default_branch(
     runner: &dyn WorkspaceCommandExecutor,
     cwd: &Path,
@@ -214,6 +235,11 @@ async fn get_default_branch(
     get_default_branch_local(runner, cwd).await
 }
 
+/// Resolves a remote's symbolic HEAD into a concrete remote-tracking ref.
+///
+/// The returned ref is verified before use. Without that check, a symbolic `origin/HEAD` left over
+/// from an old fetch could point at a ref that no longer exists, causing the later merge-base probe
+/// to fail in a less obvious place.
 async fn get_remote_default_branch_from_symbolic_ref(
     runner: &dyn WorkspaceCommandExecutor,
     cwd: &Path,
@@ -239,6 +265,11 @@ async fn get_remote_default_branch_from_symbolic_ref(
     })
 }
 
+/// Parses `git remote show` output to discover a remote's default branch ref.
+///
+/// This is a fallback for repositories where `refs/remotes/<remote>/HEAD` is not configured but
+/// `git remote show` can still report the upstream HEAD branch. The concrete remote-tracking ref
+/// must already exist locally before it is accepted.
 async fn get_remote_default_branch_from_remote_show(
     runner: &dyn WorkspaceCommandExecutor,
     cwd: &Path,
@@ -268,6 +299,7 @@ async fn get_remote_default_branch_from_remote_show(
     None
 }
 
+/// Falls back to local `main` or `master` when no remote default branch can be found.
 async fn get_default_branch_local(
     runner: &dyn WorkspaceCommandExecutor,
     cwd: &Path,
@@ -284,6 +316,7 @@ async fn get_default_branch_local(
     None
 }
 
+/// Checks whether a git ref exists in the status-line working directory.
 async fn git_ref_exists(
     runner: &dyn WorkspaceCommandExecutor,
     cwd: &Path,
@@ -298,6 +331,11 @@ async fn git_ref_exists(
     .is_ok_and(|output| output.success())
 }
 
+/// Resolves the open PR associated with the current checkout.
+///
+/// Branch-based lookup is attempted first because it is cheap and mirrors `gh pr view`. Commit-based
+/// lookup is used as a fallback so fork workflows can still find a PR opened against the upstream
+/// repository even when `gh` infers the fork from the current checkout.
 async fn open_pull_request(
     runner: &dyn WorkspaceCommandExecutor,
     cwd: &Path,
@@ -309,6 +347,7 @@ async fn open_pull_request(
     open_pull_request_for_head_commit(runner, cwd).await
 }
 
+/// Uses GitHub CLI's current-branch PR lookup.
 async fn open_pull_request_for_current_branch(
     runner: &dyn WorkspaceCommandExecutor,
     cwd: &Path,
@@ -322,6 +361,7 @@ async fn open_pull_request_for_current_branch(
     pull_request_from_view_output(&output.stdout)
 }
 
+/// Looks up open PRs for `HEAD` across the upstream/fork repository search order.
 async fn open_pull_request_for_head_commit(
     runner: &dyn WorkspaceCommandExecutor,
     cwd: &Path,
@@ -351,6 +391,7 @@ async fn open_pull_request_for_head_commit(
     None
 }
 
+/// Returns the current `HEAD` SHA for commit-based PR lookup.
 async fn current_head_sha(runner: &dyn WorkspaceCommandExecutor, cwd: &Path) -> Option<String> {
     let output = run_git_command(runner, cwd, &["rev-parse", "HEAD"])
         .await
@@ -362,6 +403,7 @@ async fn current_head_sha(runner: &dyn WorkspaceCommandExecutor, cwd: &Path) -> 
     Some(output.stdout.trim().to_string()).filter(|sha| !sha.is_empty())
 }
 
+/// Returns repositories to query for commit-associated PRs, with parent before fork.
 async fn gh_repo_search_order(
     runner: &dyn WorkspaceCommandExecutor,
     cwd: &Path,
@@ -380,6 +422,7 @@ async fn gh_repo_search_order(
     repo_search_order_from_output(&output.stdout)
 }
 
+/// Parses `gh pr view --json number,url,state` output for an open PR.
 fn pull_request_from_view_output(stdout: &str) -> Option<StatusLinePullRequest> {
     let pull_request = serde_json::from_str::<GhPullRequestView>(stdout).ok()?;
     pull_request
@@ -391,6 +434,7 @@ fn pull_request_from_view_output(stdout: &str) -> Option<StatusLinePullRequest> 
         })
 }
 
+/// Parses the GitHub REST commit-to-PR response and returns the first open PR.
 fn pull_request_from_api_output(stdout: &str) -> Option<StatusLinePullRequest> {
     serde_json::from_str::<Vec<GhPullRequestApiItem>>(stdout)
         .ok()?
@@ -402,6 +446,10 @@ fn pull_request_from_api_output(stdout: &str) -> Option<StatusLinePullRequest> {
         })
 }
 
+/// Parses `gh repo view` output into the repository search order for fallback PR lookup.
+///
+/// Parent-first ordering matches upstream PR workflows: a branch may be checked out from a fork
+/// while the open PR lives on the parent repository.
 fn repo_search_order_from_output(stdout: &str) -> Option<Vec<String>> {
     let repo = serde_json::from_str::<GhRepoView>(stdout).ok()?;
     let mut repos = Vec::new();
@@ -420,6 +468,7 @@ fn repo_search_order_from_output(stdout: &str) -> Option<Vec<String>> {
     Some(repos)
 }
 
+/// Runs a git command through the workspace-command abstraction.
 async fn run_git_command(
     runner: &dyn WorkspaceCommandExecutor,
     cwd: &Path,
@@ -437,6 +486,10 @@ async fn run_git_command(
         .await
 }
 
+/// Runs a GitHub CLI command through the workspace-command abstraction.
+///
+/// Prompting is disabled because status-line probes are background UI work. A command that needs
+/// authentication or user input should fail and leave the optional PR item hidden.
 async fn run_gh_command(
     runner: &dyn WorkspaceCommandExecutor,
     cwd: &Path,

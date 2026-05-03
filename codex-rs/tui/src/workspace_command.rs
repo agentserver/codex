@@ -148,6 +148,11 @@ impl AppServerWorkspaceCommandRunner {
 }
 
 impl WorkspaceCommandExecutor for AppServerWorkspaceCommandRunner {
+    /// Sends the command as a one-off app-server `command/exec` request.
+    ///
+    /// The request is non-tty, does not stream stdin/stdout/stderr, and uses the caller's timeout
+    /// and output cap. It leaves sandbox and permission profile selection to app-server so the same
+    /// runner follows the active session's embedded or remote execution policy.
     fn run(
         &self,
         command: WorkspaceCommand,

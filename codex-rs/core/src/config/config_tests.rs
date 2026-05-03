@@ -2043,10 +2043,7 @@ async fn runtime_config_resolves_session_picker_view_default_and_override() {
     .await
     .expect("load default config");
 
-    assert_eq!(
-        cfg.tui_session_picker_view,
-        SessionPickerViewMode::Comfortable
-    );
+    assert_eq!(cfg.tui_session_picker_view, SessionPickerViewMode::Dense);
 
     let cfg = Config::load_from_base_config_with_overrides(
         ConfigToml {
@@ -6051,7 +6048,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             tui_status_line: None,
             tui_terminal_title: None,
             tui_theme: None,
-            tui_session_picker_view: SessionPickerViewMode::Comfortable,
+            tui_session_picker_view: SessionPickerViewMode::Dense,
             tui_keymap: TuiKeymap::default(),
             otel: OtelConfig::default(),
         },
@@ -6246,7 +6243,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         tui_status_line: None,
         tui_terminal_title: None,
         tui_theme: None,
-        tui_session_picker_view: SessionPickerViewMode::Comfortable,
+        tui_session_picker_view: SessionPickerViewMode::Dense,
         tui_keymap: TuiKeymap::default(),
         otel: OtelConfig::default(),
     };
@@ -6395,7 +6392,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         tui_status_line: None,
         tui_terminal_title: None,
         tui_theme: None,
-        tui_session_picker_view: SessionPickerViewMode::Comfortable,
+        tui_session_picker_view: SessionPickerViewMode::Dense,
         tui_keymap: TuiKeymap::default(),
         otel: OtelConfig::default(),
     };
@@ -6529,7 +6526,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         tui_status_line: None,
         tui_terminal_title: None,
         tui_theme: None,
-        tui_session_picker_view: SessionPickerViewMode::Comfortable,
+        tui_session_picker_view: SessionPickerViewMode::Dense,
         tui_keymap: TuiKeymap::default(),
         otel: OtelConfig::default(),
     };

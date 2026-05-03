@@ -1,8 +1,19 @@
+//! Branch and pull-request metadata for TUI status-line items.
+//!
+//! This module owns the git and GitHub probes behind the TUI `git-branch`, `pull-request-number`,
+//! and `branch-changes` status-line items. It deliberately talks only to a
+//! `WorkspaceCommandExecutor`, not to `tokio::process::Command`, so the same lookup logic works
+//! when the TUI is connected to either an embedded or remote app-server.
+//!
+//! All lookups are best-effort. A failed command, missing `git` or `gh`, unauthenticated GitHub
+//! CLI, non-git directory, or ambiguous repository state should result in absent optional metadata
+//! rather than a user-visible error. The status line can then render whichever pieces are available
+//! without blocking the rest of the UI.
+
 #[cfg(test)]
 use std::collections::VecDeque;
 use std::path::Path;
 
-use codex_git_utils::GitBranchDiffStats;
 use serde::Deserialize;
 
 use crate::workspace_command::WorkspaceCommand;
@@ -11,15 +22,35 @@ use crate::workspace_command::WorkspaceCommandError;
 use crate::workspace_command::WorkspaceCommandExecutor;
 use crate::workspace_command::WorkspaceCommandOutput;
 
+/// Additions and deletions between `HEAD` and a branch comparison base.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct GitBranchDiffStats {
+    pub(crate) additions: u64,
+    pub(crate) deletions: u64,
+}
+
+/// Combined git metadata cached by the status line for one working directory.
+///
+/// A summary may contain only one of the fields when the other probe fails. Renderers should treat
+/// missing fields as omitted optional UI rather than as a hard lookup failure.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct StatusLineGitSummary {
+    /// Open pull request associated with the current branch or HEAD commit.
     pub(crate) pull_request: Option<StatusLinePullRequest>,
+    /// Additions and deletions between `HEAD` and the repository default branch merge base.
     pub(crate) branch_change_stats: Option<GitBranchDiffStats>,
 }
 
+/// Open GitHub pull request shown by the `pull-request-number` status-line item.
+///
+/// The URL is kept with the number so clickable renderers can open the same PR represented by the
+/// compact label. Callers should only construct this for open PRs; closed or merged PRs are filtered
+/// out by this module.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StatusLinePullRequest {
+    /// GitHub pull request number.
     pub(crate) number: u64,
+    /// Browser URL for the pull request.
     pub(crate) url: String,
 }
 
@@ -56,6 +87,10 @@ struct GhRepoParent {
     name_with_owner: String,
 }
 
+/// Returns the checked-out branch name for one status-line working directory.
+///
+/// Detached HEADs, non-git directories, and command failures return `None` so the renderer can
+/// omit the branch item without surfacing a background lookup error.
 pub(crate) async fn current_branch_name(
     runner: &dyn WorkspaceCommandExecutor,
     cwd: &Path,
@@ -70,6 +105,11 @@ pub(crate) async fn current_branch_name(
     Some(output.stdout.trim().to_string()).filter(|name| !name.is_empty())
 }
 
+/// Resolves PR and branch-change metadata for one status-line working directory.
+///
+/// The PR and diff-stat probes run concurrently because each is independent and both are optional.
+/// The returned summary is suitable for caching by `cwd`; callers should discard it if the active
+/// status-line cwd changes before the async lookup completes.
 pub(crate) async fn status_line_git_summary(
     runner: &dyn WorkspaceCommandExecutor,
     cwd: &Path,

@@ -140,7 +140,7 @@ async fn status_line_git_summary_items_render_values() {
             number: 20_252,
             url: "https://github.com/openai/codex/pull/20252".to_string(),
         }),
-        branch_change_stats: Some(codex_git_utils::GitBranchDiffStats {
+        branch_change_stats: Some(crate::branch_summary::GitBranchDiffStats {
             additions: 143,
             deletions: 22,
         }),
@@ -161,7 +161,7 @@ async fn status_line_branch_changes_render_no_changes() {
     let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.status_line_git_summary = Some(StatusLineGitSummary {
         pull_request: None,
-        branch_change_stats: Some(codex_git_utils::GitBranchDiffStats {
+        branch_change_stats: Some(crate::branch_summary::GitBranchDiffStats {
             additions: 0,
             deletions: 0,
         }),
@@ -186,7 +186,7 @@ async fn stale_status_line_git_summary_update_is_ignored() {
                 number: 20_252,
                 url: "https://github.com/openai/codex/pull/20252".to_string(),
             }),
-            branch_change_stats: Some(codex_git_utils::GitBranchDiffStats {
+            branch_change_stats: Some(crate::branch_summary::GitBranchDiffStats {
                 additions: 143,
                 deletions: 22,
             }),

@@ -556,6 +556,10 @@ pub(crate) struct ChatWidgetInit {
     pub(crate) config: Config,
     pub(crate) frame_requester: FrameRequester,
     pub(crate) app_event_tx: AppEventSender,
+    /// App-server-backed runner used by status surfaces for workspace metadata probes.
+    ///
+    /// Tests that do not exercise git status-line refreshes may leave this unset. Production TUI
+    /// construction provides a runner for the active app-server session.
     pub(crate) workspace_command_runner: Option<WorkspaceCommandRunner>,
     pub(crate) initial_user_message: Option<UserMessage>,
     pub(crate) enhanced_keys_supported: bool,
@@ -975,7 +979,7 @@ pub(crate) struct ChatWidget {
     current_rollout_path: Option<PathBuf>,
     // Current working directory (if known)
     current_cwd: Option<PathBuf>,
-    // App-server-backed command runner for workspace metadata lookups.
+    // App-server-backed command runner for status-line workspace metadata lookups.
     workspace_command_runner: Option<WorkspaceCommandRunner>,
     // Instruction source files loaded for the current session, supplied by app-server.
     instruction_source_paths: Vec<AbsolutePathBuf>,

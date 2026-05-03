@@ -5,10 +5,7 @@ use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::resolve_role_config;
 use crate::agent::status::is_final;
 use crate::codex_thread::ThreadConfigSnapshot;
-use crate::find_archived_thread_path_by_id_str;
-use crate::find_thread_path_by_id_str;
 use crate::inherited_thread_state::InheritedThreadState;
-use crate::rollout::RolloutRecorder;
 use crate::session::emit_subagent_session_started;
 use crate::session_prefix::format_subagent_context_line;
 use crate::session_prefix::format_subagent_notification_message;
@@ -403,7 +400,7 @@ impl AgentControl {
                 ))
             })?;
 
-let response_continuation = inherited_thread_state.response_continuation();
+        let response_continuation = inherited_thread_state.response_continuation();
         let use_response_continuation_baseline =
             response_continuation.is_some() && matches!(fork_mode, SpawnAgentForkMode::FullHistory);
         let mut forked_rollout_items = if let (Some(response_continuation), true) =
@@ -443,8 +440,7 @@ let response_continuation = inherited_thread_state.response_continuation();
                     Vec::new()
                 };
             forked_rollout_items.retain(|item| {
-                if let RolloutItem::ResponseItem(ResponseItem::Message { role, content, .. }) =
-                    item
+                if let RolloutItem::ResponseItem(ResponseItem::Message { role, content, .. }) = item
                     && role == "developer"
                     && let [ContentItem::InputText { text }] = content.as_slice()
                     && multi_agent_v2_usage_hint_texts_to_filter
@@ -1291,15 +1287,17 @@ async fn parent_mcp_tool_snapshot_for_source(
     };
 
     let parent_thread = state.get_thread(*parent_thread_id).await.ok()?;
-    let tools = parent_thread
-        .codex
-        .session
-        .services
-        .mcp_connection_manager
-        .read()
-        .await
-        .list_all_tools()
-        .await;
+    let list_all_tools = {
+        let mcp_connection_manager = parent_thread
+            .codex
+            .session
+            .services
+            .mcp_connection_manager
+            .read()
+            .await;
+        mcp_connection_manager.list_all_tools_future()
+    };
+    let tools = list_all_tools.await;
     Some(McpToolSnapshot { tools })
 }
 

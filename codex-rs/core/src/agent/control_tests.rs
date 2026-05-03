@@ -779,15 +779,17 @@ async fn spawn_agent_can_fork_parent_thread_history_with_sanitized_items() {
         .await
         .clone()
         .expect("forked child should inherit an MCP tool snapshot");
-    let parent_mcp_tools = parent_thread
-        .codex
-        .session
-        .services
-        .mcp_connection_manager
-        .read()
-        .await
-        .list_all_tools()
-        .await;
+    let list_all_tools = {
+        let mcp_connection_manager = parent_thread
+            .codex
+            .session
+            .services
+            .mcp_connection_manager
+            .read()
+            .await;
+        mcp_connection_manager.list_all_tools_future()
+    };
+    let parent_mcp_tools = list_all_tools.await;
     let mut snapshot_tool_names = mcp_tool_snapshot.tools.keys().cloned().collect::<Vec<_>>();
     snapshot_tool_names.sort();
     let mut parent_tool_names = parent_mcp_tools.keys().cloned().collect::<Vec<_>>();
@@ -951,26 +953,22 @@ while True:
     let parent = manager.start_thread(config.clone()).await?;
     let parent_thread_id = parent.thread_id;
     let parent_prompt_cache_key = parent.thread.codex.session.prompt_cache_key();
-    let parent_mcp_tools = parent
-        .thread
-        .codex
-        .session
-        .services
-        .mcp_connection_manager
-        .read()
-        .await
-        .list_all_tools()
-        .await;
-    let startup_failures = parent
-        .thread
-        .codex
-        .session
-        .services
-        .mcp_connection_manager
-        .read()
-        .await
-        .required_startup_failures(&["rmcp".to_string()])
-        .await;
+    let (list_all_tools, required_startup_failures) = {
+        let mcp_connection_manager = parent
+            .thread
+            .codex
+            .session
+            .services
+            .mcp_connection_manager
+            .read()
+            .await;
+        (
+            mcp_connection_manager.list_all_tools_future(),
+            mcp_connection_manager.required_startup_failures_future(vec!["rmcp".to_string()]),
+        )
+    };
+    let parent_mcp_tools = list_all_tools.await;
+    let startup_failures = required_startup_failures.await;
     assert!(
         parent_mcp_tools.contains_key("mcp__rmcp__echo"),
         "parent MCP manager should expose live MCP tools before forking: tools={parent_mcp_tools:#?}; failures={startup_failures:#?}"

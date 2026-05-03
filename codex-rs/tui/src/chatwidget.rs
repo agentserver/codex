@@ -9630,6 +9630,26 @@ impl ChatWidget {
         }
         self.current_goal_status = Some(GoalStatusState::new(goal, Instant::now()));
         self.update_collaboration_mode_indicator();
+        self.pause_active_goal_for_plan_mode_if_needed();
+    }
+
+    fn pause_active_goal_for_plan_mode_if_needed(&mut self) {
+        if !self.is_plan_mode_active() {
+            return;
+        }
+        let Some(thread_id) = self.thread_id else {
+            return;
+        };
+        if self
+            .current_goal_status
+            .as_ref()
+            .is_some_and(GoalStatusState::is_active)
+        {
+            self.app_event_tx.send(AppEvent::SetThreadGoalStatus {
+                thread_id,
+                status: AppThreadGoalStatus::Paused,
+            });
+        }
     }
 
     fn personality_label(personality: Personality) -> &'static str {
@@ -9689,18 +9709,8 @@ impl ChatWidget {
         let next_mode = self.active_mode_kind();
         let next_model = self.current_model().to_string();
         let next_effort = self.effective_reasoning_effort();
-        if previous_mode != ModeKind::Plan
-            && next_mode == ModeKind::Plan
-            && let Some(thread_id) = self.thread_id
-            && self
-                .current_goal_status
-                .as_ref()
-                .is_some_and(GoalStatusState::is_active)
-        {
-            self.app_event_tx.send(AppEvent::SetThreadGoalStatus {
-                thread_id,
-                status: AppThreadGoalStatus::Paused,
-            });
+        if previous_mode != ModeKind::Plan && next_mode == ModeKind::Plan {
+            self.pause_active_goal_for_plan_mode_if_needed();
         }
         if previous_mode != next_mode
             && (previous_model != next_model || previous_effort != next_effort)

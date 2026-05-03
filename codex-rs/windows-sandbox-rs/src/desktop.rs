@@ -17,14 +17,12 @@ use windows_sys::Win32::Foundation::ERROR_SUCCESS;
 use windows_sys::Win32::Foundation::LocalFree;
 use windows_sys::Win32::Security::Authorization::EXPLICIT_ACCESS_W;
 use windows_sys::Win32::Security::Authorization::GRANT_ACCESS;
-use windows_sys::Win32::Security::Authorization::GetSecurityInfo;
 use windows_sys::Win32::Security::Authorization::SE_WINDOW_OBJECT;
 use windows_sys::Win32::Security::Authorization::SetEntriesInAclW;
 use windows_sys::Win32::Security::Authorization::SetSecurityInfo;
 use windows_sys::Win32::Security::Authorization::TRUSTEE_IS_SID;
 use windows_sys::Win32::Security::Authorization::TRUSTEE_IS_UNKNOWN;
 use windows_sys::Win32::Security::Authorization::TRUSTEE_W;
-use windows_sys::Win32::Security::ACL;
 use windows_sys::Win32::Security::DACL_SECURITY_INFORMATION;
 use windows_sys::Win32::System::StationsAndDesktops::CloseDesktop;
 use windows_sys::Win32::System::StationsAndDesktops::DESKTOP_CREATEMENU;
@@ -41,7 +39,6 @@ use windows_sys::Win32::System::StationsAndDesktops::DESKTOP_SWITCHDESKTOP;
 use windows_sys::Win32::System::StationsAndDesktops::DESKTOP_WRITE_DAC;
 use windows_sys::Win32::System::StationsAndDesktops::DESKTOP_WRITE_OWNER;
 use windows_sys::Win32::System::StationsAndDesktops::DESKTOP_WRITEOBJECTS;
-use windows_sys::Win32::System::StationsAndDesktops::OpenDesktopW;
 
 const DESKTOP_ALL_ACCESS: u32 = DESKTOP_READOBJECTS
     | DESKTOP_CREATEWINDOW
@@ -56,7 +53,6 @@ const DESKTOP_ALL_ACCESS: u32 = DESKTOP_READOBJECTS
     | DESKTOP_READ_CONTROL
     | DESKTOP_WRITE_DAC
     | DESKTOP_WRITE_OWNER;
-const DESKTOP_DACL_ACCESS: u32 = DESKTOP_READ_CONTROL | DESKTOP_WRITE_DAC;
 
 pub struct LaunchDesktop {
     _private_desktop: Option<PrivateDesktop>,
@@ -73,12 +69,6 @@ impl LaunchDesktop {
                 startup_name,
             })
         } else {
-            if let Err(err) = grant_default_desktop_access(logs_base_dir) {
-                logging::debug_log(
-                    &format!("grant default desktop access failed: {err:#}"),
-                    logs_base_dir,
-                );
-            }
             Ok(Self {
                 _private_desktop: None,
                 startup_name: to_wide("Winsta0\\Default"),
@@ -89,29 +79,6 @@ impl LaunchDesktop {
     pub fn startup_info_desktop(&self) -> *mut u16 {
         self.startup_name.as_ptr() as *mut u16
     }
-}
-
-fn grant_default_desktop_access(logs_base_dir: Option<&Path>) -> Result<()> {
-    let name_wide = to_wide("Default");
-    let handle = unsafe { OpenDesktopW(name_wide.as_ptr(), 0, 0, DESKTOP_DACL_ACCESS) };
-    if handle == 0 {
-        let err = unsafe { GetLastError() } as i32;
-        logging::debug_log(
-            &format!(
-                "OpenDesktopW failed for Default: {} ({})",
-                err,
-                format_last_error(err),
-            ),
-            logs_base_dir,
-        );
-        return Err(anyhow::anyhow!("OpenDesktopW failed: {err}"));
-    }
-
-    let result = unsafe { grant_desktop_access(handle, logs_base_dir) };
-    unsafe {
-        let _ = CloseDesktop(handle);
-    }
-    result
 }
 
 struct PrivateDesktop {
@@ -163,28 +130,6 @@ unsafe fn grant_desktop_access(handle: isize, logs_base_dir: Option<&Path>) -> R
     let mut logon_sid = get_logon_sid_bytes(token)?;
     CloseHandle(token);
 
-    let mut current_dacl: *mut ACL = ptr::null_mut();
-    let mut security_descriptor: *mut c_void = ptr::null_mut();
-    let get_security_code = GetSecurityInfo(
-        handle,
-        SE_WINDOW_OBJECT,
-        DACL_SECURITY_INFORMATION,
-        ptr::null_mut(),
-        ptr::null_mut(),
-        &mut current_dacl,
-        ptr::null_mut(),
-        &mut security_descriptor,
-    );
-    if get_security_code != ERROR_SUCCESS {
-        logging::debug_log(
-            &format!("GetSecurityInfo failed for desktop: {get_security_code}"),
-            logs_base_dir,
-        );
-        return Err(anyhow::anyhow!(
-            "GetSecurityInfo failed for desktop: {get_security_code}"
-        ));
-    }
-
     let entries = [EXPLICIT_ACCESS_W {
         grfAccessPermissions: DESKTOP_ALL_ACCESS,
         grfAccessMode: GRANT_ACCESS,
@@ -202,13 +147,10 @@ unsafe fn grant_desktop_access(handle: isize, logs_base_dir: Option<&Path>) -> R
     let set_entries_code = SetEntriesInAclW(
         entries.len() as u32,
         entries.as_ptr(),
-        current_dacl,
+        ptr::null_mut(),
         &mut updated_dacl,
     );
     if set_entries_code != ERROR_SUCCESS {
-        if !security_descriptor.is_null() {
-            LocalFree(security_descriptor as HLOCAL);
-        }
         logging::debug_log(
             &format!("SetEntriesInAclW failed for private desktop: {set_entries_code}"),
             logs_base_dir,
@@ -229,9 +171,6 @@ unsafe fn grant_desktop_access(handle: isize, logs_base_dir: Option<&Path>) -> R
     );
     if !updated_dacl.is_null() {
         LocalFree(updated_dacl as HLOCAL);
-    }
-    if !security_descriptor.is_null() {
-        LocalFree(security_descriptor as HLOCAL);
     }
     if set_security_code != ERROR_SUCCESS {
         logging::debug_log(

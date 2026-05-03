@@ -959,13 +959,6 @@ impl PickerState {
                 return Ok(Some(SessionSelection::Exit));
             }
             KeyEvent {
-                code: KeyCode::Char('v'),
-                modifiers,
-                ..
-            } if modifiers.contains(KeyModifiers::ALT) && !modifiers.contains(KeyModifiers::CONTROL) => {
-                self.toggle_density().await;
-            }
-            KeyEvent {
                 code: KeyCode::Char('t'),
                 modifiers,
                 ..
@@ -984,14 +977,14 @@ impl PickerState {
                 modifiers,
                 ..
             } if modifiers.contains(KeyModifiers::CONTROL) => {
-                self.toggle_dense_path_column();
+                self.toggle_density().await;
             }
             KeyEvent {
                 code: KeyCode::Char('\u{000f}'),
                 modifiers: KeyModifiers::NONE,
                 ..
             } /* ^O */ => {
-                self.toggle_dense_path_column();
+                self.toggle_density().await;
             }
             KeyEvent {
                 code: KeyCode::Enter,
@@ -1600,11 +1593,6 @@ impl PickerState {
         Ok(())
     }
 
-    fn toggle_dense_path_column(&mut self) {
-        // Dense mode no longer has a secondary path column. Keep consuming the
-        // legacy key so it does not leak into search input.
-    }
-
     fn toggle_selected_expansion(&mut self) {
         let Some(row) = self.filtered_rows.get(self.selected) else {
             return;
@@ -2137,7 +2125,7 @@ fn footer_hint_lines(state: &PickerState, width: u16) -> Vec<Line<'static>> {
     ];
     let second_row_hints = vec![
         PickerFooterHint {
-            key: "alt+v",
+            key: "ctrl+o",
             wide_label: density_label.to_string(),
             compact_label: density_compact_label.to_string(),
             priority: 3,
@@ -3648,12 +3636,12 @@ mod tests {
             SessionPickerAction::Resume,
         );
 
-        assert!(footer_lines_text(&state, /*width*/ 220).contains("alt+v dense view"));
+        assert!(footer_lines_text(&state, /*width*/ 220).contains("ctrl+o dense view"));
         assert!(footer_lines_text(&state, /*width*/ 220).contains("ctrl+t transcript"));
 
         state.density = SessionListDensity::Dense;
 
-        assert!(footer_lines_text(&state, /*width*/ 220).contains("alt+v comfortable view"));
+        assert!(footer_lines_text(&state, /*width*/ 220).contains("ctrl+o comfortable view"));
     }
 
     #[test]
@@ -3673,7 +3661,7 @@ mod tests {
         assert!(rendered.contains("esc new"));
         assert!(rendered.contains("tab focus"));
         assert!(rendered.contains("←/→ option"));
-        assert!(rendered.contains("alt+v dense"));
+        assert!(rendered.contains("ctrl+o dense"));
         assert!(rendered.contains("ctrl+t preview"));
         assert!(!rendered.contains("focus sort/filter"));
     }
@@ -3741,7 +3729,7 @@ mod tests {
         assert!(rendered.contains("enter"));
         assert!(rendered.contains("esc"));
         assert!(rendered.contains("ctrl+c"));
-        assert!(rendered.contains("alt+v"));
+        assert!(rendered.contains("ctrl+o"));
         assert!(rendered.contains("ctrl+t"));
         assert!(rendered.contains("↑/↓"));
     }
@@ -3907,7 +3895,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn alt_v_toggles_density_without_typing_into_search() {
+    async fn ctrl_o_toggles_density_without_typing_into_search() {
         let loader = page_only_loader(|_| {});
         let mut state = PickerState::new(
             FrameRequester::test_dummy(),
@@ -3920,7 +3908,7 @@ mod tests {
         state.query = String::from("pick");
 
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::ALT))
+            .handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL))
             .await
             .unwrap();
 
@@ -4267,7 +4255,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn alt_v_persists_density_preference() {
+    async fn ctrl_o_persists_density_preference() {
         let tmp = tempdir().expect("tmpdir");
         let loader = page_only_loader(|_| {});
         let mut state = PickerState::new(
@@ -4284,7 +4272,7 @@ mod tests {
         });
 
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::ALT))
+            .handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL))
             .await
             .unwrap();
 
@@ -4300,7 +4288,7 @@ session_picker_view = "dense"
     }
 
     #[tokio::test]
-    async fn alt_v_persists_density_preference_for_active_profile() {
+    async fn ctrl_o_persists_density_preference_for_active_profile() {
         let tmp = tempdir().expect("tmpdir");
         let loader = page_only_loader(|_| {});
         let mut state = PickerState::new(
@@ -4317,7 +4305,7 @@ session_picker_view = "dense"
         });
 
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::ALT))
+            .handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL))
             .await
             .unwrap();
 
@@ -4333,7 +4321,7 @@ session_picker_view = "dense"
     }
 
     #[tokio::test]
-    async fn alt_v_keeps_toggled_density_when_persistence_fails() {
+    async fn ctrl_o_keeps_toggled_density_when_persistence_fails() {
         let tmp = tempdir().expect("tmpdir");
         let codex_home_file = tmp.path().join("codex-home-file");
         std::fs::write(&codex_home_file, "not a directory").expect("write codex home file");
@@ -4352,7 +4340,7 @@ session_picker_view = "dense"
         });
 
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::ALT))
+            .handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL))
             .await
             .unwrap();
 
@@ -4368,7 +4356,7 @@ session_picker_view = "dense"
     }
 
     #[tokio::test]
-    async fn ctrl_o_is_consumed_in_dense_mode() {
+    async fn raw_ctrl_o_toggles_density_without_typing_into_search() {
         let loader = page_only_loader(|_| {});
         let mut state = PickerState::new(
             FrameRequester::test_dummy(),
@@ -4378,54 +4366,15 @@ session_picker_view = "dense"
             /*filter_cwd*/ None,
             SessionPickerAction::Resume,
         );
-        state.density = SessionListDensity::Dense;
-        state.update_viewport(/*rows*/ 10, /*width*/ 80);
+        state.query = String::from("pick");
 
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL))
+            .handle_key(KeyEvent::new(KeyCode::Char('\u{000f}'), KeyModifiers::NONE))
             .await
             .unwrap();
 
-        assert_eq!(state.query, "");
-
-        state
-            .handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL))
-            .await
-            .unwrap();
-
-        assert_eq!(state.query, "");
-    }
-
-    #[tokio::test]
-    async fn ctrl_o_is_consumed_outside_dense_mode() {
-        let loader = page_only_loader(|_| {});
-        let mut state = PickerState::new(
-            FrameRequester::test_dummy(),
-            loader,
-            ProviderFilter::MatchDefault(String::from("openai")),
-            /*show_all*/ false,
-            Some(PathBuf::from("/tmp/project")),
-            SessionPickerAction::Resume,
-        );
-        state.density = SessionListDensity::Dense;
-        state.update_viewport(/*rows*/ 10, /*width*/ 80);
-
-        state
-            .handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL))
-            .await
-            .unwrap();
-
-        assert_eq!(state.query, "");
-
-        state.filter_mode = SessionFilterMode::All;
-        state.density = SessionListDensity::Comfortable;
-
-        state
-            .handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL))
-            .await
-            .unwrap();
-
-        assert_eq!(state.query, "");
+        assert_eq!(state.density, SessionListDensity::Dense);
+        assert_eq!(state.query, "pick");
     }
 
     #[test]

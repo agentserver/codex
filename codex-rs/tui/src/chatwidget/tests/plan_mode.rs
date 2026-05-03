@@ -1316,22 +1316,7 @@ async fn entering_plan_mode_pauses_active_goal() {
         .expect("expected plan collaboration mode");
     chat.set_collaboration_mask(plan_mask);
 
-    let (event_thread_id, event_status) = loop {
-        match rx.try_recv() {
-            Ok(AppEvent::SetThreadGoalStatus { thread_id, status }) => {
-                break (thread_id, status);
-            }
-            Ok(_) => {}
-            Err(err) => panic!("expected SetThreadGoalStatus event, got {err:?}"),
-        }
-    };
-    assert_eq!(
-        (event_thread_id, event_status),
-        (
-            thread_id,
-            codex_app_server_protocol::ThreadGoalStatus::Paused
-        )
-    );
+    expect_goal_pause_event(&mut rx, thread_id);
 }
 
 #[tokio::test]
@@ -1346,6 +1331,13 @@ async fn active_goal_update_while_in_plan_mode_pauses_goal() {
 
     chat.handle_server_notification(active_goal_update(thread_id), /*replay_kind*/ None);
 
+    expect_goal_pause_event(&mut rx, thread_id);
+}
+
+fn expect_goal_pause_event(
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+    expected_thread_id: ThreadId,
+) {
     let (event_thread_id, event_status) = loop {
         match rx.try_recv() {
             Ok(AppEvent::SetThreadGoalStatus { thread_id, status }) => {
@@ -1358,7 +1350,7 @@ async fn active_goal_update_while_in_plan_mode_pauses_goal() {
     assert_eq!(
         (event_thread_id, event_status),
         (
-            thread_id,
+            expected_thread_id,
             codex_app_server_protocol::ThreadGoalStatus::Paused
         )
     );

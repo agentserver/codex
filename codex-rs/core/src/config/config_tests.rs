@@ -6510,6 +6510,28 @@ async fn explicit_null_service_tier_override_sets_fast_default_opt_out() -> std:
 }
 
 #[tokio::test]
+async fn legacy_fast_service_tier_override_maps_to_priority_id() -> std::io::Result<()> {
+    let fixture = create_test_fixture()?;
+
+    let config = Config::load_from_base_config_with_overrides(
+        fixture.cfg.clone(),
+        ConfigOverrides {
+            cwd: Some(fixture.cwd_path()),
+            service_tier: Some(Some(ServiceTier::from(SERVICE_TIER_FAST_LEGACY))),
+            ..Default::default()
+        },
+        fixture.codex_home(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.service_tier,
+        Some(ServiceTier::from(SERVICE_TIER_PRIORITY))
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn service_tier_id_takes_precedence_over_deprecated_service_tier() -> std::io::Result<()> {
     let fixture = create_test_fixture()?;
     let mut cfg = fixture.cfg.clone();

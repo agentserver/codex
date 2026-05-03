@@ -2667,7 +2667,7 @@ impl Config {
         let deprecated_config_service_tier =
             cfg.service_tier.clone().map(normalize_deprecated_service_tier);
         let service_tier = match service_tier_override {
-            Some(Some(service_tier)) => Some(service_tier),
+            Some(Some(service_tier)) => Some(normalize_deprecated_service_tier(service_tier)),
             Some(None) => {
                 // Preserve explicit standard/clear intent after the nested override
                 // collapses into `Config.service_tier = None`.

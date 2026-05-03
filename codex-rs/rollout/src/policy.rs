@@ -115,6 +115,9 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
                 None
             }
         }
+        EventMsg::McpToolCallEnd(event) if event.mcp_app_resource_uri.is_some() => {
+            Some(EventPersistenceMode::Limited)
+        }
         EventMsg::Error(_)
         | EventMsg::GuardianAssessment(_)
         | EventMsg::WebSearchEnd(_)

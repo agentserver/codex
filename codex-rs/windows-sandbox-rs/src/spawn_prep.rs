@@ -298,6 +298,7 @@ pub(crate) fn prepare_elevated_spawn_context(
         /*read_roots_include_platform_defaults*/ false,
         write_roots_override,
         &deny_write_paths,
+        &[],
         /*proxy_enforced*/ false,
     )?;
     let caps = load_or_create_cap_sids(codex_home)?;

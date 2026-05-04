@@ -446,13 +446,28 @@ struct AppServerCommand {
 
 #[derive(Debug, Parser)]
 struct ExecServerCommand {
-    /// Transport endpoint URL. Supported values: `ws://IP:PORT` (default).
+    /// Transport endpoint URL to listen on. Supported values: `ws://IP:PORT`.
+    /// Mutually exclusive with `--connect`.
     #[arg(
         long = "listen",
         value_name = "URL",
-        default_value = "ws://127.0.0.1:0"
+        default_value = "ws://127.0.0.1:0",
+        conflicts_with = "connect"
     )]
     listen: String,
+
+    /// [EXPERIMENTAL] Connect outbound to a remote endpoint instead of
+    /// listening for inbound connections. Useful for hosted deployments where
+    /// the harness lives on a server but the exec-server runs on a client
+    /// machine behind NAT. Supported schemes: `ws://`, `wss://`.
+    #[arg(long = "connect", value_name = "URL")]
+    connect: Option<String>,
+
+    /// Name of the environment variable that holds a Bearer token to send as
+    /// `Authorization: Bearer <value>` when using `--connect`. Required only
+    /// if the remote endpoint expects authentication.
+    #[arg(long = "auth-token-env", value_name = "ENV_VAR", requires = "connect")]
+    auth_token_env: Option<String>,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -1265,9 +1280,19 @@ async fn run_exec_server_command(
         codex_self_exe,
         arg0_paths.codex_linux_sandbox_exe.clone(),
     )?;
-    codex_exec_server::run_main(&cmd.listen, runtime_paths)
-        .await
-        .map_err(anyhow::Error::from_boxed)
+    if let Some(connect_url) = cmd.connect.as_deref() {
+        let auth_token = cmd
+            .auth_token_env
+            .as_deref()
+            .and_then(|name| std::env::var(name).ok());
+        codex_exec_server::run_connect_mode(connect_url, auth_token.as_deref(), runtime_paths)
+            .await
+            .map_err(anyhow::Error::from_boxed)
+    } else {
+        codex_exec_server::run_main(&cmd.listen, runtime_paths)
+            .await
+            .map_err(anyhow::Error::from_boxed)
+    }
 }
 
 async fn enable_feature_in_config(interactive: &TuiCli, feature: &str) -> anyhow::Result<()> {

@@ -9,6 +9,7 @@ mod transport;
 pub(crate) use handler::ExecServerHandler;
 pub use transport::DEFAULT_LISTEN_URL;
 pub use transport::ExecServerListenUrlParseError;
+pub use transport::run_connect_mode;
 
 use crate::ExecServerRuntimePaths;
 

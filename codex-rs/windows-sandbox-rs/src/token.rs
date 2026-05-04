@@ -40,6 +40,7 @@ use windows_sys::Win32::Security::TOKEN_USER;
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
 const DISABLE_MAX_PRIVILEGE: u32 = 0x01;
+const SANDBOX_INERT: u32 = 0x02;
 const LUA_TOKEN: u32 = 0x04;
 const WRITE_RESTRICTED: u32 = 0x08;
 const GENERIC_ALL: u32 = 0x1000_0000;
@@ -430,7 +431,7 @@ unsafe fn create_token_with_caps_from(
     entries[logon_idx + 1].Attributes = 0;
 
     let mut new_token: HANDLE = 0;
-    let flags = DISABLE_MAX_PRIVILEGE | LUA_TOKEN | WRITE_RESTRICTED;
+    let flags = DISABLE_MAX_PRIVILEGE | SANDBOX_INERT | LUA_TOKEN | WRITE_RESTRICTED;
     let ok = CreateRestrictedToken(
         base_token,
         flags,

@@ -2538,7 +2538,9 @@ pub struct Model {
     pub input_modalities: Vec<InputModality>,
     #[serde(default)]
     pub supports_personality: bool,
+    /// Deprecated: use `serviceTiers` instead.
     #[serde(default)]
+    #[deprecated(note = "use service_tiers instead")]
     pub additional_speed_tiers: Vec<String>,
     #[serde(default)]
     pub service_tiers: Vec<ModelServiceTier>,

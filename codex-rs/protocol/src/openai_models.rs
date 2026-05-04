@@ -140,8 +140,9 @@ pub struct ModelPreset {
     /// Whether this model supports personality-specific instructions.
     #[serde(default)]
     pub supports_personality: bool,
-    /// Additional speed tiers this model can run with beyond the standard path.
+    /// Deprecated: use `service_tiers` instead.
     #[serde(default)]
+    #[deprecated(note = "use service_tiers instead")]
     pub additional_speed_tiers: Vec<String>,
     /// Service tiers this model can run with.
     #[serde(default)]
@@ -267,6 +268,7 @@ pub struct ModelInfo {
     pub supported_in_api: bool,
     pub priority: i32,
     #[serde(default)]
+    #[deprecated(note = "use service_tiers instead")]
     pub additional_speed_tiers: Vec<String>,
     #[serde(default)]
     pub service_tiers: Vec<ModelServiceTier>,
@@ -441,6 +443,7 @@ pub struct ModelsResponse {
 
 // convert ModelInfo to ModelPreset
 impl From<ModelInfo> for ModelPreset {
+    #[allow(deprecated)]
     fn from(info: ModelInfo) -> Self {
         let supports_personality = info.supports_personality();
         ModelPreset {
@@ -476,6 +479,7 @@ impl From<ModelInfo> for ModelPreset {
 }
 
 impl ModelPreset {
+    #[allow(deprecated)]
     pub fn supports_fast_mode(&self) -> bool {
         self.additional_speed_tiers
             .iter()

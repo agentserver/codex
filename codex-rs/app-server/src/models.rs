@@ -22,6 +22,7 @@ pub async fn supported_models(
         .collect()
 }
 
+#[allow(deprecated)]
 fn model_from_preset(preset: ModelPreset) -> Model {
     Model {
         id: preset.id.to_string(),

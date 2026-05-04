@@ -11212,6 +11212,8 @@
         "properties": {
           "additionalSpeedTiers": {
             "default": [],
+            "deprecated": true,
+            "description": "Deprecated: use `serviceTiers` instead.",
             "items": {
               "type": "string"
             },

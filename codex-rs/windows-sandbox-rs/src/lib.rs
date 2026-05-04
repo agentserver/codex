@@ -461,8 +461,12 @@ mod windows_impl {
         let mut guards: Vec<(PathBuf, *mut c_void)> = Vec::new();
         let read_execute_mask = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
         unsafe {
+            let read_execute_sids: Vec<*mut c_void> = match psid_workspace {
+                Some(psid) => vec![psid_generic, psid],
+                None => vec![psid_generic],
+            };
             for p in &read_roots {
-                if let Ok(added) = ensure_allow_mask_aces(p, &[psid_generic], read_execute_mask)
+                if let Ok(added) = ensure_allow_mask_aces(p, &read_execute_sids, read_execute_mask)
                     && added
                     && !persist_aces
                 {
@@ -472,7 +476,7 @@ mod windows_impl {
             for p in &direct_read_paths {
                 if let Ok(added) = ensure_allow_mask_aces_with_inheritance(
                     p,
-                    &[psid_generic],
+                    &read_execute_sids,
                     read_execute_mask,
                     /*inheritance*/ 0,
                 ) && added

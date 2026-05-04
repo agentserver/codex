@@ -238,9 +238,12 @@ pub(crate) fn apply_legacy_session_acl_rules(
     let read_execute_mask = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
     let canonical_cwd = canonicalize_path(current_dir);
     unsafe {
+        let read_execute_sids: Vec<*mut std::ffi::c_void> = match psid_workspace {
+            Some(psid_workspace) => vec![psid_generic.as_ptr(), psid_workspace.as_ptr()],
+            None => vec![psid_generic.as_ptr()],
+        };
         for p in &read_roots {
-            if let Ok(added) =
-                ensure_allow_mask_aces(p, &[psid_generic.as_ptr()], read_execute_mask)
+            if let Ok(added) = ensure_allow_mask_aces(p, &read_execute_sids, read_execute_mask)
                 && added
                 && !persist_aces
             {
@@ -250,7 +253,7 @@ pub(crate) fn apply_legacy_session_acl_rules(
         for p in &direct_read_paths {
             if let Ok(added) = ensure_allow_mask_aces_with_inheritance(
                 p,
-                &[psid_generic.as_ptr()],
+                &read_execute_sids,
                 read_execute_mask,
                 /*inheritance*/ 0,
             ) && added

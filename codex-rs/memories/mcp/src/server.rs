@@ -42,12 +42,15 @@ pub struct MemoriesMcpServer<B> {
 #[derive(Deserialize)]
 struct ListArgs {
     path: Option<String>,
+    cursor: Option<String>,
     max_results: Option<usize>,
 }
 
 #[derive(Deserialize)]
 struct ReadArgs {
     path: String,
+    line_offset: Option<usize>,
+    max_lines: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -111,6 +114,7 @@ impl<B: MemoriesBackend> ServerHandler for MemoriesMcpServer<B> {
                     self.backend
                         .list(ListMemoriesRequest {
                             path: args.path,
+                            cursor: args.cursor,
                             max_results: clamp_max_results(
                                 args.max_results,
                                 DEFAULT_LIST_MAX_RESULTS,
@@ -127,6 +131,8 @@ impl<B: MemoriesBackend> ServerHandler for MemoriesMcpServer<B> {
                     self.backend
                         .read(ReadMemoryRequest {
                             path: args.path,
+                            line_offset: args.line_offset.unwrap_or(1),
+                            max_lines: args.max_lines,
                             max_tokens: DEFAULT_READ_MAX_TOKENS,
                         })
                         .await
@@ -194,7 +200,9 @@ fn list_tool() -> Tool {
 fn read_tool() -> Tool {
     let mut tool = Tool::new(
         Cow::Borrowed(READ_TOOL_NAME),
-        Cow::Borrowed("Read a Codex memory file by relative path."),
+        Cow::Borrowed(
+            "Read a Codex memory file by relative path, optionally starting at a 1-indexed line offset and limiting the number of lines returned.",
+        ),
         Arc::new(schema::read_input_schema()),
     );
     tool.output_schema = Some(Arc::new(schema::read_output_schema()));
@@ -224,6 +232,10 @@ fn clamp_max_results(requested: Option<usize>, default: usize, max: usize) -> us
 fn backend_error_to_mcp(err: MemoriesBackendError) -> McpError {
     match err {
         MemoriesBackendError::InvalidPath { .. }
+        | MemoriesBackendError::InvalidCursor { .. }
+        | MemoriesBackendError::InvalidLineOffset
+        | MemoriesBackendError::InvalidMaxLines
+        | MemoriesBackendError::LineOffsetExceedsFileLength
         | MemoriesBackendError::NotFile { .. }
         | MemoriesBackendError::EmptyQuery => McpError::invalid_params(err.to_string(), None),
         MemoriesBackendError::Io(_) => McpError::internal_error(err.to_string(), None),

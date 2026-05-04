@@ -77,12 +77,17 @@ impl MemoriesBackend for LocalMemoriesBackend {
     ) -> Result<ListMemoriesResponse, MemoriesBackendError> {
         let max_results = request.max_results.min(MAX_LIST_RESULTS);
         let start = self.resolve_scoped_path(request.path.as_deref())?;
+        let start_index = parse_list_cursor(request.cursor.as_deref())?;
+        let stop_after = start_index.saturating_add(max_results);
         let mut entries = Vec::new();
-        let truncated = collect_entries(&self.root, &start, &mut entries, max_results).await?;
-        entries.sort_by(|left, right| left.path.cmp(&right.path));
+        let listed_count =
+            collect_entries_page(&self.root, &start, start_index, stop_after, &mut entries).await?;
+        let next_cursor = (listed_count > stop_after).then(|| stop_after.to_string());
+        let truncated = next_cursor.is_some();
         Ok(ListMemoriesResponse {
             path: request.path,
             entries,
+            next_cursor,
             truncated,
         })
     }
@@ -91,6 +96,13 @@ impl MemoriesBackend for LocalMemoriesBackend {
         &self,
         request: ReadMemoryRequest,
     ) -> Result<ReadMemoryResponse, MemoriesBackendError> {
+        if request.line_offset == 0 {
+            return Err(MemoriesBackendError::InvalidLineOffset);
+        }
+        if request.max_lines == Some(0) {
+            return Err(MemoriesBackendError::InvalidMaxLines);
+        }
+
         let path = self.resolve_scoped_path(Some(request.path.as_str()))?;
         let Some(metadata) = Self::metadata_or_none(&path).await? else {
             return Err(MemoriesBackendError::NotFile { path: request.path });
@@ -101,15 +113,19 @@ impl MemoriesBackend for LocalMemoriesBackend {
         }
 
         let original_content = tokio::fs::read_to_string(&path).await?;
+        let start_byte = line_start_byte_offset(&original_content, request.line_offset)?;
+        let end_byte = line_end_byte_offset(&original_content, start_byte, request.max_lines);
+        let content_from_offset = &original_content[start_byte..end_byte];
         let max_tokens = if request.max_tokens == 0 {
             DEFAULT_READ_MAX_TOKENS
         } else {
             request.max_tokens
         };
-        let content = truncate_text(&original_content, TruncationPolicy::Tokens(max_tokens));
-        let truncated = content != original_content;
+        let content = truncate_text(content_from_offset, TruncationPolicy::Tokens(max_tokens));
+        let truncated = end_byte < original_content.len() || content != content_from_offset;
         Ok(ReadMemoryResponse {
             path: request.path,
+            start_line_number: request.line_offset,
             content,
             truncated,
         })
@@ -143,60 +159,85 @@ impl MemoriesBackend for LocalMemoriesBackend {
     }
 }
 
-async fn collect_entries(
+async fn collect_entries_page(
     root: &Path,
     current: &Path,
+    start_index: usize,
+    stop_after: usize,
     entries: &mut Vec<MemoryEntry>,
-    max_results: usize,
-) -> Result<bool, MemoriesBackendError> {
-    if max_results == 0 {
-        return Ok(false);
-    }
+) -> Result<usize, MemoriesBackendError> {
     let Some(metadata) = LocalMemoriesBackend::metadata_or_none(current).await? else {
-        return Ok(false);
+        return Ok(0);
     };
     reject_symlink(&display_relative_path(root, current), &metadata)?;
+
+    let mut seen = 0usize;
     if metadata.is_file() {
-        entries.push(MemoryEntry {
-            path: display_relative_path(root, current),
-            entry_type: MemoryEntryType::File,
-        });
-        return Ok(entries.len() >= max_results);
+        push_list_entry(
+            entries,
+            &mut seen,
+            start_index,
+            stop_after,
+            MemoryEntry {
+                path: display_relative_path(root, current),
+                entry_type: MemoryEntryType::File,
+            },
+        );
+        return Ok(seen);
     }
     if !metadata.is_dir() {
-        return Ok(false);
+        return Ok(0);
     }
 
     let mut pending = vec![current.to_path_buf()];
-    while let Some(dir_path) = pending.pop() {
-        for path in read_sorted_dir_paths(&dir_path).await? {
-            if entries.len() >= max_results {
-                return Ok(true);
-            }
-            let Some(metadata) = LocalMemoriesBackend::metadata_or_none(&path).await? else {
+    while let Some(path) = pending.pop() {
+        let Some(metadata) = LocalMemoriesBackend::metadata_or_none(&path).await? else {
+            continue;
+        };
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        if path != current {
+            let relative = display_relative_path(root, &path);
+            let entry_type = if metadata.is_dir() {
+                MemoryEntryType::Directory
+            } else if metadata.is_file() {
+                MemoryEntryType::File
+            } else {
                 continue;
             };
-            if metadata.file_type().is_symlink() {
-                continue;
-            }
-
-            let relative = display_relative_path(root, &path);
-            if metadata.is_dir() {
-                entries.push(MemoryEntry {
+            push_list_entry(
+                entries,
+                &mut seen,
+                start_index,
+                stop_after,
+                MemoryEntry {
                     path: relative,
-                    entry_type: MemoryEntryType::Directory,
-                });
-                pending.push(path);
-            } else if metadata.is_file() {
-                entries.push(MemoryEntry {
-                    path: relative,
-                    entry_type: MemoryEntryType::File,
-                });
+                    entry_type,
+                },
+            );
+            if seen > stop_after {
+                return Ok(seen);
             }
+        }
+        if metadata.is_dir() {
+            let mut children = read_sorted_dir_paths(&path).await?;
+            children.reverse();
+            pending.extend(children);
+        }
+        if seen > stop_after {
+            return Ok(seen);
         }
     }
 
-    Ok(false)
+    if seen < start_index {
+        return Err(MemoriesBackendError::invalid_cursor(
+            start_index.to_string(),
+            "exceeds result count",
+        ));
+    }
+
+    Ok(seen)
 }
 
 async fn search_entries(
@@ -304,6 +345,73 @@ fn display_relative_path(root: &Path, path: &Path) -> String {
         .filter(|component| !component.is_empty())
         .collect::<Vec<_>>()
         .join("/")
+}
+
+fn parse_list_cursor(cursor: Option<&str>) -> Result<usize, MemoriesBackendError> {
+    let Some(cursor) = cursor else {
+        return Ok(0);
+    };
+
+    let start_index = cursor.parse::<usize>().map_err(|_| {
+        MemoriesBackendError::invalid_cursor(cursor, "must be a non-negative integer")
+    })?;
+
+    Ok(start_index)
+}
+
+fn push_list_entry(
+    entries: &mut Vec<MemoryEntry>,
+    seen: &mut usize,
+    start_index: usize,
+    stop_after: usize,
+    entry: MemoryEntry,
+) {
+    *seen += 1;
+    if *seen <= start_index {
+        return;
+    }
+    if *seen <= stop_after {
+        entries.push(entry);
+    }
+}
+
+fn line_start_byte_offset(
+    content: &str,
+    line_offset: usize,
+) -> Result<usize, MemoriesBackendError> {
+    if line_offset == 1 {
+        return Ok(0);
+    }
+
+    let mut current_line = 1;
+    for (idx, ch) in content.char_indices() {
+        if ch == '\n' {
+            current_line += 1;
+            if current_line == line_offset {
+                return Ok(idx + 1);
+            }
+        }
+    }
+
+    Err(MemoriesBackendError::LineOffsetExceedsFileLength)
+}
+
+fn line_end_byte_offset(content: &str, start_byte: usize, max_lines: Option<usize>) -> usize {
+    let Some(max_lines) = max_lines else {
+        return content.len();
+    };
+
+    let mut lines_seen = 1;
+    for (relative_idx, ch) in content[start_byte..].char_indices() {
+        if ch == '\n' {
+            if lines_seen == max_lines {
+                return start_byte + relative_idx + 1;
+            }
+            lines_seen += 1;
+        }
+    }
+
+    content.len()
 }
 
 #[cfg(test)]

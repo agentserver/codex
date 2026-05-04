@@ -33,6 +33,7 @@ pub trait MemoriesBackend: Clone + Send + Sync + 'static {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListMemoriesRequest {
     pub path: Option<String>,
+    pub cursor: Option<String>,
     pub max_results: usize,
 }
 
@@ -40,18 +41,22 @@ pub struct ListMemoriesRequest {
 pub struct ListMemoriesResponse {
     pub path: Option<String>,
     pub entries: Vec<MemoryEntry>,
+    pub next_cursor: Option<String>,
     pub truncated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadMemoryRequest {
     pub path: String,
+    pub line_offset: usize,
+    pub max_lines: Option<usize>,
     pub max_tokens: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReadMemoryResponse {
     pub path: String,
+    pub start_line_number: usize,
     pub content: String,
     pub truncated: bool,
 }
@@ -95,6 +100,14 @@ pub struct MemorySearchMatch {
 pub enum MemoriesBackendError {
     #[error("path '{path}' {reason}")]
     InvalidPath { path: String, reason: String },
+    #[error("cursor '{cursor}' {reason}")]
+    InvalidCursor { cursor: String, reason: String },
+    #[error("line_offset must be a 1-indexed line number")]
+    InvalidLineOffset,
+    #[error("max_lines must be a positive integer")]
+    InvalidMaxLines,
+    #[error("line_offset exceeds file length")]
+    LineOffsetExceedsFileLength,
     #[error("path '{path}' is not a file")]
     NotFile { path: String },
     #[error("query must not be empty")]
@@ -107,6 +120,13 @@ impl MemoriesBackendError {
     pub fn invalid_path(path: impl Into<String>, reason: impl Into<String>) -> Self {
         Self::InvalidPath {
             path: path.into(),
+            reason: reason.into(),
+        }
+    }
+
+    pub fn invalid_cursor(cursor: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self::InvalidCursor {
+            cursor: cursor.into(),
             reason: reason.into(),
         }
     }

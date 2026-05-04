@@ -642,7 +642,7 @@ unsafe fn allow_named_file_object_path(psid: *mut c_void, path: &str, allow_mask
     let mut p_dacl: *mut ACL = std::ptr::null_mut();
     let code = GetNamedSecurityInfoW(
         to_wide(path).as_ptr(),
-        SE_FILE_OBJECT,
+        SE_FILE_OBJECT as i32,
         DACL_SECURITY_INFORMATION,
         std::ptr::null_mut(),
         std::ptr::null_mut(),
@@ -673,7 +673,7 @@ unsafe fn allow_named_file_object_path(psid: *mut c_void, path: &str, allow_mask
     if code2 == ERROR_SUCCESS {
         let _ = SetNamedSecurityInfoW(
             to_wide(path).as_ptr() as *mut u16,
-            SE_FILE_OBJECT,
+            SE_FILE_OBJECT as i32,
             DACL_SECURITY_INFORMATION,
             std::ptr::null_mut(),
             std::ptr::null_mut(),

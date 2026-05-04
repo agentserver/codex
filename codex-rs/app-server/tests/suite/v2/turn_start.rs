@@ -440,10 +440,13 @@ async fn turn_start_configured_service_tier_id_takes_precedence() -> Result<()> 
     let config_path = codex_home.path().join("config.toml");
     let config_toml = std::fs::read_to_string(&config_path)?;
     let service_tier_id = "experimental-tier-id".to_string();
+    let (config_root, config_rest) = config_toml
+        .split_once("\n[features]\n")
+        .expect("test config should contain features section");
     std::fs::write(
         &config_path,
         format!(
-            "{config_toml}\nservice_tier = \"{}\"\nservice_tier_id = \"{service_tier_id}\"\n",
+            "{config_root}\nservice_tier = \"{}\"\nservice_tier_id = \"{service_tier_id}\"\n\n[features]\n{config_rest}",
             ServiceTier::Fast
         ),
     )?;

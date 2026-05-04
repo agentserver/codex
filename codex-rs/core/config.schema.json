@@ -650,7 +650,7 @@
         "tui": {
           "allOf": [
             {
-              "$ref": "#/definitions/Tui"
+              "$ref": "#/definitions/ProfileTui"
             }
           ],
           "default": null,
@@ -1735,6 +1735,22 @@
         "enabled": {
           "default": true,
           "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "ProfileTui": {
+      "additionalProperties": false,
+      "description": "TUI settings supported inside a named profile.",
+      "properties": {
+        "session_picker_view": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SessionPickerViewMode"
+            }
+          ],
+          "default": null,
+          "description": "Preferred layout for resume/fork session picker results."
         }
       },
       "type": "object"

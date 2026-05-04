@@ -59,6 +59,7 @@ pub(crate) struct TurnContext {
     pub(crate) provider: SharedModelProvider,
     pub(crate) reasoning_effort: Option<ReasoningEffortConfig>,
     pub(crate) reasoning_summary: ReasoningSummaryConfig,
+    pub(crate) service_tier: Option<String>,
     pub(crate) session_source: SessionSource,
     pub(crate) environments: Vec<TurnEnvironment>,
     /// The session's absolute working directory. All relative paths provided
@@ -232,6 +233,7 @@ impl TurnContext {
                 .with_model(model.as_str(), model_info.slug.as_str()),
             provider: self.provider.clone(),
             reasoning_effort,
+            service_tier: self.service_tier.clone(),
             reasoning_summary: self.reasoning_summary,
             session_source: self.session_source.clone(),
             environments: self.environments.clone(),
@@ -397,7 +399,10 @@ impl Session {
         per_turn_config.model_reasoning_effort =
             session_configuration.collaboration_mode.reasoning_effort();
         per_turn_config.model_reasoning_summary = session_configuration.model_reasoning_summary;
-        per_turn_config.service_tier = session_configuration.service_tier;
+        per_turn_config.service_tier = session_configuration
+            .service_tier
+            .as_deref()
+            .and_then(codex_protocol::config_types::ServiceTier::from_request_value);
         per_turn_config.personality = session_configuration.personality;
         per_turn_config.approvals_reviewer = session_configuration.approvals_reviewer;
         per_turn_config.permissions.permission_profile =
@@ -523,6 +528,7 @@ impl Session {
             provider: provider_for_context,
             reasoning_effort,
             reasoning_summary,
+            service_tier: session_configuration.service_tier.clone(),
             session_source,
             environments,
             cwd,

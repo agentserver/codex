@@ -2926,7 +2926,7 @@ impl CodexMessageProcessor {
         &self,
         model: Option<String>,
         model_provider: Option<String>,
-        service_tier: Option<Option<codex_protocol::config_types::ServiceTier>>,
+        service_tier: Option<Option<String>>,
         cwd: Option<String>,
         approval_policy: Option<codex_app_server_protocol::AskForApproval>,
         approvals_reviewer: Option<codex_app_server_protocol::ApprovalsReviewer>,
@@ -2939,7 +2939,11 @@ impl CodexMessageProcessor {
         let mut overrides = ConfigOverrides {
             model,
             model_provider,
-            service_tier,
+            service_tier: service_tier.map(|service_tier| {
+                service_tier.and_then(|service_tier| {
+                    codex_protocol::config_types::ServiceTier::from_request_value(&service_tier)
+                })
+            }),
             cwd: cwd.map(PathBuf::from),
             approval_policy: approval_policy
                 .map(codex_app_server_protocol::AskForApproval::to_core),
@@ -6466,7 +6470,7 @@ impl CodexMessageProcessor {
                     model: model.clone(),
                     effort,
                     summary,
-                    service_tier,
+                    service_tier: service_tier.clone(),
                     collaboration_mode: collaboration_mode.clone(),
                     personality,
                 })
@@ -10079,7 +10083,7 @@ mod tests {
             path: None,
             model: None,
             model_provider: None,
-            service_tier: Some(Some(codex_protocol::config_types::ServiceTier::Fast)),
+            service_tier: Some(Some("priority".to_string())),
             cwd: None,
             approval_policy: None,
             approvals_reviewer: None,
@@ -10095,7 +10099,7 @@ mod tests {
         let config_snapshot = ThreadConfigSnapshot {
             model: "gpt-5".to_string(),
             model_provider_id: "openai".to_string(),
-            service_tier: Some(codex_protocol::config_types::ServiceTier::Flex),
+            service_tier: Some("flex".to_string()),
             approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
             approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
             permission_profile: codex_protocol::models::PermissionProfile::Disabled,
@@ -10109,7 +10113,7 @@ mod tests {
 
         assert_eq!(
             collect_resume_override_mismatches(&request, &config_snapshot),
-            vec!["service_tier requested=Some(Fast) active=Some(Flex)".to_string()]
+            vec!["service_tier requested=Some(\"priority\") active=Some(\"flex\")".to_string()]
         );
     }
 

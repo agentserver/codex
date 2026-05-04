@@ -781,14 +781,15 @@ fn get_service_tier(
     fast_default_opt_out: bool,
     account_plan_type: Option<AccountPlanType>,
     fast_mode_enabled: bool,
-) -> Option<ServiceTier> {
+) -> Option<String> {
     if configured_service_tier.is_some() || fast_default_opt_out || !fast_mode_enabled {
-        return configured_service_tier;
+        return configured_service_tier
+            .map(|service_tier| service_tier.request_value().to_string());
     }
 
     account_plan_type
         .is_some_and(is_enterprise_default_service_tier_plan)
-        .then_some(ServiceTier::Fast)
+        .then_some(ServiceTier::Fast.request_value().to_string())
 }
 
 fn is_enterprise_default_service_tier_plan(plan_type: AccountPlanType) -> bool {

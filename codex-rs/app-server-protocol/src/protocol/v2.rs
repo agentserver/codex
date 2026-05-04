@@ -26,7 +26,6 @@ use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::SandboxMode as CoreSandboxMode;
-use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Verbosity;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::config_types::WebSearchToolConfig;
@@ -731,7 +730,7 @@ pub struct ProfileV2 {
     /// used.
     #[experimental("config/read.approvalsReviewer")]
     pub approvals_reviewer: Option<ApprovalsReviewer>,
-    pub service_tier: Option<ServiceTier>,
+    pub service_tier: Option<String>,
     pub model_reasoning_effort: Option<ReasoningEffort>,
     pub model_reasoning_summary: Option<ReasoningSummary>,
     pub model_verbosity: Option<Verbosity>,
@@ -846,7 +845,7 @@ pub struct Config {
     pub model_reasoning_effort: Option<ReasoningEffort>,
     pub model_reasoning_summary: Option<ReasoningSummary>,
     pub model_verbosity: Option<Verbosity>,
-    pub service_tier: Option<ServiceTier>,
+    pub service_tier: Option<String>,
     pub analytics: Option<AnalyticsConfig>,
     #[experimental("config/read.apps")]
     #[serde(default)]
@@ -3589,7 +3588,7 @@ pub struct ThreadStartParams {
         skip_serializing_if = "Option::is_none"
     )]
     #[ts(optional = nullable)]
-    pub service_tier: Option<Option<ServiceTier>>,
+    pub service_tier: Option<Option<String>>,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
     #[experimental(nested)]
@@ -3674,7 +3673,7 @@ pub struct ThreadStartResponse {
     pub thread: Thread,
     pub model: String,
     pub model_provider: String,
-    pub service_tier: Option<ServiceTier>,
+    pub service_tier: Option<String>,
     pub cwd: AbsolutePathBuf,
     /// Instruction source files currently loaded for this thread.
     #[serde(default)]
@@ -3742,7 +3741,7 @@ pub struct ThreadResumeParams {
         skip_serializing_if = "Option::is_none"
     )]
     #[ts(optional = nullable)]
-    pub service_tier: Option<Option<ServiceTier>>,
+    pub service_tier: Option<Option<String>>,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
     #[experimental(nested)]
@@ -3788,7 +3787,7 @@ pub struct ThreadResumeResponse {
     pub thread: Thread,
     pub model: String,
     pub model_provider: String,
-    pub service_tier: Option<ServiceTier>,
+    pub service_tier: Option<String>,
     pub cwd: AbsolutePathBuf,
     /// Instruction source files currently loaded for this thread.
     #[serde(default)]
@@ -3847,7 +3846,7 @@ pub struct ThreadForkParams {
         skip_serializing_if = "Option::is_none"
     )]
     #[ts(optional = nullable)]
-    pub service_tier: Option<Option<ServiceTier>>,
+    pub service_tier: Option<Option<String>>,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
     #[experimental(nested)]
@@ -3893,7 +3892,7 @@ pub struct ThreadForkResponse {
     pub thread: Thread,
     pub model: String,
     pub model_provider: String,
-    pub service_tier: Option<ServiceTier>,
+    pub service_tier: Option<String>,
     pub cwd: AbsolutePathBuf,
     /// Instruction source files currently loaded for this thread.
     #[serde(default)]
@@ -5605,7 +5604,7 @@ pub struct TurnStartParams {
         skip_serializing_if = "Option::is_none"
     )]
     #[ts(optional = nullable)]
-    pub service_tier: Option<Option<ServiceTier>>,
+    pub service_tier: Option<Option<String>>,
     /// Override the reasoning effort for this turn and subsequent turns.
     #[ts(optional = nullable)]
     pub effort: Option<ReasoningEffort>,

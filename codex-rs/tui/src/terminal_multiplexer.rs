@@ -463,6 +463,7 @@ mod tests {
             .web_search_mode
             .set(WebSearchMode::Live)
             .expect("web search mode");
+        let expected_cwd = config.cwd.to_string_lossy().to_string();
 
         let command = fork_command_parts(
             Path::new("/bin/codex"),
@@ -478,7 +479,7 @@ mod tests {
                 "/bin/codex".to_string(),
                 "fork".to_string(),
                 "-C".to_string(),
-                "/repo".to_string(),
+                expected_cwd,
                 "-a".to_string(),
                 "on-request".to_string(),
                 "-p".to_string(),
@@ -505,6 +506,7 @@ mod tests {
             .expect("config");
         config.cwd =
             AbsolutePathBuf::from_absolute_path(PathBuf::from("/repo")).expect("absolute repo cwd");
+        let expected_cwd = config.cwd.to_string_lossy().to_string();
         config
             .permissions
             .approval_policy
@@ -526,7 +528,7 @@ mod tests {
                 "/bin/codex".to_string(),
                 "fork".to_string(),
                 "-C".to_string(),
-                "/repo".to_string(),
+                expected_cwd,
                 "-c".to_string(),
                 "approval_policy={ granular = { sandbox_approval = true, rules = false, skill_approval = true, request_permissions = false, mcp_elicitations = true } }".to_string(),
                 "-s".to_string(),

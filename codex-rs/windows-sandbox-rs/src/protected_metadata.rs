@@ -150,10 +150,16 @@ mod tests {
             mode: ProtectedMetadataMode::MissingCreationMonitor,
         }]);
 
-        assert_eq!(
-            guard.cleanup_created_monitored_paths().expect("cleanup"),
-            vec![created.clone()]
+        let removed = guard.cleanup_created_monitored_paths().expect("cleanup");
+        assert_eq!(removed.len(), 1);
+        assert!(
+            removed[0]
+                .file_name()
+                .is_some_and(|name| name.eq_ignore_ascii_case(".git")),
+            "removed path should be a .git case variant: {}",
+            removed[0].display()
         );
+        assert!(!target.exists());
         assert!(!created.exists());
     }
 }

@@ -568,19 +568,15 @@ pub unsafe fn revoke_ace(path: &Path, psid: *mut c_void) {
     }
 }
 
-/// Grants RX to the null device for the given SID to support stdout/stderr redirection.
-///
-/// # Safety
-/// Caller must ensure `psid` is a valid SID pointer.
-pub unsafe fn allow_null_device(psid: *mut c_void) {
+unsafe fn allow_kernel_object_path(psid: *mut c_void, path: &str, flags_and_attributes: u32) {
     let desired = 0x00020000 | 0x00040000; // READ_CONTROL | WRITE_DAC
     let h = CreateFileW(
-        to_wide(r"\\\\.\\NUL").as_ptr(),
+        to_wide(path).as_ptr(),
         desired,
-        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         std::ptr::null_mut(),
         OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
+        flags_and_attributes,
         0,
     );
     if h == 0 || h == INVALID_HANDLE_VALUE {
@@ -634,5 +630,26 @@ pub unsafe fn allow_null_device(psid: *mut c_void) {
     }
     CloseHandle(h);
 }
+
+/// Grants access to the null device for the given SID to support stdout/stderr redirection.
+///
+/// # Safety
+/// Caller must ensure `psid` is a valid SID pointer.
+pub unsafe fn allow_null_device(psid: *mut c_void) {
+    allow_kernel_object_path(psid, "\\\\.\\NUL", FILE_ATTRIBUTE_NORMAL);
+}
+
+/// Grants access to the named pipe namespace for the given SID.
+///
+/// MSYS and Git for Windows create signal pipes during process startup. Restricted tokens need an
+/// explicit allow on the pipe namespace, otherwise those child processes fail during initialization
+/// with `ERROR_ACCESS_DENIED`.
+///
+/// # Safety
+/// Caller must ensure `psid` is a valid SID pointer.
+pub unsafe fn allow_named_pipe_device(psid: *mut c_void) {
+    allow_kernel_object_path(psid, "\\\\.\\pipe\\", FILE_FLAG_BACKUP_SEMANTICS);
+}
+
 const CONTAINER_INHERIT_ACE: u32 = 0x2;
 const OBJECT_INHERIT_ACE: u32 = 0x1;

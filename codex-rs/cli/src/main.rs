@@ -1281,10 +1281,22 @@ async fn run_exec_server_command(
         arg0_paths.codex_linux_sandbox_exe.clone(),
     )?;
     if let Some(connect_url) = cmd.connect.as_deref() {
-        let auth_token = cmd
-            .auth_token_env
-            .as_deref()
-            .and_then(|name| std::env::var(name).ok());
+        let auth_token = match cmd.auth_token_env.as_deref() {
+            Some(name) => match std::env::var(name) {
+                Ok(value) => Some(value),
+                Err(std::env::VarError::NotPresent) => {
+                    return Err(anyhow::anyhow!(
+                        "--auth-token-env `{name}` is set, but environment variable `{name}` is unset"
+                    ));
+                }
+                Err(std::env::VarError::NotUnicode(_)) => {
+                    return Err(anyhow::anyhow!(
+                        "--auth-token-env `{name}` is set, but environment variable `{name}` is not valid UTF-8"
+                    ));
+                }
+            },
+            None => None,
+        };
         codex_exec_server::run_connect_mode(connect_url, auth_token.as_deref(), runtime_paths)
             .await
             .map_err(anyhow::Error::from_boxed)

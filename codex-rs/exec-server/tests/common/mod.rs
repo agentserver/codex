@@ -224,7 +224,24 @@ fn maybe_run_exec_server_from_test_binary(guard: Option<&TestBinaryDispatchGuard
             url,
             auth_token_env,
         } => {
-            let auth_token = auth_token_env.and_then(|name| env::var(name).ok());
+            let auth_token = match auth_token_env {
+                Some(name) => match env::var(&name) {
+                    Ok(value) => Some(value),
+                    Err(env::VarError::NotPresent) => {
+                        eprintln!(
+                            "--auth-token-env `{name}` is set, but environment variable `{name}` is unset"
+                        );
+                        std::process::exit(1);
+                    }
+                    Err(env::VarError::NotUnicode(_)) => {
+                        eprintln!(
+                            "--auth-token-env `{name}` is set, but environment variable `{name}` is not valid UTF-8"
+                        );
+                        std::process::exit(1);
+                    }
+                },
+                None => None,
+            };
             runtime.block_on(codex_exec_server::run_connect_mode(
                 &url,
                 auth_token.as_deref(),

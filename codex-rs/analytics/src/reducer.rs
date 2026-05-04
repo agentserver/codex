@@ -148,6 +148,7 @@ enum MissingAnalyticsContext {
 #[derive(Clone)]
 struct ThreadMetadataState {
     thread_source: Option<&'static str>,
+    thread_origin: Option<String>,
     initialization_mode: ThreadInitializationMode,
     subagent_source: Option<String>,
     parent_thread_id: Option<String>,
@@ -156,6 +157,7 @@ struct ThreadMetadataState {
 impl ThreadMetadataState {
     fn from_thread_metadata(
         session_source: &SessionSource,
+        thread_origin: Option<String>,
         initialization_mode: ThreadInitializationMode,
     ) -> Self {
         let (subagent_source, parent_thread_id) = match session_source {
@@ -173,6 +175,7 @@ impl ThreadMetadataState {
         };
         Self {
             thread_source: session_source.thread_source_name(),
+            thread_origin,
             initialization_mode,
             subagent_source,
             parent_thread_id,
@@ -349,6 +352,7 @@ impl AnalyticsReducer {
             .metadata
             .get_or_insert_with(|| ThreadMetadataState {
                 thread_source: Some("subagent"),
+                thread_origin: None,
                 initialization_mode: ThreadInitializationMode::New,
                 subagent_source: Some(subagent_source_name(&input.subagent_source)),
                 parent_thread_id,
@@ -752,8 +756,11 @@ impl AnalyticsReducer {
         let Some(connection_state) = self.connections.get(&connection_id) else {
             return;
         };
-        let thread_metadata =
-            ThreadMetadataState::from_thread_metadata(&thread_source, initialization_mode);
+        let thread_metadata = ThreadMetadataState::from_thread_metadata(
+            &thread_source,
+            thread.thread_origin.clone(),
+            initialization_mode,
+        );
         self.threads.insert(
             thread_id.clone(),
             ThreadAnalyticsState {
@@ -771,6 +778,7 @@ impl AnalyticsReducer {
                     model,
                     ephemeral: thread.ephemeral,
                     thread_source: thread_metadata.thread_source,
+                    thread_origin: thread_metadata.thread_origin,
                     initialization_mode,
                     subagent_source: thread_metadata.subagent_source,
                     parent_thread_id: thread_metadata.parent_thread_id,

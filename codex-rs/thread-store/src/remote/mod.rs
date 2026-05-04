@@ -358,6 +358,7 @@ mod tests {
                 thread_id: ThreadId::new(),
                 forked_from_id: None,
                 source: SessionSource::Exec,
+                thread_origin: None,
                 base_instructions: BaseInstructions::default(),
                 dynamic_tools: Vec::new(),
                 metadata: metadata.clone(),

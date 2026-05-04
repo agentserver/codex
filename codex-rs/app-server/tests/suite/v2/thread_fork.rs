@@ -90,6 +90,7 @@ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
     let fork_id = mcp
         .send_thread_fork_request(ThreadForkParams {
             thread_id: conversation_id.clone(),
+            thread_origin: Some("app_helper".to_string()),
             ..Default::default()
         })
         .await?;
@@ -128,6 +129,7 @@ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
     assert_ne!(thread_path.as_path(), original_path);
     assert!(thread.cwd.as_path().is_absolute());
     assert_eq!(thread.source, SessionSource::VsCode);
+    assert_eq!(thread.thread_origin.as_deref(), Some("app_helper"));
     assert_eq!(thread.name, None);
 
     assert_eq!(
@@ -187,6 +189,13 @@ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
         started_thread_json.get("turns"),
         Some(&json!([])),
         "thread/started must not emit copied fork turns"
+    );
+    assert_eq!(
+        started_thread_json
+            .get("threadOrigin")
+            .and_then(Value::as_str),
+        Some("app_helper"),
+        "thread/started should preserve the caller-supplied fork origin"
     );
     let started: ThreadStartedNotification =
         serde_json::from_value(notif.params.expect("params must be present"))?;

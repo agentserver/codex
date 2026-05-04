@@ -2498,6 +2498,7 @@ impl CodexMessageProcessor {
             personality,
             ephemeral,
             session_start_source,
+            thread_origin,
             environments,
             persist_extended_history,
         } = params;
@@ -2547,6 +2548,7 @@ impl CodexMessageProcessor {
                 typesafe_overrides,
                 dynamic_tools,
                 session_start_source,
+                thread_origin,
                 environment_selections,
                 persist_extended_history,
                 service_name,
@@ -2601,6 +2603,7 @@ impl CodexMessageProcessor {
                 config,
                 initial_history: InitialHistory::Forked(rollout_items),
                 session_source: None,
+                thread_origin: None,
                 dynamic_tools: Vec::new(),
                 persist_extended_history: false,
                 metrics_service_name: None,
@@ -2684,6 +2687,7 @@ impl CodexMessageProcessor {
         typesafe_overrides: ConfigOverrides,
         dynamic_tools: Option<Vec<ApiDynamicToolSpec>>,
         session_start_source: Option<codex_app_server_protocol::ThreadStartSource>,
+        thread_origin: Option<String>,
         environments: Option<Vec<TurnEnvironmentSelection>>,
         persist_extended_history: bool,
         service_name: Option<String>,
@@ -2801,6 +2805,7 @@ impl CodexMessageProcessor {
                     codex_app_server_protocol::ThreadStartSource::Clear => InitialHistory::Cleared,
                 },
                 session_source: None,
+                thread_origin,
                 dynamic_tools: core_dynamic_tools,
                 persist_extended_history,
                 metrics_service_name: service_name,
@@ -4751,6 +4756,7 @@ impl CodexMessageProcessor {
             )),
         };
         let mut thread = thread?;
+        thread.thread_origin = config_snapshot.thread_origin.clone();
         thread.id = thread_id.to_string();
         thread.path = Some(rollout_path.to_path_buf());
         if include_turns {
@@ -4791,6 +4797,7 @@ impl CodexMessageProcessor {
             base_instructions,
             developer_instructions,
             ephemeral,
+            thread_origin,
             exclude_turns,
             persist_extended_history,
         } = params;
@@ -4877,6 +4884,7 @@ impl CodexMessageProcessor {
                     history: history_items.clone(),
                     rollout_path: source_thread.rollout_path.clone(),
                 }),
+                thread_origin,
                 persist_extended_history,
                 self.request_trace_context(&request_id).await,
             )
@@ -4937,6 +4945,7 @@ impl CodexMessageProcessor {
             }
             thread
         };
+        thread.thread_origin = forked_thread.config_snapshot().await.thread_origin;
 
         self.thread_watch_manager
             .upsert_thread_silently(thread.clone())
@@ -6930,6 +6939,7 @@ impl CodexMessageProcessor {
                 ForkSnapshot::Interrupted,
                 config.clone(),
                 rollout_path,
+                /*thread_origin*/ None,
                 /*persist_extended_history*/ false,
                 self.request_trace_context(request_id).await,
             )
@@ -8850,6 +8860,7 @@ fn thread_from_stored_thread(
         agent_nickname: source.get_nickname(),
         agent_role: source.get_agent_role(),
         source: source.into(),
+        thread_origin: None,
         git_info,
         name: thread.name,
         turns: Vec::new(),
@@ -9325,6 +9336,7 @@ fn build_thread_from_snapshot(
         agent_nickname: config_snapshot.session_source.get_nickname(),
         agent_role: config_snapshot.session_source.get_agent_role(),
         source: config_snapshot.session_source.clone().into(),
+        thread_origin: config_snapshot.thread_origin.clone(),
         git_info: None,
         name: None,
         turns: Vec::new(),
@@ -9393,6 +9405,7 @@ pub(crate) fn summary_to_thread(
         agent_nickname: source.get_nickname(),
         agent_role: source.get_agent_role(),
         source: source.into(),
+        thread_origin: None,
         git_info,
         name: None,
         turns: Vec::new(),
@@ -10105,6 +10118,7 @@ mod tests {
             reasoning_effort: None,
             personality: None,
             session_source: SessionSource::Cli,
+            thread_origin: None,
         };
 
         assert_eq!(

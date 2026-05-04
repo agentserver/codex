@@ -87,6 +87,8 @@ pub(crate) struct SessionConfiguration {
     pub(super) app_server_client_version: Option<String>,
     /// Source of the session (cli, vscode, exec, mcp, ...)
     pub(super) session_source: SessionSource,
+    /// Optional caller-supplied reason this thread was created.
+    pub(super) thread_origin: Option<String>,
     pub(super) dynamic_tools: Vec<DynamicToolSpec>,
     pub(super) persist_extended_history: bool,
     pub(super) inherited_shell_snapshot: Option<Arc<ShellSnapshot>>,
@@ -142,6 +144,7 @@ impl SessionConfiguration {
             reasoning_effort: self.collaboration_mode.reasoning_effort(),
             personality: self.personality,
             session_source: self.session_source.clone(),
+            thread_origin: self.thread_origin.clone(),
         }
     }
 
@@ -393,6 +396,7 @@ impl Session {
                                 thread_id: conversation_id,
                                 forked_from_id,
                                 source: session_source,
+                                thread_origin: session_configuration.thread_origin.clone(),
                                 base_instructions: BaseInstructions {
                                     text: session_configuration.base_instructions.clone(),
                                 },
@@ -916,6 +920,7 @@ impl Session {
                 msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
                     session_id: conversation_id,
                     forked_from_id,
+                    thread_origin: session_configuration.thread_origin.clone(),
                     thread_name: session_configuration.thread_name.clone(),
                     model: session_configuration.collaboration_mode.model().to_string(),
                     model_provider_id: config.model_provider_id.clone(),

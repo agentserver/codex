@@ -53,6 +53,10 @@ cliVersion: string,
  */
 source: SessionSource,
 /**
+ * Optional caller-supplied reason this thread was created.
+ */
+threadOrigin: string | null,
+/**
  * Optional random unique nickname assigned to an AgentControl-spawned sub-agent.
  */
 agentNickname: string | null,

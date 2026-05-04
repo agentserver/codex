@@ -163,6 +163,7 @@ fn fork_thread_accepts_legacy_usize_snapshot_argument() {
             usize::MAX,
             config,
             path,
+            /*thread_origin*/ None,
             /*persist_extended_history*/ false,
             /*parent_trace*/ None,
         );
@@ -316,6 +317,7 @@ async fn start_thread_accepts_explicit_environment_when_default_environment_is_d
             config: config.clone(),
             initial_history: InitialHistory::New,
             session_source: None,
+            thread_origin: None,
             dynamic_tools: Vec::new(),
             persist_extended_history: false,
             metrics_service_name: None,
@@ -352,6 +354,7 @@ async fn start_thread_keeps_internal_threads_hidden_from_normal_lookups() {
             session_source: Some(SessionSource::Internal(
                 InternalSessionSource::MemoryConsolidation,
             )),
+            thread_origin: None,
             dynamic_tools: Vec::new(),
             persist_extended_history: false,
             metrics_service_name: None,
@@ -403,6 +406,7 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
             config: config.clone(),
             initial_history: InitialHistory::New,
             session_source: None,
+            thread_origin: None,
             dynamic_tools: Vec::new(),
             persist_extended_history: false,
             metrics_service_name: None,
@@ -453,6 +457,7 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
             ForkSnapshot::Interrupted,
             config,
             rollout_path,
+            /*thread_origin*/ None,
             /*persist_extended_history*/ false,
             /*parent_trace*/ None,
         )
@@ -846,6 +851,7 @@ async fn interrupted_fork_snapshot_does_not_synthesize_turn_id_for_legacy_histor
             ForkSnapshot::Interrupted,
             config.clone(),
             source_path,
+            /*thread_origin*/ None,
             /*persist_extended_history*/ false,
             /*parent_trace*/ None,
         )
@@ -959,6 +965,7 @@ async fn interrupted_fork_snapshot_preserves_explicit_turn_id() {
             ForkSnapshot::Interrupted,
             config.clone(),
             source_path,
+            /*thread_origin*/ None,
             /*persist_extended_history*/ false,
             /*parent_trace*/ None,
         )
@@ -1037,6 +1044,7 @@ async fn interrupted_fork_snapshot_uses_persisted_mid_turn_history_without_live_
             ForkSnapshot::Interrupted,
             config.clone(),
             source_path,
+            /*thread_origin*/ None,
             /*persist_extended_history*/ false,
             /*parent_trace*/ None,
         )
@@ -1077,6 +1085,7 @@ async fn interrupted_fork_snapshot_uses_persisted_mid_turn_history_without_live_
             ForkSnapshot::Interrupted,
             config.clone(),
             forked_path,
+            /*thread_origin*/ None,
             /*persist_extended_history*/ false,
             /*parent_trace*/ None,
         )

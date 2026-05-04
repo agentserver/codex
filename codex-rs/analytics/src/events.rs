@@ -111,6 +111,7 @@ pub(crate) struct ThreadInitializedEventParams {
     pub(crate) model: String,
     pub(crate) ephemeral: bool,
     pub(crate) thread_source: Option<&'static str>,
+    pub(crate) thread_origin: Option<String>,
     pub(crate) initialization_mode: ThreadInitializationMode,
     pub(crate) subagent_source: Option<String>,
     pub(crate) parent_thread_id: Option<String>,
@@ -723,6 +724,7 @@ pub(crate) fn subagent_thread_started_event_request(
         model: input.model,
         ephemeral: input.ephemeral,
         thread_source: Some("subagent"),
+        thread_origin: None,
         initialization_mode: ThreadInitializationMode::New,
         subagent_source: Some(subagent_source_name(&input.subagent_source)),
         parent_thread_id: input

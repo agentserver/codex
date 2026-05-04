@@ -2526,6 +2526,22 @@ impl InitialHistory {
             }),
         }
     }
+
+    pub fn get_thread_origin(&self) -> Option<String> {
+        match self {
+            InitialHistory::New | InitialHistory::Cleared => None,
+            InitialHistory::Resumed(resumed) => {
+                resumed.history.iter().find_map(|item| match item {
+                    RolloutItem::SessionMeta(meta_line) => meta_line.meta.thread_origin.clone(),
+                    _ => None,
+                })
+            }
+            InitialHistory::Forked(items) => items.iter().find_map(|item| match item {
+                RolloutItem::SessionMeta(meta_line) => meta_line.meta.thread_origin.clone(),
+                _ => None,
+            }),
+        }
+    }
 }
 
 fn session_cwd_from_items(items: &[RolloutItem]) -> Option<PathBuf> {
@@ -2721,6 +2737,9 @@ pub struct SessionMeta {
     pub cli_version: String,
     #[serde(default)]
     pub source: SessionSource,
+    /// Optional caller-supplied reason this thread was created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_origin: Option<String>,
     /// Optional random unique nickname assigned to an AgentControl-spawned sub-agent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_nickname: Option<String>,
@@ -2751,6 +2770,7 @@ impl Default for SessionMeta {
             originator: String::new(),
             cli_version: String::new(),
             source: SessionSource::default(),
+            thread_origin: None,
             agent_nickname: None,
             agent_role: None,
             agent_path: None,
@@ -3453,6 +3473,9 @@ pub struct SessionConfiguredEvent {
     pub session_id: ThreadId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub forked_from_id: Option<ThreadId>,
+    /// Optional caller-supplied reason this thread was created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_origin: Option<String>,
 
     /// Optional user-facing thread name (may be unset).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3524,6 +3547,8 @@ impl<'de> Deserialize<'de> for SessionConfiguredEvent {
             session_id: ThreadId,
             forked_from_id: Option<ThreadId>,
             #[serde(default)]
+            thread_origin: Option<String>,
+            #[serde(default)]
             thread_name: Option<String>,
             model: String,
             model_provider_id: String,
@@ -3562,6 +3587,7 @@ impl<'de> Deserialize<'de> for SessionConfiguredEvent {
         Ok(Self {
             session_id: wire.session_id,
             forked_from_id: wire.forked_from_id,
+            thread_origin: wire.thread_origin,
             thread_name: wire.thread_name,
             model: wire.model,
             model_provider_id: wire.model_provider_id,
@@ -5200,6 +5226,7 @@ mod tests {
             msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
                 session_id: conversation_id,
                 forked_from_id: None,
+                thread_origin: None,
                 thread_name: None,
                 model: "codex-mini-latest".to_string(),
                 model_provider_id: "openai".to_string(),

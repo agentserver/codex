@@ -232,6 +232,13 @@
     },
     "threadId": {
       "type": "string"
+    },
+    "threadOrigin": {
+      "description": "Optional caller-supplied reason this forked thread was created.",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [

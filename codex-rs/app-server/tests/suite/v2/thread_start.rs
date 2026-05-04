@@ -66,6 +66,7 @@ async fn thread_start_creates_thread_and_emits_started() -> Result<()> {
     let req_id = mcp
         .send_thread_start_request(ThreadStartParams {
             model: Some("gpt-5.2".to_string()),
+            thread_origin: Some("app_helper".to_string()),
             ..Default::default()
         })
         .await?;
@@ -97,6 +98,7 @@ async fn thread_start_creates_thread_and_emits_started() -> Result<()> {
         "new persistent threads should not be ephemeral"
     );
     assert_eq!(thread.status, ThreadStatus::Idle);
+    assert_eq!(thread.thread_origin.as_deref(), Some("app_helper"));
     let thread_path = thread.path.clone().expect("thread path should be present");
     assert!(thread_path.is_absolute(), "thread path should be absolute");
     assert!(
@@ -118,6 +120,11 @@ async fn thread_start_creates_thread_and_emits_started() -> Result<()> {
         thread_json.get("ephemeral").and_then(Value::as_bool),
         Some(false),
         "new persistent threads should serialize `ephemeral: false`"
+    );
+    assert_eq!(
+        thread_json.get("threadOrigin").and_then(Value::as_str),
+        Some("app_helper"),
+        "new threads should serialize the caller-supplied thread origin"
     );
     assert_eq!(thread.name, None);
 
@@ -159,6 +166,13 @@ async fn thread_start_creates_thread_and_emits_started() -> Result<()> {
             .and_then(Value::as_bool),
         Some(false),
         "thread/started should serialize `ephemeral: false` for new persistent threads"
+    );
+    assert_eq!(
+        started_thread_json
+            .get("threadOrigin")
+            .and_then(Value::as_str),
+        Some("app_helper"),
+        "thread/started should preserve the caller-supplied thread origin"
     );
     let started: ThreadStartedNotification =
         serde_json::from_value(notif.params.expect("params must be present"))?;

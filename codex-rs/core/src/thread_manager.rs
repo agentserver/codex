@@ -216,6 +216,7 @@ pub struct StartThreadOptions {
     pub config: Config,
     pub initial_history: InitialHistory,
     pub session_source: Option<SessionSource>,
+    pub thread_origin: Option<String>,
     pub dynamic_tools: Vec<codex_protocol::dynamic_tools::DynamicToolSpec>,
     pub persist_extended_history: bool,
     pub metrics_service_name: Option<String>,
@@ -556,6 +557,7 @@ impl ThreadManager {
             config,
             initial_history: InitialHistory::New,
             session_source: None,
+            thread_origin: None,
             dynamic_tools,
             persist_extended_history,
             metrics_service_name: None,
@@ -572,12 +574,18 @@ impl ThreadManager {
         let session_source = options
             .session_source
             .unwrap_or_else(|| self.state.session_source.clone());
+        let thread_origin = options.thread_origin.or_else(|| {
+            matches!(&options.initial_history, InitialHistory::Resumed(_))
+                .then(|| options.initial_history.get_thread_origin())
+                .flatten()
+        });
         Box::pin(self.state.spawn_thread_with_source(
             options.config,
             options.initial_history,
             Arc::clone(&self.state.auth_manager),
             self.agent_control(),
             session_source,
+            thread_origin,
             options.dynamic_tools,
             options.persist_extended_history,
             options.metrics_service_name,
@@ -625,6 +633,7 @@ impl ThreadManager {
             initial_history,
             auth_manager,
             self.agent_control(),
+            /*thread_origin*/ None,
             Vec::new(),
             persist_extended_history,
             /*metrics_service_name*/ None,
@@ -649,6 +658,7 @@ impl ThreadManager {
             InitialHistory::New,
             Arc::clone(&self.state.auth_manager),
             self.agent_control(),
+            /*thread_origin*/ None,
             Vec::new(),
             /*persist_extended_history*/ false,
             /*metrics_service_name*/ None,
@@ -671,11 +681,13 @@ impl ThreadManager {
             self.state.environment_manager.as_ref(),
             &config.cwd,
         );
+        let thread_origin = initial_history.get_thread_origin();
         Box::pin(self.state.spawn_thread(
             config,
             initial_history,
             auth_manager,
             self.agent_control(),
+            thread_origin,
             Vec::new(),
             /*persist_extended_history*/ false,
             /*metrics_service_name*/ None,
@@ -753,6 +765,7 @@ impl ThreadManager {
         snapshot: S,
         config: Config,
         path: PathBuf,
+        thread_origin: Option<String>,
         persist_extended_history: bool,
         parent_trace: Option<W3cTraceContext>,
     ) -> CodexResult<NewThread>
@@ -765,6 +778,7 @@ impl ThreadManager {
             snapshot,
             config,
             history,
+            thread_origin,
             persist_extended_history,
             parent_trace,
         )
@@ -777,6 +791,7 @@ impl ThreadManager {
         snapshot: S,
         config: Config,
         history: InitialHistory,
+        thread_origin: Option<String>,
         persist_extended_history: bool,
         parent_trace: Option<W3cTraceContext>,
     ) -> CodexResult<NewThread>
@@ -787,6 +802,7 @@ impl ThreadManager {
             snapshot.into(),
             config,
             history,
+            thread_origin,
             persist_extended_history,
             parent_trace,
         )
@@ -798,6 +814,7 @@ impl ThreadManager {
         snapshot: ForkSnapshot,
         config: Config,
         history: InitialHistory,
+        thread_origin: Option<String>,
         persist_extended_history: bool,
         parent_trace: Option<W3cTraceContext>,
     ) -> CodexResult<NewThread> {
@@ -812,6 +829,7 @@ impl ThreadManager {
             history,
             Arc::clone(&self.state.auth_manager),
             self.agent_control(),
+            thread_origin,
             Vec::new(),
             persist_extended_history,
             /*metrics_service_name*/ None,
@@ -919,6 +937,7 @@ impl ThreadManagerState {
             config,
             agent_control,
             self.session_source.clone(),
+            /*thread_origin*/ None,
             /*persist_extended_history*/ false,
             /*metrics_service_name*/ None,
             /*inherited_shell_snapshot*/ None,
@@ -934,6 +953,7 @@ impl ThreadManagerState {
         config: Config,
         agent_control: AgentControl,
         session_source: SessionSource,
+        thread_origin: Option<String>,
         persist_extended_history: bool,
         metrics_service_name: Option<String>,
         inherited_shell_snapshot: Option<Arc<ShellSnapshot>>,
@@ -949,6 +969,7 @@ impl ThreadManagerState {
             Arc::clone(&self.auth_manager),
             agent_control,
             session_source,
+            thread_origin,
             Vec::new(),
             persist_extended_history,
             metrics_service_name,
@@ -975,12 +996,14 @@ impl ThreadManagerState {
         } = options;
         let environments =
             default_thread_environment_selections(self.environment_manager.as_ref(), &config.cwd);
+        let thread_origin = initial_history.get_thread_origin();
         Box::pin(self.spawn_thread_with_source(
             config,
             initial_history,
             Arc::clone(&self.auth_manager),
             agent_control,
             session_source,
+            thread_origin,
             Vec::new(),
             /*persist_extended_history*/ false,
             /*metrics_service_name*/ None,
@@ -1000,6 +1023,7 @@ impl ThreadManagerState {
         initial_history: InitialHistory,
         agent_control: AgentControl,
         session_source: SessionSource,
+        thread_origin: Option<String>,
         persist_extended_history: bool,
         inherited_shell_snapshot: Option<Arc<ShellSnapshot>>,
         inherited_exec_policy: Option<Arc<crate::exec_policy::ExecPolicyManager>>,
@@ -1014,6 +1038,7 @@ impl ThreadManagerState {
             Arc::clone(&self.auth_manager),
             agent_control,
             session_source,
+            thread_origin,
             Vec::new(),
             persist_extended_history,
             /*metrics_service_name*/ None,
@@ -1034,6 +1059,7 @@ impl ThreadManagerState {
         initial_history: InitialHistory,
         auth_manager: Arc<AuthManager>,
         agent_control: AgentControl,
+        thread_origin: Option<String>,
         dynamic_tools: Vec<codex_protocol::dynamic_tools::DynamicToolSpec>,
         persist_extended_history: bool,
         metrics_service_name: Option<String>,
@@ -1047,6 +1073,7 @@ impl ThreadManagerState {
             auth_manager,
             agent_control,
             self.session_source.clone(),
+            thread_origin,
             dynamic_tools,
             persist_extended_history,
             metrics_service_name,
@@ -1067,6 +1094,7 @@ impl ThreadManagerState {
         auth_manager: Arc<AuthManager>,
         agent_control: AgentControl,
         session_source: SessionSource,
+        thread_origin: Option<String>,
         dynamic_tools: Vec<codex_protocol::dynamic_tools::DynamicToolSpec>,
         persist_extended_history: bool,
         metrics_service_name: Option<String>,
@@ -1130,6 +1158,7 @@ impl ThreadManagerState {
             skills_watcher: Arc::clone(&self.skills_watcher),
             conversation_history: initial_history,
             session_source,
+            thread_origin,
             agent_control,
             dynamic_tools,
             persist_extended_history,

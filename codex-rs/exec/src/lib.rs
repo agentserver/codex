@@ -1126,6 +1126,7 @@ fn session_configured_from_thread_response(
     Ok(SessionConfiguredEvent {
         session_id,
         forked_from_id: None,
+        thread_origin: None,
         thread_name,
         model,
         model_provider_id,

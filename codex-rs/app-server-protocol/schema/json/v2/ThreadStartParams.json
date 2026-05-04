@@ -312,6 +312,13 @@
           "type": "null"
         }
       ]
+    },
+    "threadOrigin": {
+      "description": "Optional caller-supplied reason this thread was created.",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "title": "ThreadStartParams",

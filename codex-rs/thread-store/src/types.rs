@@ -48,6 +48,8 @@ pub struct CreateThreadParams {
     pub forked_from_id: Option<ThreadId>,
     /// Runtime source for the thread.
     pub source: SessionSource,
+    /// Optional caller-supplied reason this thread was created.
+    pub thread_origin: Option<String>,
     /// Base instructions persisted in session metadata.
     pub base_instructions: BaseInstructions,
     /// Dynamic tools available to the thread at startup.

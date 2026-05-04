@@ -12852,6 +12852,13 @@
           ],
           "description": "Current runtime status for the thread."
         },
+        "threadOrigin": {
+          "description": "Optional caller-supplied reason this thread was created.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "turns": {
           "description": "Only populated on `thread/resume`, `thread/rollback`, `thread/fork`, and `thread/read` (when `includeTurns` is true) responses. For all other responses and notifications returning a Thread, the turns field will be an empty list.",
           "items": {
@@ -13066,6 +13073,13 @@
         },
         "threadId": {
           "type": "string"
+        },
+        "threadOrigin": {
+          "description": "Optional caller-supplied reason this forked thread was created.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -14879,6 +14893,13 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "threadOrigin": {
+          "description": "Optional caller-supplied reason this thread was created.",
+          "type": [
+            "string",
+            "null"
           ]
         }
       },

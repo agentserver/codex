@@ -1698,6 +1698,7 @@ async fn spawn_agent_full_history_fork_uses_compact_reference_and_materializes_p
         Some("Parent subagent guidance.".to_string());
     let mut child_config = harness.config.clone();
     let _ = child_config.features.enable(Feature::MultiAgentV2);
+    let _ = child_config.features.enable(Feature::AgentPromptInjection);
     child_config.multi_agent_v2.root_agent_usage_hint_text =
         Some("Child root guidance.".to_string());
     child_config.multi_agent_v2.subagent_usage_hint_text =
@@ -2256,6 +2257,8 @@ async fn fork_parent_prompt_cache_key_env_disables_request_inheritance() -> anyh
 #[tokio::test]
 async fn spawn_agent_fork_flushes_parent_rollout_before_loading_history() {
     let harness = AgentControlHarness::new().await;
+    let mut child_config = harness.config.clone();
+    let _ = child_config.features.enable(Feature::AgentPromptInjection);
     let (parent_thread_id, parent_thread) = harness.start_thread().await;
     let turn_context = parent_thread.codex.session.new_default_turn().await;
     let parent_spawn_call_id = "spawn-call-unflushed".to_string();
@@ -2274,7 +2277,7 @@ async fn spawn_agent_fork_flushes_parent_rollout_before_loading_history() {
     let child_thread_id = harness
         .control
         .spawn_agent_with_metadata(
-            harness.config.clone(),
+            child_config,
             text_input("child task"),
             Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
                 parent_thread_id,

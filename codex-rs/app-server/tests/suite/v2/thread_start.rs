@@ -26,7 +26,6 @@ use codex_core::config::set_project_trust_level;
 use codex_exec_server::LOCAL_FS;
 use codex_git_utils::resolve_root_git_project_for_trust;
 use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
-use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::openai_models::ReasoningEffort;
 use pretty_assertions::assert_eq;
@@ -340,7 +339,7 @@ async fn thread_start_accepts_flex_service_tier() -> Result<()> {
 
     let req_id = mcp
         .send_thread_start_request(ThreadStartParams {
-            service_tier: Some(Some(ServiceTier::Flex)),
+            service_tier: Some(Some("flex".to_string())),
             ..Default::default()
         })
         .await?;
@@ -352,7 +351,7 @@ async fn thread_start_accepts_flex_service_tier() -> Result<()> {
     .await??;
     let ThreadStartResponse { service_tier, .. } = to_response::<ThreadStartResponse>(resp)?;
 
-    assert_eq!(service_tier, Some(ServiceTier::Flex));
+    assert_eq!(service_tier, Some("flex".to_string()));
     Ok(())
 }
 

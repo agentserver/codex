@@ -1,5 +1,6 @@
 use super::*;
 use codex_app_server_protocol::PluginAvailability;
+use codex_protocol::openai_models::SPEED_TIER_FAST;
 use pretty_assertions::assert_eq;
 
 pub(super) async fn test_config() -> Config {
@@ -387,7 +388,7 @@ pub(crate) fn set_chatgpt_auth(chat: &mut ChatWidget) {
 fn test_model_info(slug: &str, priority: i32, supports_fast_mode: bool) -> ModelInfo {
     let service_tiers = if supports_fast_mode {
         vec![json!({
-            "id": codex_protocol::config_types::ServiceTier::Fast.request_value(),
+            "id": SPEED_TIER_FAST,
             "name": "fast",
             "description": "fastest inference with increased plan usage",
         })]

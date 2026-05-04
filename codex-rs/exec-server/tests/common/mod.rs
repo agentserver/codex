@@ -136,22 +136,58 @@ fn maybe_run_exec_server_from_test_binary(guard: Option<&TestBinaryDispatchGuard
         return;
     }
 
+    enum Mode {
+        Listen(String),
+        Connect {
+            url: String,
+            auth_token_env: Option<String>,
+        },
+    }
+
     let Some(flag) = args.next() else {
-        eprintln!("expected --listen");
+        eprintln!("expected --listen or --connect");
         std::process::exit(1);
     };
-    if flag != "--listen" {
-        eprintln!("expected --listen, got `{flag}`");
-        std::process::exit(1);
-    }
-    let Some(listen_url) = args.next() else {
-        eprintln!("expected listen URL");
-        std::process::exit(1);
+    let mode = match flag.as_str() {
+        "--listen" => {
+            let Some(listen_url) = args.next() else {
+                eprintln!("expected listen URL");
+                std::process::exit(1);
+            };
+            if args.next().is_some() {
+                eprintln!("unexpected extra arguments");
+                std::process::exit(1);
+            }
+            Mode::Listen(listen_url)
+        }
+        "--connect" => {
+            let Some(url) = args.next() else {
+                eprintln!("expected connect URL");
+                std::process::exit(1);
+            };
+            let mut auth_token_env: Option<String> = None;
+            while let Some(arg) = args.next() {
+                if arg == "--auth-token-env" {
+                    let Some(env_name) = args.next() else {
+                        eprintln!("expected --auth-token-env value");
+                        std::process::exit(1);
+                    };
+                    auth_token_env = Some(env_name);
+                } else {
+                    eprintln!("unexpected argument: {arg}");
+                    std::process::exit(1);
+                }
+            }
+            Mode::Connect {
+                url,
+                auth_token_env,
+            }
+        }
+        other => {
+            eprintln!("expected --listen or --connect, got `{other}`");
+            std::process::exit(1);
+        }
     };
-    if args.next().is_some() {
-        eprintln!("unexpected extra arguments");
-        std::process::exit(1);
-    }
 
     let current_exe = match env::current_exe() {
         Ok(current_exe) => current_exe,
@@ -180,8 +216,23 @@ fn maybe_run_exec_server_from_test_binary(guard: Option<&TestBinaryDispatchGuard
             std::process::exit(1);
         }
     };
-    let exit_code = match runtime.block_on(codex_exec_server::run_main(&listen_url, runtime_paths))
-    {
+    let result = match mode {
+        Mode::Listen(listen_url) => {
+            runtime.block_on(codex_exec_server::run_main(&listen_url, runtime_paths))
+        }
+        Mode::Connect {
+            url,
+            auth_token_env,
+        } => {
+            let auth_token = auth_token_env.and_then(|name| env::var(name).ok());
+            runtime.block_on(codex_exec_server::run_connect_mode(
+                &url,
+                auth_token.as_deref(),
+                runtime_paths,
+            ))
+        }
+    };
+    let exit_code = match result {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("exec-server failed: {error}");

@@ -90,4 +90,5 @@ pub use protocol::WriteStatus;
 pub use runtime_paths::ExecServerRuntimePaths;
 pub use server::DEFAULT_LISTEN_URL;
 pub use server::ExecServerListenUrlParseError;
+pub use server::run_connect_mode;
 pub use server::run_main;

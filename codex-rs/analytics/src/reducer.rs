@@ -147,6 +147,7 @@ enum MissingAnalyticsContext {
 
 #[derive(Clone)]
 struct ThreadMetadataState {
+    session_id: String,
     thread_source: Option<&'static str>,
     initialization_mode: ThreadInitializationMode,
     subagent_source: Option<String>,
@@ -155,6 +156,7 @@ struct ThreadMetadataState {
 
 impl ThreadMetadataState {
     fn from_thread_metadata(
+        session_id: String,
         session_source: &SessionSource,
         initialization_mode: ThreadInitializationMode,
     ) -> Self {
@@ -172,6 +174,7 @@ impl ThreadMetadataState {
             | SessionSource::Unknown => (None, None),
         };
         Self {
+            session_id,
             thread_source: session_source.thread_source_name(),
             initialization_mode,
             subagent_source,
@@ -348,6 +351,7 @@ impl AnalyticsReducer {
         thread_state
             .metadata
             .get_or_insert_with(|| ThreadMetadataState {
+                session_id: input.session_id.clone(),
                 thread_source: Some("subagent"),
                 initialization_mode: ThreadInitializationMode::New,
                 subagent_source: Some(subagent_source_name(&input.subagent_source)),
@@ -366,8 +370,8 @@ impl AnalyticsReducer {
         input: GuardianReviewEventParams,
         out: &mut Vec<TrackEventRequest>,
     ) {
-        let Some(connection_state) =
-            self.thread_connection_or_warn(AnalyticsDropSite::guardian(&input))
+        let Some((connection_state, thread_metadata)) =
+            self.thread_context_or_warn(AnalyticsDropSite::guardian(&input))
         else {
             return;
         };
@@ -375,6 +379,7 @@ impl AnalyticsReducer {
             GuardianReviewEventRequest {
                 event_type: "codex_guardian_review",
                 event_params: GuardianReviewEventPayload {
+                    session_id: thread_metadata.session_id.clone(),
                     app_server_client: connection_state.app_server_client.clone(),
                     runtime: connection_state.runtime.clone(),
                     guardian_review: input,
@@ -573,6 +578,7 @@ impl AnalyticsReducer {
                     connection_id,
                     response.thread,
                     response.model,
+                    response.session_id,
                     ThreadInitializationMode::New,
                     out,
                 );
@@ -582,6 +588,7 @@ impl AnalyticsReducer {
                     connection_id,
                     response.thread,
                     response.model,
+                    response.session_id,
                     ThreadInitializationMode::Resumed,
                     out,
                 );
@@ -589,8 +596,9 @@ impl AnalyticsReducer {
             ClientResponse::ThreadFork { response, .. } => {
                 self.emit_thread_initialized(
                     connection_id,
-                    response.thread,
+                    response.thread.clone(),
                     response.model,
+                    response.thread.id,
                     ThreadInitializationMode::Forked,
                     out,
                 );
@@ -744,6 +752,7 @@ impl AnalyticsReducer {
         connection_id: u64,
         thread: codex_app_server_protocol::Thread,
         model: String,
+        session_id: String,
         initialization_mode: ThreadInitializationMode,
         out: &mut Vec<TrackEventRequest>,
     ) {
@@ -752,8 +761,11 @@ impl AnalyticsReducer {
         let Some(connection_state) = self.connections.get(&connection_id) else {
             return;
         };
-        let thread_metadata =
-            ThreadMetadataState::from_thread_metadata(&thread_source, initialization_mode);
+        let thread_metadata = ThreadMetadataState::from_thread_metadata(
+            session_id.clone(),
+            &thread_source,
+            initialization_mode,
+        );
         self.threads.insert(
             thread_id.clone(),
             ThreadAnalyticsState {
@@ -765,6 +777,7 @@ impl AnalyticsReducer {
             ThreadInitializedEvent {
                 event_type: "codex_thread_initialized",
                 event_params: ThreadInitializedEventParams {
+                    session_id,
                     thread_id,
                     app_server_client: connection_state.app_server_client.clone(),
                     runtime: connection_state.runtime.clone(),
@@ -793,6 +806,7 @@ impl AnalyticsReducer {
                     input,
                     connection_state.app_server_client.clone(),
                     connection_state.runtime.clone(),
+                    thread_metadata.session_id.clone(),
                     thread_metadata.thread_source,
                     thread_metadata.subagent_source.clone(),
                     thread_metadata.parent_thread_id.clone(),
@@ -850,6 +864,7 @@ impl AnalyticsReducer {
         out.push(TrackEventRequest::TurnSteer(CodexTurnSteerEventRequest {
             event_type: "codex_turn_steer_event",
             event_params: CodexTurnSteerEventParams {
+                session_id: thread_metadata.session_id.clone(),
                 thread_id: pending_request.thread_id,
                 expected_turn_id: Some(pending_request.expected_turn_id),
                 accepted_turn_id,
@@ -1015,6 +1030,7 @@ fn codex_turn_event_params(
     } = resolved_config;
     let token_usage = turn_state.token_usage.clone();
     CodexTurnEventParams {
+        session_id: thread_metadata.session_id.clone(),
         thread_id,
         turn_id,
         app_server_client,

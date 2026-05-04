@@ -291,6 +291,7 @@ impl AgentControl {
                     .services
                     .analytics_events_client,
                 client_metadata,
+                self.session_id,
                 new_thread.thread_id,
                 /*parent_thread_id*/ None,
                 thread_config,

@@ -105,6 +105,7 @@ pub(crate) struct CodexRuntimeMetadata {
 
 #[derive(Serialize)]
 pub(crate) struct ThreadInitializedEventParams {
+    pub(crate) session_id: String,
     pub(crate) thread_id: String,
     pub(crate) app_server_client: CodexAppServerClientMetadata,
     pub(crate) runtime: CodexRuntimeMetadata,
@@ -378,6 +379,7 @@ impl GuardianReviewAnalyticsResult {
 
 #[derive(Serialize)]
 pub(crate) struct GuardianReviewEventPayload {
+    pub(crate) session_id: String,
     pub(crate) app_server_client: CodexAppServerClientMetadata,
     pub(crate) runtime: CodexRuntimeMetadata,
     #[serde(flatten)]
@@ -425,6 +427,7 @@ pub(crate) struct CodexHookRunEventRequest {
 
 #[derive(Serialize)]
 pub(crate) struct CodexCompactionEventParams {
+    pub(crate) session_id: String,
     pub(crate) thread_id: String,
     pub(crate) turn_id: String,
     pub(crate) app_server_client: CodexAppServerClientMetadata,
@@ -454,6 +457,7 @@ pub(crate) struct CodexCompactionEventRequest {
 
 #[derive(Serialize)]
 pub(crate) struct CodexTurnEventParams {
+    pub(crate) session_id: String,
     pub(crate) thread_id: String,
     pub(crate) turn_id: String,
     // TODO(rhan-oai): Populate once queued/default submission type is plumbed from
@@ -510,6 +514,7 @@ pub(crate) struct CodexTurnEventRequest {
 
 #[derive(Serialize)]
 pub(crate) struct CodexTurnSteerEventParams {
+    pub(crate) session_id: String,
     pub(crate) thread_id: String,
     pub(crate) expected_turn_id: Option<String>,
     pub(crate) accepted_turn_id: Option<String>,
@@ -618,11 +623,13 @@ pub(crate) fn codex_compaction_event_params(
     input: CodexCompactionEvent,
     app_server_client: CodexAppServerClientMetadata,
     runtime: CodexRuntimeMetadata,
+    session_id: String,
     thread_source: Option<&'static str>,
     subagent_source: Option<String>,
     parent_thread_id: Option<String>,
 ) -> CodexCompactionEventParams {
     CodexCompactionEventParams {
+        session_id,
         thread_id: input.thread_id,
         turn_id: input.turn_id,
         app_server_client,
@@ -711,6 +718,7 @@ pub(crate) fn subagent_thread_started_event_request(
     input: SubAgentThreadStartedInput,
 ) -> ThreadInitializedEvent {
     let event_params = ThreadInitializedEventParams {
+        session_id: input.session_id,
         thread_id: input.thread_id,
         app_server_client: CodexAppServerClientMetadata {
             product_client_id: input.product_client_id,

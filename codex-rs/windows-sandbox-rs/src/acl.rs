@@ -46,6 +46,7 @@ use windows_sys::Win32::Storage::FileSystem::FILE_WRITE_EA;
 use windows_sys::Win32::Storage::FileSystem::OPEN_EXISTING;
 use windows_sys::Win32::Storage::FileSystem::READ_CONTROL;
 use windows_sys::Win32::Storage::FileSystem::DELETE;
+const SE_FILE_OBJECT: u32 = 1;
 const SE_KERNEL_OBJECT: u32 = 6;
 const INHERIT_ONLY_ACE: u8 = 0x08;
 const GENERIC_WRITE_MASK: u32 = 0x4000_0000;
@@ -568,7 +569,12 @@ pub unsafe fn revoke_ace(path: &Path, psid: *mut c_void) {
     }
 }
 
-unsafe fn allow_kernel_object_path(psid: *mut c_void, path: &str, flags_and_attributes: u32) {
+unsafe fn allow_opened_object_path(
+    psid: *mut c_void,
+    path: &str,
+    object_type: u32,
+    flags_and_attributes: u32,
+) {
     let desired = 0x00020000 | 0x00040000; // READ_CONTROL | WRITE_DAC
     let h = CreateFileW(
         to_wide(path).as_ptr(),
@@ -586,7 +592,7 @@ unsafe fn allow_kernel_object_path(psid: *mut c_void, path: &str, flags_and_attr
     let mut p_dacl: *mut ACL = std::ptr::null_mut();
     let code = GetSecurityInfo(
         h,
-        SE_KERNEL_OBJECT as i32,
+        object_type as i32,
         DACL_SECURITY_INFORMATION,
         std::ptr::null_mut(),
         std::ptr::null_mut(),
@@ -613,7 +619,7 @@ unsafe fn allow_kernel_object_path(psid: *mut c_void, path: &str, flags_and_attr
         if code2 == ERROR_SUCCESS {
             let _ = SetSecurityInfo(
                 h,
-                SE_KERNEL_OBJECT as i32,
+                object_type as i32,
                 DACL_SECURITY_INFORMATION,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
@@ -636,7 +642,7 @@ unsafe fn allow_kernel_object_path(psid: *mut c_void, path: &str, flags_and_attr
 /// # Safety
 /// Caller must ensure `psid` is a valid SID pointer.
 pub unsafe fn allow_null_device(psid: *mut c_void) {
-    allow_kernel_object_path(psid, "\\\\.\\NUL", FILE_ATTRIBUTE_NORMAL);
+    allow_opened_object_path(psid, "\\\\.\\NUL", SE_KERNEL_OBJECT, FILE_ATTRIBUTE_NORMAL);
 }
 
 /// Grants access to the named pipe namespace for the given SID.
@@ -648,7 +654,12 @@ pub unsafe fn allow_null_device(psid: *mut c_void) {
 /// # Safety
 /// Caller must ensure `psid` is a valid SID pointer.
 pub unsafe fn allow_named_pipe_device(psid: *mut c_void) {
-    allow_kernel_object_path(psid, "\\\\.\\pipe\\", FILE_FLAG_BACKUP_SEMANTICS);
+    allow_opened_object_path(
+        psid,
+        "\\\\.\\pipe\\",
+        SE_FILE_OBJECT,
+        FILE_FLAG_BACKUP_SEMANTICS,
+    );
 }
 
 const CONTAINER_INHERIT_ACE: u32 = 0x2;

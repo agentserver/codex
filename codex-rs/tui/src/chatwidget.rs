@@ -159,6 +159,7 @@ use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::local_image_label_text;
+use codex_protocol::openai_models::SPEED_TIER_FAST;
 use codex_protocol::parse_command::ParsedCommand;
 use codex_protocol::plan_tool::PlanItemArg as UpdatePlanItemArg;
 use codex_protocol::plan_tool::StepStatus as UpdatePlanItemStatus;
@@ -9362,12 +9363,16 @@ impl ChatWidget {
     }
 
     fn handle_service_tier_slash_command(&mut self, command: ServiceTierCommand) {
-        let active_service_tier_id = self
+        let active_service_tier_id_matches_command = self
             .config
             .service_tier_id
             .as_deref()
-            .or_else(|| self.effective_service_tier.map(ServiceTier::request_value));
-        let next_service_tier_id = if active_service_tier_id == Some(command.id.as_str()) {
+            .is_some_and(|service_tier_id| service_tier_id == command.id)
+            || self.effective_service_tier.is_some_and(|service_tier| {
+                ServiceTier::from_request_value(&command.id) == Some(service_tier)
+                    || (matches!(service_tier, ServiceTier::Fast) && command.id == SPEED_TIER_FAST)
+            });
+        let next_service_tier_id = if active_service_tier_id_matches_command {
             None
         } else {
             Some(command.id)

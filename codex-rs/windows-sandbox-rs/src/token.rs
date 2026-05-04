@@ -430,7 +430,7 @@ unsafe fn create_token_with_caps_from(
     entries[logon_idx + 1].Attributes = 0;
 
     let mut new_token: HANDLE = 0;
-    let flags = WRITE_RESTRICTED;
+    let flags = 0;
     let ok = CreateRestrictedToken(
         base_token,
         flags,

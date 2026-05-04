@@ -385,8 +385,12 @@ pub(crate) fn set_chatgpt_auth(chat: &mut ChatWidget) {
 }
 
 fn test_model_info(slug: &str, priority: i32, supports_fast_mode: bool) -> ModelInfo {
-    let additional_speed_tiers = if supports_fast_mode {
-        vec![codex_protocol::openai_models::SPEED_TIER_FAST]
+    let service_tiers = if supports_fast_mode {
+        vec![json!({
+            "id": codex_protocol::config_types::ServiceTier::Fast.request_value(),
+            "name": "fast",
+            "description": "fastest inference with increased plan usage",
+        })]
     } else {
         Vec::new()
     };
@@ -400,7 +404,8 @@ fn test_model_info(slug: &str, priority: i32, supports_fast_mode: bool) -> Model
         "visibility": "list",
         "supported_in_api": true,
         "priority": priority,
-        "additional_speed_tiers": additional_speed_tiers,
+        "additional_speed_tiers": [],
+        "service_tiers": service_tiers,
         "availability_nux": null,
         "upgrade": null,
         "base_instructions": "base instructions",

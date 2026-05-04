@@ -1030,13 +1030,13 @@ async fn slash_rename_without_existing_thread_name_starts_empty() {
 }
 
 #[tokio::test]
-async fn usage_error_slash_command_is_available_from_local_recall() {
+async fn service_tier_slash_command_with_args_submits_literal_text() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.3-codex")).await;
+    chat.set_model("gpt-5.4");
+    set_fast_mode_test_catalog(&mut chat);
     chat.set_feature_enabled(Feature::FastMode, /*enabled*/ true);
 
     submit_composer_text(&mut chat, "/fast maybe");
-
-    assert_eq!(chat.bottom_pane.composer_text(), "");
 
     let cells = drain_insert_history(&mut rx);
     let rendered = cells
@@ -1045,10 +1045,9 @@ async fn usage_error_slash_command_is_available_from_local_recall() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        rendered.contains("Usage: /fast [on|off|status]"),
-        "expected usage message, got: {rendered:?}"
+        !rendered.contains("Usage: /fast"),
+        "service tier slash commands should not expose the old /fast usage: {rendered:?}"
     );
-    assert_eq!(recall_latest_after_clearing(&mut chat), "/fast maybe");
 }
 
 #[tokio::test]
@@ -1690,11 +1689,12 @@ async fn slash_rollout_handles_missing_path() {
 }
 
 #[tokio::test]
-async fn fast_slash_command_updates_and_persists_local_service_tier() {
-    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(Some("gpt-5.3-codex")).await;
+async fn service_tier_slash_command_updates_and_persists_local_service_tier_id() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    set_fast_mode_test_catalog(&mut chat);
     chat.set_feature_enabled(Feature::FastMode, /*enabled*/ true);
 
-    chat.dispatch_command(SlashCommand::Fast);
+    submit_composer_text(&mut chat, "/fast");
 
     let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
     assert!(
@@ -1712,9 +1712,11 @@ async fn fast_slash_command_updates_and_persists_local_service_tier() {
             event,
             AppEvent::PersistServiceTierSelection {
                 service_tier: Some(ServiceTier::Fast),
+                service_tier_id: Some(service_tier_id),
             }
+            if service_tier_id == ServiceTier::Fast.request_value()
         )),
-        "expected fast-mode persistence app event; events: {events:?}"
+        "expected service-tier persistence app event; events: {events:?}"
     );
 
     assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));
@@ -1722,12 +1724,13 @@ async fn fast_slash_command_updates_and_persists_local_service_tier() {
 
 #[tokio::test]
 async fn user_turn_carries_service_tier_after_fast_toggle() {
-    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(Some("gpt-5.3-codex")).await;
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
     chat.thread_id = Some(ThreadId::new());
     set_chatgpt_auth(&mut chat);
+    set_fast_mode_test_catalog(&mut chat);
     chat.set_feature_enabled(Feature::FastMode, /*enabled*/ true);
 
-    chat.dispatch_command(SlashCommand::Fast);
+    submit_composer_text(&mut chat, "/fast");
 
     let _events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
 
@@ -1746,13 +1749,14 @@ async fn user_turn_carries_service_tier_after_fast_toggle() {
 
 #[tokio::test]
 async fn queued_fast_slash_applies_before_next_queued_message() {
-    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(Some("gpt-5.3-codex")).await;
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
     chat.thread_id = Some(ThreadId::new());
     set_chatgpt_auth(&mut chat);
+    set_fast_mode_test_catalog(&mut chat);
     chat.set_feature_enabled(Feature::FastMode, /*enabled*/ true);
     handle_turn_started(&mut chat, "turn-1");
 
-    queue_composer_text_with_tab(&mut chat, "/fast on");
+    queue_composer_text_with_tab(&mut chat, "/fast");
     queue_composer_text_with_tab(&mut chat, "hello after fast");
 
     complete_turn_with_message(&mut chat, "turn-1", Some("done"));
@@ -1787,15 +1791,16 @@ async fn queued_fast_slash_applies_before_next_queued_message() {
 
 #[tokio::test]
 async fn user_turn_sends_standard_override_after_fast_is_turned_off() {
-    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(Some("gpt-5.3-codex")).await;
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
     chat.thread_id = Some(ThreadId::new());
     set_chatgpt_auth(&mut chat);
+    set_fast_mode_test_catalog(&mut chat);
     chat.set_feature_enabled(Feature::FastMode, /*enabled*/ true);
 
-    chat.dispatch_command(SlashCommand::Fast);
+    submit_composer_text(&mut chat, "/fast");
     let _events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
 
-    chat.dispatch_command_with_args(SlashCommand::Fast, "off".to_string(), Vec::new());
+    submit_composer_text(&mut chat, "/fast");
     let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
     assert!(
         events.iter().any(|event| matches!(
@@ -1810,7 +1815,10 @@ async fn user_turn_sends_standard_override_after_fast_is_turned_off() {
     assert!(
         events.iter().any(|event| matches!(
             event,
-            AppEvent::PersistServiceTierSelection { service_tier: None }
+            AppEvent::PersistServiceTierSelection {
+                service_tier: None,
+                service_tier_id: None,
+            }
         )),
         "expected fast-mode opt-out persistence app event; events: {events:?}"
     );

@@ -2817,9 +2817,7 @@ impl ChatComposer {
             return None;
         }
         let first_line = self.textarea.text().lines().next().unwrap_or("");
-        let Some((name, rest, _rest_offset)) = parse_slash_name(first_line) else {
-            return None;
-        };
+        let (name, rest, _rest_offset) = parse_slash_name(first_line)?;
         if !rest.is_empty() {
             return None;
         }

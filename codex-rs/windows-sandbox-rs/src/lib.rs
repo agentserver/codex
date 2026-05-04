@@ -170,6 +170,8 @@ pub use process::read_handle_loop;
 #[cfg(target_os = "windows")]
 pub use process::spawn_process_with_pipes;
 #[cfg(target_os = "windows")]
+pub use protected_metadata::protected_metadata_existing_deny_paths;
+#[cfg(target_os = "windows")]
 pub use session::spawn_windows_sandbox_session_elevated;
 #[cfg(target_os = "windows")]
 pub use session::spawn_windows_sandbox_session_legacy;

@@ -26,6 +26,7 @@ use codex_windows_sandbox::is_command_cwd_root;
 use codex_windows_sandbox::load_or_create_cap_sids;
 use codex_windows_sandbox::log_note;
 use codex_windows_sandbox::path_mask_allows;
+use codex_windows_sandbox::protected_metadata_existing_deny_paths;
 use codex_windows_sandbox::sandbox_bin_dir;
 use codex_windows_sandbox::sandbox_dir;
 use codex_windows_sandbox::sandbox_secrets_dir;
@@ -824,10 +825,8 @@ fn run_setup_full(payload: &Payload, log: &mut File, sbx_dir: &Path) -> Result<(
         if !matches!(target.mode, ProtectedMetadataMode::ExistingDeny) {
             continue;
         }
-        if !seen_deny_paths.insert(target.path.clone()) {
-            continue;
-        }
-        if !target.path.exists() {
+        let deny_paths = protected_metadata_existing_deny_paths(&target.path);
+        if deny_paths.is_empty() {
             log_line(
                 log,
                 &format!(
@@ -838,36 +837,46 @@ fn run_setup_full(payload: &Payload, log: &mut File, sbx_dir: &Path) -> Result<(
             continue;
         }
 
-        let canonical_path = canonicalize_path(&target.path);
-        let deny_psid = if canonical_path.starts_with(&canonical_command_cwd) {
-            workspace_psid
-        } else {
-            cap_psid
-        };
-
-        match unsafe { add_deny_write_ace(&target.path, deny_psid) } {
-            Ok(true) => {
-                log_line(
-                    log,
-                    &format!(
-                        "applied deny ACE to protect metadata {}",
-                        target.path.display()
-                    ),
-                )?;
+        for path in deny_paths {
+            if !seen_deny_paths.insert(path.clone()) {
+                continue;
             }
-            Ok(false) => {}
-            Err(err) => {
-                refresh_errors.push(format!(
-                    "metadata deny ACE failed on {}: {err}",
-                    target.path.display()
-                ));
+            if std::fs::symlink_metadata(&path).is_err() {
                 log_line(
                     log,
                     &format!(
-                        "metadata deny ACE failed on {}: {err}",
-                        target.path.display()
+                        "protected metadata {} missing during setup; skipping",
+                        path.display()
                     ),
                 )?;
+                continue;
+            }
+
+            let canonical_path = canonicalize_path(&path);
+            let deny_psid = if canonical_path.starts_with(&canonical_command_cwd) {
+                workspace_psid
+            } else {
+                cap_psid
+            };
+
+            match unsafe { add_deny_write_ace(&path, deny_psid) } {
+                Ok(true) => {
+                    log_line(
+                        log,
+                        &format!("applied deny ACE to protect metadata {}", path.display()),
+                    )?;
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    refresh_errors.push(format!(
+                        "metadata deny ACE failed on {}: {err}",
+                        path.display()
+                    ));
+                    log_line(
+                        log,
+                        &format!("metadata deny ACE failed on {}: {err}", path.display()),
+                    )?;
+                }
             }
         }
     }

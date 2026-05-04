@@ -3657,7 +3657,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         .plugins_manager
         .plugins_for_config(&per_turn_config.plugins_config_input())
         .await;
-    let effective_skill_roots = plugin_outcome.effective_skill_roots();
+    let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
     let skills_input =
         crate::skills_load_input_from_config(&per_turn_config, effective_skill_roots);
     let skill_fs = environment.get_filesystem();
@@ -5139,7 +5139,7 @@ where
         .plugins_manager
         .plugins_for_config(&per_turn_config.plugins_config_input())
         .await;
-    let effective_skill_roots = plugin_outcome.effective_skill_roots();
+    let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
     let skills_input =
         crate::skills_load_input_from_config(&per_turn_config, effective_skill_roots);
     let skill_fs = environment.get_filesystem();
@@ -5776,6 +5776,7 @@ async fn build_initial_context_trims_skill_metadata_from_context_window_budget()
             policy: None,
             path_to_skills_md: test_path_buf("/tmp/admin-skill/SKILL.md").abs(),
             scope: SkillScope::Admin,
+            plugin_id: None,
         },
         SkillMetadata {
             name: "repo-skill".to_string(),
@@ -5786,6 +5787,7 @@ async fn build_initial_context_trims_skill_metadata_from_context_window_budget()
             policy: None,
             path_to_skills_md: test_path_buf("/tmp/repo-skill/SKILL.md").abs(),
             scope: SkillScope::Repo,
+            plugin_id: None,
         },
     ];
     turn_context.model_info.context_window = Some(100);
@@ -5821,6 +5823,7 @@ fn emit_thread_start_skill_metrics_records_enabled_kept_and_truncated_values() {
         policy: None,
         path_to_skills_md: test_path_buf("/tmp/repo-skill/SKILL.md").abs(),
         scope: SkillScope::Repo,
+        plugin_id: None,
     }];
     let rendered = build_available_skills(
         &outcome,
@@ -5865,6 +5868,7 @@ fn emit_thread_start_skill_metrics_records_description_truncated_chars_without_o
         policy: None,
         path_to_skills_md: test_path_buf("/tmp/alpha-skill/SKILL.md").abs(),
         scope: SkillScope::Repo,
+        plugin_id: None,
     };
     let beta = SkillMetadata {
         name: "beta-skill".to_string(),
@@ -5875,6 +5879,7 @@ fn emit_thread_start_skill_metrics_records_description_truncated_chars_without_o
         policy: None,
         path_to_skills_md: test_path_buf("/tmp/beta-skill/SKILL.md").abs(),
         scope: SkillScope::Repo,
+        plugin_id: None,
     };
     let minimum_skill_line_cost = |skill: &SkillMetadata| {
         let path = skill.path_to_skills_md.to_string_lossy().replace('\\', "/");
@@ -5922,6 +5927,7 @@ async fn build_initial_context_emits_thread_start_skill_warning_on_repeated_buil
             policy: None,
             path_to_skills_md: test_path_buf("/tmp/admin-skill/SKILL.md").abs(),
             scope: SkillScope::Admin,
+            plugin_id: None,
         },
         SkillMetadata {
             name: "repo-skill".to_string(),
@@ -5932,6 +5938,7 @@ async fn build_initial_context_emits_thread_start_skill_warning_on_repeated_buil
             policy: None,
             path_to_skills_md: test_path_buf("/tmp/repo-skill/SKILL.md").abs(),
             scope: SkillScope::Repo,
+            plugin_id: None,
         },
     ];
     turn_context.model_info.context_window = Some(100);

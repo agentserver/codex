@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_plugins::PluginSkillRoot;
 
 use crate::AppConnectorId;
 use crate::PluginCapabilitySummary;
@@ -116,6 +117,31 @@ impl<M: Clone> PluginLoadOutcome<M> {
         skill_roots
     }
 
+    pub fn effective_plugin_skill_roots(&self) -> Vec<PluginSkillRoot> {
+        let mut skill_roots: Vec<PluginSkillRoot> = self
+            .plugins
+            .iter()
+            .filter(|plugin| plugin.is_active())
+            .flat_map(|plugin| {
+                plugin
+                    .skill_roots
+                    .iter()
+                    .cloned()
+                    .map(|path| PluginSkillRoot {
+                        path,
+                        plugin_id: plugin.config_name.clone(),
+                    })
+            })
+            .collect();
+        skill_roots.sort_unstable_by(|a, b| {
+            a.path
+                .cmp(&b.path)
+                .then_with(|| a.plugin_id.cmp(&b.plugin_id))
+        });
+        skill_roots.dedup_by(|a, b| a.path == b.path);
+        skill_roots
+    }
+
     pub fn effective_mcp_servers(&self) -> HashMap<String, M> {
         let mut mcp_servers = HashMap::new();
         for plugin in self.plugins.iter().filter(|plugin| plugin.is_active()) {
@@ -172,10 +198,16 @@ impl<M: Clone> PluginLoadOutcome<M> {
 /// without naming the MCP config type parameter.
 pub trait EffectiveSkillRoots {
     fn effective_skill_roots(&self) -> Vec<AbsolutePathBuf>;
+
+    fn effective_plugin_skill_roots(&self) -> Vec<PluginSkillRoot>;
 }
 
 impl<M: Clone> EffectiveSkillRoots for PluginLoadOutcome<M> {
     fn effective_skill_roots(&self) -> Vec<AbsolutePathBuf> {
         PluginLoadOutcome::effective_skill_roots(self)
+    }
+
+    fn effective_plugin_skill_roots(&self) -> Vec<PluginSkillRoot> {
+        PluginLoadOutcome::effective_plugin_skill_roots(self)
     }
 }

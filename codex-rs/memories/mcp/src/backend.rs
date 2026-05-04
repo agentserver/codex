@@ -42,10 +42,8 @@ pub struct ListMemoriesRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ListMemoriesResponse {
-    #[schemars(required)]
     pub path: Option<String>,
     pub entries: Vec<MemoryEntry>,
-    #[schemars(required)]
     pub next_cursor: Option<String>,
     pub truncated: bool,
 }
@@ -83,10 +81,8 @@ pub struct SearchMemoriesRequest {
 pub struct SearchMemoriesResponse {
     pub queries: Vec<String>,
     pub match_mode: SearchMatchMode,
-    #[schemars(required)]
     pub path: Option<String>,
     pub matches: Vec<MemorySearchMatch>,
-    #[schemars(required)]
     pub next_cursor: Option<String>,
     pub truncated: bool,
 }

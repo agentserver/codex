@@ -12,6 +12,7 @@ use crate::process::spawn_process_with_pipes;
 use crate::protected_metadata::ProtectedMetadataGuard;
 use crate::protected_metadata::prepare_protected_metadata_targets;
 use crate::setup::ProtectedMetadataTarget;
+use crate::spawn_prep::LegacySessionAclRules;
 use crate::spawn_prep::LocalSid;
 use crate::spawn_prep::allow_null_device_for_workspace_write;
 use crate::spawn_prep::apply_legacy_session_acl_rules;
@@ -329,17 +330,17 @@ pub(crate) async fn spawn_windows_sandbox_session_legacy(
     let protected_metadata_guard = prepare_protected_metadata_targets(protected_metadata_targets);
     let additional_deny_write_paths: Vec<PathBuf> =
         protected_metadata_guard.deny_paths().cloned().collect();
-    let guards = apply_legacy_session_acl_rules(
-        &common.policy,
+    let guards = apply_legacy_session_acl_rules(LegacySessionAclRules {
+        policy: &common.policy,
         sandbox_policy_cwd,
-        &common.current_dir,
-        &env_map,
-        &command,
-        &security.psid_generic,
-        security.psid_workspace.as_ref(),
+        current_dir: &common.current_dir,
+        env_map: &env_map,
+        command: &command,
+        psid_generic: &security.psid_generic,
+        psid_workspace: security.psid_workspace.as_ref(),
         persist_aces,
-        &additional_deny_write_paths,
-    );
+        additional_deny_paths: &additional_deny_write_paths,
+    });
 
     let (writer_tx, writer_rx) = mpsc::channel::<Vec<u8>>(128);
     let (stdout_tx, stdout_rx) = broadcast::channel::<Vec<u8>>(256);

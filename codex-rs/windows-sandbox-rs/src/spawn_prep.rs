@@ -218,17 +218,30 @@ pub(crate) fn allow_null_device_for_workspace_write(is_workspace_write: bool) {
     }
 }
 
-pub(crate) fn apply_legacy_session_acl_rules(
-    policy: &SandboxPolicy,
-    sandbox_policy_cwd: &Path,
-    current_dir: &Path,
-    env_map: &HashMap<String, String>,
-    command: &[String],
-    psid_generic: &LocalSid,
-    psid_workspace: Option<&LocalSid>,
-    persist_aces: bool,
-    additional_deny_paths: &[PathBuf],
-) -> Vec<PathBuf> {
+pub(crate) struct LegacySessionAclRules<'a> {
+    pub(crate) policy: &'a SandboxPolicy,
+    pub(crate) sandbox_policy_cwd: &'a Path,
+    pub(crate) current_dir: &'a Path,
+    pub(crate) env_map: &'a HashMap<String, String>,
+    pub(crate) command: &'a [String],
+    pub(crate) psid_generic: &'a LocalSid,
+    pub(crate) psid_workspace: Option<&'a LocalSid>,
+    pub(crate) persist_aces: bool,
+    pub(crate) additional_deny_paths: &'a [PathBuf],
+}
+
+pub(crate) fn apply_legacy_session_acl_rules(input: LegacySessionAclRules<'_>) -> Vec<PathBuf> {
+    let LegacySessionAclRules {
+        policy,
+        sandbox_policy_cwd,
+        current_dir,
+        env_map,
+        command,
+        psid_generic,
+        psid_workspace,
+        persist_aces,
+        additional_deny_paths,
+    } = input;
     let AllowDenyPaths { allow, mut deny } =
         compute_allow_paths(policy, sandbox_policy_cwd, current_dir, env_map);
     deny.extend(additional_deny_paths.iter().cloned());

@@ -637,6 +637,58 @@ unsafe fn allow_opened_object_path(
     CloseHandle(h);
 }
 
+unsafe fn allow_named_file_object_path(psid: *mut c_void, path: &str, allow_mask: u32) {
+    let mut p_sd: *mut c_void = std::ptr::null_mut();
+    let mut p_dacl: *mut ACL = std::ptr::null_mut();
+    let code = GetNamedSecurityInfoW(
+        to_wide(path).as_ptr(),
+        SE_FILE_OBJECT,
+        DACL_SECURITY_INFORMATION,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        &mut p_dacl,
+        std::ptr::null_mut(),
+        &mut p_sd,
+    );
+    if code != ERROR_SUCCESS {
+        if !p_sd.is_null() {
+            LocalFree(p_sd as HLOCAL);
+        }
+        return;
+    }
+    let trustee = TRUSTEE_W {
+        pMultipleTrustee: std::ptr::null_mut(),
+        MultipleTrusteeOperation: 0,
+        TrusteeForm: TRUSTEE_IS_SID,
+        TrusteeType: TRUSTEE_IS_UNKNOWN,
+        ptstrName: psid as *mut u16,
+    };
+    let mut explicit: EXPLICIT_ACCESS_W = std::mem::zeroed();
+    explicit.grfAccessPermissions = allow_mask;
+    explicit.grfAccessMode = 2; // SET_ACCESS
+    explicit.grfInheritance = 0;
+    explicit.Trustee = trustee;
+    let mut p_new_dacl: *mut ACL = std::ptr::null_mut();
+    let code2 = SetEntriesInAclW(1, &explicit, p_dacl, &mut p_new_dacl);
+    if code2 == ERROR_SUCCESS {
+        let _ = SetNamedSecurityInfoW(
+            to_wide(path).as_ptr() as *mut u16,
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            p_new_dacl,
+            std::ptr::null_mut(),
+        );
+        if !p_new_dacl.is_null() {
+            LocalFree(p_new_dacl as HLOCAL);
+        }
+    }
+    if !p_sd.is_null() {
+        LocalFree(p_sd as HLOCAL);
+    }
+}
+
 /// Grants access to the null device for the given SID to support stdout/stderr redirection.
 ///
 /// # Safety
@@ -654,12 +706,7 @@ pub unsafe fn allow_null_device(psid: *mut c_void) {
 /// # Safety
 /// Caller must ensure `psid` is a valid SID pointer.
 pub unsafe fn allow_named_pipe_device(psid: *mut c_void) {
-    allow_opened_object_path(
-        psid,
-        "\\\\.\\pipe\\",
-        SE_FILE_OBJECT,
-        FILE_FLAG_BACKUP_SEMANTICS,
-    );
+    allow_named_file_object_path(psid, "\\\\.\\pipe\\", FILE_DELETE_CHILD);
 }
 
 const CONTAINER_INHERIT_ACE: u32 = 0x2;

@@ -37,7 +37,7 @@ use windows_sys::Win32::Security::TOKEN_DUPLICATE;
 use windows_sys::Win32::Security::TOKEN_PRIVILEGES;
 use windows_sys::Win32::Security::TOKEN_QUERY;
 use windows_sys::Win32::Security::TOKEN_USER;
-use windows_sys::Win32::Security::WinBuiltinAnyPackageSid;
+use windows_sys::Win32::Security::WinBuiltinUsersSid;
 use windows_sys::Win32::Security::WinRestrictedCodeSid;
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
@@ -137,8 +137,8 @@ unsafe fn restricted_code_sid() -> Result<Vec<u8>> {
     well_known_sid(WinRestrictedCodeSid)
 }
 
-unsafe fn any_package_sid() -> Result<Vec<u8>> {
-    well_known_sid(WinBuiltinAnyPackageSid)
+unsafe fn builtin_users_sid() -> Result<Vec<u8>> {
+    well_known_sid(WinBuiltinUsersSid)
 }
 
 /// # Safety
@@ -426,10 +426,10 @@ unsafe fn create_token_with_caps_from(
     let psid_everyone = everyone.as_mut_ptr() as *mut c_void;
     let mut restricted_code = restricted_code_sid()?;
     let psid_restricted_code = restricted_code.as_mut_ptr() as *mut c_void;
-    let mut any_package = any_package_sid()?;
-    let psid_any_package = any_package.as_mut_ptr() as *mut c_void;
+    let mut builtin_users = builtin_users_sid()?;
+    let psid_builtin_users = builtin_users.as_mut_ptr() as *mut c_void;
 
-    // Exact order: Capabilities..., ExtraRestricting..., RestrictedCode, AnyPackage, Logon, Everyone
+    // Exact order: Capabilities..., ExtraRestricting..., RestrictedCode, BuiltinUsers, Logon, Everyone
     let mut entries: Vec<SID_AND_ATTRIBUTES> =
         vec![std::mem::zeroed(); psid_capabilities.len() + extra_restricting_sids.len() + 4];
     for (i, psid) in psid_capabilities.iter().enumerate() {
@@ -444,10 +444,10 @@ unsafe fn create_token_with_caps_from(
     let restricted_code_idx = extras_idx + extra_restricting_sids.len();
     entries[restricted_code_idx].Sid = psid_restricted_code;
     entries[restricted_code_idx].Attributes = 0;
-    let any_package_idx = restricted_code_idx + 1;
-    entries[any_package_idx].Sid = psid_any_package;
-    entries[any_package_idx].Attributes = 0;
-    let logon_idx = any_package_idx + 1;
+    let builtin_users_idx = restricted_code_idx + 1;
+    entries[builtin_users_idx].Sid = psid_builtin_users;
+    entries[builtin_users_idx].Attributes = 0;
+    let logon_idx = builtin_users_idx + 1;
     entries[logon_idx].Sid = psid_logon;
     entries[logon_idx].Attributes = 0;
     entries[logon_idx + 1].Sid = psid_everyone;

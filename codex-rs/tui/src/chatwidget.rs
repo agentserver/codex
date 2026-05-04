@@ -9229,9 +9229,10 @@ impl ChatWidget {
 
     pub(crate) fn set_service_tier_id(&mut self, service_tier_id: Option<String>) {
         self.config.service_tier_id = service_tier_id.clone();
-        self.config.service_tier = service_tier_id
-            .as_deref()
-            .and_then(ServiceTier::from_request_value);
+        self.config.service_tier = service_tier_id.as_deref().and_then(|service_tier_id| {
+            ServiceTier::from_request_value(service_tier_id)
+                .or_else(|| (service_tier_id == SPEED_TIER_FAST).then_some(ServiceTier::Fast))
+        });
         self.effective_service_tier = self.config.service_tier;
     }
 
@@ -9243,7 +9244,10 @@ impl ChatWidget {
         self.config
             .service_tier_id
             .as_deref()
-            .and_then(ServiceTier::from_request_value)
+            .and_then(|service_tier_id| {
+                ServiceTier::from_request_value(service_tier_id)
+                    .or_else(|| (service_tier_id == SPEED_TIER_FAST).then_some(ServiceTier::Fast))
+            })
             .or(self.config.service_tier)
     }
 

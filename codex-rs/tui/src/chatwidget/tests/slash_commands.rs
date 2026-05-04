@@ -1719,6 +1719,7 @@ async fn service_tier_slash_command_updates_and_persists_local_service_tier_id()
         )),
         "expected service-tier persistence app event; events: {events:?}"
     );
+    assert_eq!(chat.current_service_tier(), Some(ServiceTier::Fast));
 
     assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));
 }

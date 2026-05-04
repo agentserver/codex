@@ -2693,6 +2693,7 @@ dependencies = [
  "codex-test-binary-support",
  "codex-utils-absolute-path",
  "codex-utils-pty",
+ "codex-utils-rustls-provider",
  "ctor 0.6.3",
  "futures",
  "pretty_assertions",
@@ -2707,6 +2708,7 @@ dependencies = [
  "tokio-tungstenite",
  "tokio-util",
  "tracing",
+ "url",
  "uuid",
 ]
 

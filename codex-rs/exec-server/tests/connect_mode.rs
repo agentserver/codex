@@ -184,9 +184,166 @@ async fn exec_server_connect_mode_round_trip() -> anyhow::Result<()> {
     let decoded = BASE64_STANDARD.decode(&read.data_base64)?;
     assert_eq!(&decoded, payload);
 
-    // Tear down: closing the harness's WS triggers the spawned binary to exit.
+    // Tear down: closing the harness's WS triggers the spawned binary to exit
+    // with a non-zero status (the new "disconnect → Err" contract).
     drop(harness);
-    let _ = timeout(SPAWN_TIMEOUT, child.wait()).await;
+    let exit_status = timeout(SPAWN_TIMEOUT, child.wait())
+        .await?
+        .map_err(|err| anyhow!("waiting for child: {err}"))?;
+    assert!(
+        !exit_status.success(),
+        "expected non-zero exit on disconnect, got {exit_status:?}"
+    );
+    Ok(())
+}
+
+/// `--connect` with an obviously invalid URL should fail before the binary
+/// attempts to dial. This exercises the new `parse_connect_url` validator.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_server_connect_mode_rejects_unsupported_scheme() -> anyhow::Result<()> {
+    let helper_paths = test_codex_helper_paths()?;
+    let codex_home = TempDir::new()?;
+
+    let mut child = Command::new(&helper_paths.codex_exe);
+    child.args(["exec-server", "--connect", "http://example.com/wrong"]);
+    child.env("CODEX_HOME", codex_home.path());
+    child.stdin(Stdio::null());
+    child.stdout(Stdio::piped());
+    child.stderr(Stdio::piped());
+    child.kill_on_drop(true);
+    let child = child.spawn()?;
+
+    let output = timeout(SPAWN_TIMEOUT, child.wait_with_output())
+        .await?
+        .map_err(|err| anyhow!("waiting for child: {err}"))?;
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit, got {:?}",
+        output.status
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unsupported --connect URL")
+            || stderr.contains("expected `ws://` or `wss://`"),
+        "expected scheme rejection in stderr, got: {stderr}"
+    );
+    Ok(())
+}
+
+/// `--connect ws://<non-loopback-host>` together with `--auth-token-env`
+/// should be rejected to avoid leaking the bearer over cleartext.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_server_connect_mode_rejects_cleartext_bearer_to_remote_host() -> anyhow::Result<()> {
+    let helper_paths = test_codex_helper_paths()?;
+    let codex_home = TempDir::new()?;
+
+    let mut child = Command::new(&helper_paths.codex_exe);
+    child.args([
+        "exec-server",
+        "--connect",
+        "ws://example.com:9999/path",
+        "--auth-token-env",
+        "AGENTSERVER_TOKEN",
+    ]);
+    child.env("AGENTSERVER_TOKEN", "leak-me-not");
+    child.env("CODEX_HOME", codex_home.path());
+    child.stdin(Stdio::null());
+    child.stdout(Stdio::piped());
+    child.stderr(Stdio::piped());
+    child.kill_on_drop(true);
+    let child = child.spawn()?;
+
+    let output = timeout(SPAWN_TIMEOUT, child.wait_with_output())
+        .await?
+        .map_err(|err| anyhow!("waiting for child: {err}"))?;
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit, got {:?}",
+        output.status
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("auth tokens require `wss://`")
+            || stderr.contains("loopback"),
+        "expected cleartext-bearer rejection, got: {stderr}"
+    );
+    Ok(())
+}
+
+/// `--auth-token-env FOO` with `$FOO` unset should be a hard error, not
+/// silent fallback to anonymous. Previously the binary would silently
+/// dial without a token and let the remote return 401, masking the
+/// real problem (typo / missing export).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_server_connect_mode_rejects_missing_auth_env_var() -> anyhow::Result<()> {
+    let helper_paths = test_codex_helper_paths()?;
+    let codex_home = TempDir::new()?;
+
+    let mut child = Command::new(&helper_paths.codex_exe);
+    child.args([
+        "exec-server",
+        "--connect",
+        "ws://127.0.0.1:1/never",
+        "--auth-token-env",
+        "AGENTSERVER_TOKEN_THAT_IS_NOT_SET_xyz",
+    ]);
+    // Explicitly do NOT set the env var.
+    child.env_remove("AGENTSERVER_TOKEN_THAT_IS_NOT_SET_xyz");
+    child.env("CODEX_HOME", codex_home.path());
+    child.stdin(Stdio::null());
+    child.stdout(Stdio::piped());
+    child.stderr(Stdio::piped());
+    child.kill_on_drop(true);
+    let child = child.spawn()?;
+
+    let output = timeout(SPAWN_TIMEOUT, child.wait_with_output())
+        .await?
+        .map_err(|err| anyhow!("waiting for child: {err}"))?;
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit, got {:?}",
+        output.status
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("AGENTSERVER_TOKEN_THAT_IS_NOT_SET_xyz")
+            && (stderr.contains("unset") || stderr.contains("set, but")),
+        "expected unset-env diagnostic, got: {stderr}"
+    );
+    Ok(())
+}
+
+/// When the remote endpoint is unreachable, the binary should fail within
+/// CONNECT_TIMEOUT (~10s) rather than hang forever. Use port 1 (always
+/// closed in test environments) to provoke immediate `ECONNREFUSED`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_server_connect_mode_fails_fast_on_refused_connection() -> anyhow::Result<()> {
+    let helper_paths = test_codex_helper_paths()?;
+    let codex_home = TempDir::new()?;
+
+    let mut child = Command::new(&helper_paths.codex_exe);
+    child.args(["exec-server", "--connect", "ws://127.0.0.1:1/never"]);
+    child.env("CODEX_HOME", codex_home.path());
+    child.stdin(Stdio::null());
+    child.stdout(Stdio::piped());
+    child.stderr(Stdio::piped());
+    child.kill_on_drop(true);
+    let child = child.spawn()?;
+
+    // Should exit well within 5s when the port refuses immediately.
+    let output = timeout(SPAWN_TIMEOUT, child.wait_with_output())
+        .await?
+        .map_err(|err| anyhow!("waiting for child: {err}"))?;
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit, got {:?}",
+        output.status
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("failed to connect") || stderr.contains("connection refused"),
+        "expected connect-failure diagnostic, got: {stderr}"
+    );
     Ok(())
 }
 

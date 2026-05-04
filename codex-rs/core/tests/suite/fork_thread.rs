@@ -127,8 +127,9 @@ async fn fork_thread_twice_drops_to_first_message() {
         serde_json::to_value(&expected_after_first).unwrap()
     );
 
-    // Fork again with n=0. Because fork1 has no new user turn after its
-    // compact reference, this should preserve the same materialized history.
+    // Fork again with n=0. The first fork's raw rollout only contains a
+    // ForkReference, but truncation still applies to the materialized history
+    // referenced by that item.
     let NewThread {
         thread: codex_fork2,
         ..
@@ -145,7 +146,12 @@ async fn fork_thread_twice_drops_to_first_message() {
 
     let fork2_path = codex_fork2.rollout_path().expect("rollout path");
     // GetHistory on fork2 flushed; the file is ready.
-    let expected_after_second = fork1_items.clone();
+    let fork1_user_inputs = find_user_input_positions(&fork1_items);
+    let cut2 = fork1_user_inputs
+        .first()
+        .copied()
+        .unwrap_or(fork1_items.len());
+    let expected_after_second = fork1_items[..cut2].to_vec();
     let fork2_raw_items = read_rollout_items(&fork2_path);
     assert!(
         fork2_raw_items

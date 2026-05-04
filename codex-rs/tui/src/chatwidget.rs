@@ -9637,8 +9637,13 @@ impl ChatWidget {
         {
             self.budget_limited_turn_ids.insert(turn_id);
         }
+        let pause_active_goal_for_plan_mode =
+            goal.status == AppThreadGoalStatus::Active && self.is_plan_mode_active();
         self.current_goal_status = Some(GoalStatusState::new(goal, Instant::now()));
         self.update_collaboration_mode_indicator();
+        if pause_active_goal_for_plan_mode {
+            self.pause_active_goal_for_plan_mode_if_needed();
+        }
     }
 
     fn pause_active_goal_for_plan_mode_if_needed(&mut self) {
@@ -9651,6 +9656,8 @@ impl ChatWidget {
         let Some(thread_id) = self.thread_id else {
             return;
         };
+        // Goal continuation remains mode-agnostic below the TUI; Plan mode is
+        // client state, so the TUI owns pausing active goals while it is active.
         self.app_event_tx
             .send(AppEvent::PauseActiveGoalIfNeeded { thread_id });
     }

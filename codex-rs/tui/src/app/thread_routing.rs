@@ -1122,11 +1122,11 @@ impl App {
             return;
         }
 
+        // Older snapshots may not have persisted input_state. Replaying them
+        // keeps the current TUI collaboration mode, so use that as the fallback
+        // before app-server resume can continue an active goal.
         let plan_mode_active = snapshot.input_state.as_ref().map_or_else(
-            || {
-                self.current_displayed_thread_id() == Some(thread_id)
-                    && self.chat_widget.is_plan_mode_active()
-            },
+            || self.chat_widget.is_plan_mode_active(),
             ThreadInputState::is_plan_mode_active,
         );
         if plan_mode_active

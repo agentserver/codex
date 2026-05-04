@@ -1167,15 +1167,19 @@ fn refresh_snapshot_session_pauses_active_goal_before_plan_mode_resume() -> Resu
 
         let mut app_server =
             Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
-        let started = app_server.start_thread(&app.config).await?;
-        let thread_id = started.session.thread_id;
+        let displayed_started = app_server.start_thread(&app.config).await?;
+        let displayed_thread_id = displayed_started.session.thread_id;
         app.chat_widget
-            .handle_thread_session(started.session.clone());
+            .handle_thread_session(displayed_started.session.clone());
         let plan_mask =
             crate::collaboration_modes::plan_mask(app.chat_widget.model_catalog().as_ref())
                 .expect("expected plan collaboration mask");
         app.chat_widget.set_collaboration_mask(plan_mask);
         assert!(app.chat_widget.is_plan_mode_active());
+        assert_eq!(app.current_displayed_thread_id(), Some(displayed_thread_id));
+
+        let target_started = app_server.start_thread(&app.config).await?;
+        let thread_id = target_started.session.thread_id;
 
         let state_db = codex_state::StateRuntime::init(
             app.config.sqlite_home.clone(),
@@ -1185,11 +1189,11 @@ fn refresh_snapshot_session_pauses_active_goal_before_plan_mode_resume() -> Resu
         .expect("state db should initialize");
         let mut metadata = codex_state::ThreadMetadataBuilder::new(
             thread_id,
-            started
+            target_started
                 .session
                 .rollout_path
                 .clone()
-                .expect("started thread should have a rollout path"),
+                .expect("target thread should have a rollout path"),
             chrono::Utc::now(),
             codex_protocol::protocol::SessionSource::Cli,
         );

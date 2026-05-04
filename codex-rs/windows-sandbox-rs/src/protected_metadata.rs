@@ -146,7 +146,7 @@ mod tests {
         let created = temp_dir.path().join(".GIT");
         std::fs::create_dir_all(&created).expect("create metadata");
         let guard = prepare_protected_metadata_targets(&[ProtectedMetadataTarget {
-            path: target,
+            path: target.clone(),
             mode: ProtectedMetadataMode::MissingCreationMonitor,
         }]);
 

@@ -1,0 +1,50 @@
+# Release workflow for the agentserver/codex fork (distributed as "agentx").
+# To release:
+#   make agentx-release VERSION=0.128.0-agentx.1
+#   git push origin main && git push origin agentx-v0.128.0-agentx.1
+#
+# Upstream rust-release.yml is left untouched and stays dormant (we never push
+# rust-v* tags).
+
+name: agentx-release
+on:
+  push:
+    tags:
+      - "agentx-v*.*.*"
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write    # GitHub Release create + asset upload
+  id-token: write    # OIDC for any future cloud signing
+
+jobs:
+  tag-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Validate tag matches Cargo.toml version
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::Tag validation"
+
+          [[ "${GITHUB_REF_TYPE}" == "tag" ]] \
+            || { echo "❌  Not a tag push"; exit 1; }
+          # Accept either x.y.z (stable, will publish to winget/choco) or
+          # x.y.z-agentx.N (iteration, GitHub Release only). Same regex as
+          # the Makefile's agentx-release target.
+          [[ "${GITHUB_REF_NAME}" =~ ^agentx-v[0-9]+\.[0-9]+\.[0-9]+(-agentx\.[0-9]+)?$ ]] \
+            || { echo "❌  Tag '${GITHUB_REF_NAME}' doesn't match expected format"; exit 1; }
+
+          tag_ver="${GITHUB_REF_NAME#agentx-v}"
+          cargo_ver="$(grep -m1 '^version' codex-rs/Cargo.toml \
+                        | sed -E 's/version *= *"([^"]+)".*/\1/')"
+
+          [[ "${tag_ver}" == "${cargo_ver}" ]] \
+            || { echo "❌  Tag ${tag_ver} ≠ Cargo.toml ${cargo_ver}"; exit 1; }
+
+          echo "✅  Tag and Cargo.toml agree (${tag_ver})"
+          echo "::endgroup::"

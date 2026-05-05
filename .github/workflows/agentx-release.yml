@@ -244,3 +244,75 @@ jobs:
           name: agentx-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
+
+  release:
+    needs: [build-linux, build-macos, build-windows]
+    name: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.derive.outputs.version }}
+      clean_version: ${{ steps.derive.outputs.clean_version }}
+      tag: ${{ github.ref_name }}
+      is_stable: ${{ steps.derive.outputs.is_stable }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Generate release notes from tag commit message
+        id: release_notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          notes_path="${RUNNER_TEMP}/release-notes.md"
+          git log -1 --format=%B "${commit}" > "${notes_path}"
+          echo >> "${notes_path}"
+          echo "path=${notes_path}" >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: dist
+          pattern: agentx-*
+          merge-multiple: true
+
+      - name: List staged artifacts
+        run: ls -R dist/
+
+      - name: Regenerate combined SHA256SUMS across all platforms
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          rm -f SHA256SUMS
+          find . -maxdepth 1 -type f ! -name SHA256SUMS | sort | xargs sha256sum > SHA256SUMS.tmp
+          mv SHA256SUMS.tmp SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Derive version strings
+        id: derive
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#agentx-v}"     # 0.128.0-agentx.1
+          clean_version="${version%%-*}"            # 0.128.0
+          if [[ "${version}" == "${clean_version}" ]]; then
+            is_stable="true"
+          else
+            is_stable="false"
+          fi
+          {
+            echo "version=${version}"
+            echo "clean_version=${clean_version}"
+            echo "is_stable=${is_stable}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
+        with:
+          name: ${{ steps.derive.outputs.version }}
+          tag_name: ${{ github.ref_name }}
+          body_path: ${{ steps.release_notes.outputs.path }}
+          files: dist/**
+          prerelease: ${{ steps.derive.outputs.is_stable == 'false' }}

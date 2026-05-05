@@ -23,6 +23,9 @@ pub struct RemoteExecServerConnectArgs {
     pub connect_timeout: Duration,
     pub initialize_timeout: Duration,
     pub resume_session_id: Option<String>,
+    /// Optional bearer token attached as `Authorization: Bearer <token>` on
+    /// the websocket upgrade request. None = no auth header.
+    pub auth_token: Option<String>,
 }
 
 /// Sends HTTP requests through a runtime-selected transport.

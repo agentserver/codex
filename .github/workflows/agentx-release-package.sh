@@ -46,7 +46,16 @@ case "$PLATFORM" in
 
     workdir="$(mktemp -d)"
     cp "$src" "${workdir}/agentx.exe"
-    (cd "$workdir" && zip -q "${OUTDIR}/agentx-${TARGET}.exe.zip" agentx.exe)
+    archive="${OUTDIR}/agentx-${TARGET}.exe.zip"
+    # GitHub windows-latest's Git Bash has no `zip`; fall back to 7z (preinstalled).
+    if command -v zip >/dev/null 2>&1; then
+      (cd "$workdir" && zip -q "$archive" agentx.exe)
+    elif command -v 7z >/dev/null 2>&1; then
+      (cd "$workdir" && 7z a -tzip -bso0 -bsp0 "$archive" agentx.exe)
+    else
+      echo "neither zip nor 7z available" >&2
+      exit 1
+    fi
     rm -rf "$workdir"
     ;;
 

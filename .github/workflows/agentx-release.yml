@@ -79,6 +79,11 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: codex-rs
+          key: ${{ matrix.target }}
+
       - name: Install Linux bwrap build dependencies
         shell: bash
         run: |
@@ -225,6 +230,11 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: codex-rs
+          key: ${{ matrix.target }}
+
       - name: Cargo build (codex)
         shell: bash
         run: cargo build --target ${{ matrix.target }} --release --bin codex
@@ -321,6 +331,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
         with:
           targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: codex-rs
+          key: ${{ matrix.target }}
 
       - name: Cargo build (codex)
         shell: bash

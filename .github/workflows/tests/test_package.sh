@@ -18,7 +18,7 @@ pass() { echo "PASS: $1"; passed=$((passed + 1)); }
 with_tempdir() {
   local d
   d="$(mktemp -d)"
-  trap "rm -rf '$d'" RETURN
+  trap 'rm -rf "$d"' RETURN
   pushd "$d" > /dev/null
   "$@"
   popd > /dev/null

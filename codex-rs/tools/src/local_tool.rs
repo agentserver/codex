@@ -154,6 +154,15 @@ pub fn create_shell_tool(options: ShellToolOptions) -> ToolSpec {
                 "The timeout for the command in milliseconds".to_string(),
             )),
         ),
+        (
+            "environment_id".to_string(),
+            JsonSchema::string(Some(
+                "Optional. Identifier of the execution environment to run this command in. \
+                 Defaults to the primary environment for the turn. See <environments> in the \
+                 system prompt for available ids."
+                    .to_string(),
+            )),
+        ),
     ]);
     properties.extend(create_approval_parameters(
         options.exec_permission_approvals_enabled,

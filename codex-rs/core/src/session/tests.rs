@@ -4533,6 +4533,53 @@ async fn empty_turn_environments_clear_primary_environment() {
     assert_eq!(turn_context.config.cwd, session.get_config().await.cwd);
 }
 
+pub(crate) async fn make_test_turn_context_with_environments(
+    environments: Vec<TurnEnvironment>,
+) -> TurnContext {
+    let (_session, mut turn_context) = make_session_and_context().await;
+    turn_context.environments = environments;
+    turn_context
+}
+
+#[tokio::test]
+async fn select_environment_returns_named_when_id_matches() {
+    use crate::session::turn_context::TurnEnvironment;
+    let manager = codex_exec_server::EnvironmentManager::default_for_tests();
+    let env_a = manager.default_environment().expect("env");
+    let env_b = manager.default_environment().expect("env");
+    let cwd_a = codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
+        std::env::current_dir().expect("cwd").as_path(),
+    )
+    .expect("abs");
+    let cwd_b = cwd_a.clone();
+
+    let environments = vec![
+        TurnEnvironment {
+            environment_id: "exe_alpha".into(),
+            environment: env_a,
+            cwd: cwd_a,
+            shell: "/bin/sh".into(),
+        },
+        TurnEnvironment {
+            environment_id: "exe_beta".into(),
+            environment: env_b,
+            cwd: cwd_b,
+            shell: "/bin/sh".into(),
+        },
+    ];
+
+    let turn_context =
+        crate::session::tests::make_test_turn_context_with_environments(environments).await;
+
+    let chosen = turn_context.select_environment(Some("exe_beta")).expect("found");
+    assert_eq!(chosen.environment_id, "exe_beta");
+
+    let chosen_default = turn_context.select_environment(None).expect("default");
+    assert_eq!(chosen_default.environment_id, "exe_alpha");
+
+    assert!(turn_context.select_environment(Some("nope")).is_none());
+}
+
 #[tokio::test]
 async fn unknown_turn_environment_returns_error() {
     let (session, _turn_context, _rx) = make_session_and_context_with_rx().await;

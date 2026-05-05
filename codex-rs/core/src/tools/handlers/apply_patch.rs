@@ -346,12 +346,12 @@ impl ToolHandler for ApplyPatchHandler {
             ..
         } = invocation;
 
-        let patch_input = match payload {
+        let (patch_input, environment_id) = match payload {
             ToolPayload::Function { arguments } => {
                 let args: ApplyPatchToolArgs = parse_arguments(&arguments)?;
-                args.input
+                (args.input, args.environment_id)
             }
-            ToolPayload::Custom { input } => input,
+            ToolPayload::Custom { input } => (input, None),
             _ => {
                 return Err(FunctionCallError::RespondToModel(
                     "apply_patch handler received unsupported payload".to_string(),
@@ -412,7 +412,7 @@ impl ToolHandler for ApplyPatchHandler {
                                 .additional_permissions,
                             permissions_preapproved: effective_additional_permissions
                                 .permissions_preapproved,
-                            environment_id: None,
+                            environment_id: environment_id.clone(),
                         };
 
                         let mut orchestrator = ToolOrchestrator::new();

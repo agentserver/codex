@@ -286,3 +286,18 @@ fn write_permissions_for_paths_keep_dirs_outside_workspace_root() {
         Some(vec![expected_outside])
     );
 }
+
+#[test]
+fn apply_patch_args_carry_environment_id() {
+    let args_json = r#"{"input":"*** Begin Patch\n*** End Patch\n","environment_id":"exe_beta"}"#;
+    let args: codex_tools::ApplyPatchToolArgs = serde_json::from_str(args_json).expect("parse");
+    assert_eq!(args.environment_id.as_deref(), Some("exe_beta"));
+    assert!(args.input.contains("Begin Patch"));
+}
+
+#[test]
+fn apply_patch_args_environment_id_default_is_none() {
+    let args_json = r#"{"input":"*** Begin Patch\n*** End Patch\n"}"#;
+    let args: codex_tools::ApplyPatchToolArgs = serde_json::from_str(args_json).expect("parse");
+    assert!(args.environment_id.is_none());
+}

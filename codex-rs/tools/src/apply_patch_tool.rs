@@ -82,6 +82,8 @@ It is important to remember:
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApplyPatchToolArgs {
     pub input: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_id: Option<String>,
 }
 
 /// NOTE: the freeform (Lark grammar) variant does not currently expose

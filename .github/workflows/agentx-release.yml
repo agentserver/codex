@@ -316,3 +316,22 @@ jobs:
           body_path: ${{ steps.release_notes.outputs.path }}
           files: dist/**
           prerelease: ${{ steps.derive.outputs.is_stable == 'false' }}
+
+  winget:
+    name: winget
+    needs: release
+    if: ${{ needs.release.outputs.is_stable == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Publish to WinGet
+        uses: vedantmgoyal9/winget-releaser@7bd472be23763def6e16bd06cc8b1cdfab0e2fd5
+        with:
+          identifier: Agentserver.AgentX
+          version: ${{ needs.release.outputs.clean_version }}
+          release-tag: ${{ needs.release.outputs.tag }}
+          fork-user: agentserver
+          installers-regex: '^agentx-x86_64-pc-windows-msvc\.exe\.zip$'
+          token: ${{ secrets.WINGET_PUBLISH_PAT }}

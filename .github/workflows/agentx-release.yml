@@ -335,3 +335,57 @@ jobs:
           fork-user: agentserver
           installers-regex: '^agentx-x86_64-pc-windows-msvc\.exe\.zip$'
           token: ${{ secrets.WINGET_PUBLISH_PAT }}
+
+  choco:
+    name: chocolatey
+    needs: release
+    if: ${{ needs.release.outputs.is_stable == 'true' }}
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Stage chocolatey package
+        shell: bash
+        env:
+          VERSION:       ${{ needs.release.outputs.clean_version }}
+          TAG:           ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          asset="agentx-x86_64-pc-windows-msvc.exe.zip"
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${asset}"
+
+          mkdir -p staged/tools
+          curl -sSLo "staged/tools/${asset}" "$url"
+          sha256="$(sha256sum "staged/tools/${asset}" | awk '{print $1}')"
+          rm "staged/tools/${asset}"   # choco install script downloads it at install time
+
+          # Static files
+          cp .github/chocolatey/tools/chocolateyuninstall.ps1 staged/tools/
+          cp .github/chocolatey/tools/LICENSE.txt             staged/tools/
+          cp .github/chocolatey/tools/VERIFICATION.txt        staged/tools/
+
+          # Templated files
+          sed -e "s|__VERSION__|${VERSION}|g" \
+              .github/chocolatey/agentx.nuspec.template \
+              > staged/agentx.nuspec
+
+          sed -e "s|__URL64__|${url}|g" \
+              -e "s|__SHA256_64__|${sha256}|g" \
+              .github/chocolatey/tools/chocolateyinstall.ps1.template \
+              > staged/tools/chocolateyinstall.ps1
+
+          ls -R staged/
+
+      - name: Pack and push
+        shell: pwsh
+        env:
+          CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
+        working-directory: staged
+        run: |
+          choco pack agentx.nuspec
+          choco push agentx.${{ needs.release.outputs.clean_version }}.nupkg `
+            --api-key "$env:CHOCO_API_KEY" `
+            --source "https://push.chocolatey.org/"

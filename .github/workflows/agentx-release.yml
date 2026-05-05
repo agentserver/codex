@@ -485,3 +485,77 @@ jobs:
           choco push agentx.${{ needs.release.outputs.clean_version }}.nupkg `
             --api-key "$env:CHOCO_API_KEY" `
             --source "https://push.chocolatey.org/"
+
+  homebrew:
+    name: homebrew-tap
+    needs: release
+    if: ${{ needs.release.outputs.is_stable == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Compute SHA256 for each platform asset
+        id: shas
+        shell: bash
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          declare -A assets=(
+            [macos_arm]=agentx-aarch64-apple-darwin.tar.gz
+            [macos_intel]=agentx-x86_64-apple-darwin.tar.gz
+            [linux_arm]=agentx-aarch64-unknown-linux-musl.tar.gz
+            [linux_intel]=agentx-x86_64-unknown-linux-musl.tar.gz
+          )
+          {
+            for key in macos_arm macos_intel linux_arm linux_intel; do
+              asset="${assets[$key]}"
+              tmp="$(mktemp)"
+              curl -sSLo "$tmp" "${base}/${asset}"
+              sha="$(sha256sum "$tmp" | awk '{print $1}')"
+              rm "$tmp"
+              echo "${key}=${sha}"
+            done
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Render cask file
+        env:
+          VERSION: ${{ needs.release.outputs.clean_version }}
+          SHA256_MACOS_ARM: ${{ steps.shas.outputs.macos_arm }}
+          SHA256_MACOS_INTEL: ${{ steps.shas.outputs.macos_intel }}
+          SHA256_LINUX_ARM: ${{ steps.shas.outputs.linux_arm }}
+          SHA256_LINUX_INTEL: ${{ steps.shas.outputs.linux_intel }}
+        run: |
+          set -euo pipefail
+          mkdir -p rendered/Casks
+          sed -e "s|__VERSION__|${VERSION}|g" \
+              -e "s|__SHA256_MACOS_ARM__|${SHA256_MACOS_ARM}|g" \
+              -e "s|__SHA256_MACOS_INTEL__|${SHA256_MACOS_INTEL}|g" \
+              -e "s|__SHA256_LINUX_ARM__|${SHA256_LINUX_ARM}|g" \
+              -e "s|__SHA256_LINUX_INTEL__|${SHA256_LINUX_INTEL}|g" \
+              .github/homebrew/agentx.rb.template \
+              > rendered/Casks/agentx.rb
+          cat rendered/Casks/agentx.rb
+
+      - name: Push cask to agentserver/homebrew-tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_PAT }}
+          VERSION: ${{ needs.release.outputs.clean_version }}
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/agentserver/homebrew-tap.git" tap
+          cp rendered/Casks/agentx.rb tap/Casks/agentx.rb
+          cd tap
+          git config user.name  "agentx-release-bot"
+          git config user.email "agentx-release-bot@users.noreply.github.com"
+          git add Casks/agentx.rb
+          if git diff --cached --quiet; then
+            echo "No cask changes to push (already at ${VERSION})."
+            exit 0
+          fi
+          git commit -m "agentx ${VERSION}"
+          git push origin HEAD

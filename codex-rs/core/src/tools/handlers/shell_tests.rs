@@ -218,6 +218,7 @@ async fn shell_pre_tool_use_payload_uses_joined_command() {
             prefix_rule: None,
             additional_permissions: None,
             justification: None,
+            environment_id: None,
         },
     };
     let (session, turn) = make_session_and_context().await;

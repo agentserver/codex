@@ -253,6 +253,7 @@ impl ToolRouter {
                             additional_permissions: None,
                             prefix_rule: None,
                             justification: None,
+                            environment_id: None,
                         };
                         Ok(Some(ToolCall {
                             tool_name: ToolName::plain("local_shell"),

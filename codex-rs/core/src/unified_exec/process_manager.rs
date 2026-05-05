@@ -1037,6 +1037,7 @@ impl UnifiedExecProcessManager {
             additional_permissions_preapproved: request.additional_permissions_preapproved,
             justification: request.justification.clone(),
             exec_approval_requirement,
+            environment_id: None,
         };
         let tool_ctx = ToolCtx {
             session: context.session.clone(),

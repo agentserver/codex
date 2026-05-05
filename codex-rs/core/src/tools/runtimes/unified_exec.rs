@@ -69,6 +69,11 @@ pub struct UnifiedExecRequest {
     pub additional_permissions_preapproved: bool,
     pub justification: Option<String>,
     pub exec_approval_requirement: ExecApprovalRequirement,
+    /// Optional environment id requested by the LLM via the `shell` tool's
+    /// `environment_id` JSON property. `None` selects the primary environment.
+    /// Per spec § P2, this is plumbed through to `select_environment` at
+    /// runtime.
+    pub environment_id: Option<String>,
 }
 
 /// Cache key for approval decisions that can be reused across equivalent
@@ -254,7 +259,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
         }
         let environment_is_remote = ctx
             .turn
-            .primary_environment()
+            .select_environment(req.environment_id.as_deref())
             .is_some_and(|turn_environment| turn_environment.environment.is_remote());
         let command = if environment_is_remote {
             base_command.to_vec()
@@ -292,9 +297,9 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
             .await?
             {
                 Some(prepared) => {
-                    let Some(turn_environment) = ctx.turn.primary_environment() else {
+                    let Some(turn_environment) = ctx.turn.select_environment(req.environment_id.as_deref()) else {
                         return Err(ToolError::Rejected(
-                            "exec_command is unavailable in this session".to_string(),
+                            unknown_environment_message(req.environment_id.as_deref(), &ctx.turn.environments)
                         ));
                     };
                     if turn_environment.environment.is_remote() {
@@ -337,9 +342,9 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
             .env_for(command, options, managed_network)
             .map_err(|err| ToolError::Codex(err.into()))?;
         exec_env.exec_server_env_config = req.exec_server_env_config.clone();
-        let Some(turn_environment) = ctx.turn.primary_environment() else {
+        let Some(turn_environment) = ctx.turn.select_environment(req.environment_id.as_deref()) else {
             return Err(ToolError::Rejected(
-                "exec_command is unavailable in this session".to_string(),
+                unknown_environment_message(req.environment_id.as_deref(), &ctx.turn.environments)
             ));
         };
         self.manager
@@ -363,11 +368,63 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
     }
 }
 
+fn unknown_environment_message(
+    requested: Option<&str>,
+    environments: &[crate::session::turn_context::TurnEnvironment],
+) -> String {
+    match requested {
+        Some(id) => {
+            let available: Vec<&str> = environments
+                .iter()
+                .map(|e| e.environment_id.as_str())
+                .collect();
+            if environments.is_empty() {
+                format!("environment_id `{id}` is not available: this turn has no environments")
+            } else {
+                format!(
+                    "environment_id `{id}` not found; available: [{}]",
+                    available.join(", ")
+                )
+            }
+        }
+        None => "exec_command is unavailable in this session".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::exec::DEFAULT_EXEC_COMMAND_TIMEOUT_MS;
     use std::time::Duration;
+
+    #[test]
+    fn unified_exec_request_carries_environment_id() {
+        let req = UnifiedExecRequest {
+            command: vec!["true".to_string()],
+            hook_command: String::new(),
+            process_id: 0,
+            cwd: codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
+                std::env::current_dir().expect("cwd").as_path(),
+            )
+            .expect("abs"),
+            env: Default::default(),
+            exec_server_env_config: None,
+            explicit_env_overrides: Default::default(),
+            network: None,
+            tty: false,
+            sandbox_permissions: Default::default(),
+            additional_permissions: None,
+            #[cfg(unix)]
+            additional_permissions_preapproved: false,
+            justification: None,
+            exec_approval_requirement: ExecApprovalRequirement::Skip {
+                bypass_sandbox: false,
+                proposed_execpolicy_amendment: None,
+            },
+            environment_id: Some("exe_beta".to_string()),
+        };
+        assert_eq!(req.environment_id.as_deref(), Some("exe_beta"));
+    }
 
     #[test]
     fn unified_exec_options_combines_default_timeout_with_network_denial_cancellation() {

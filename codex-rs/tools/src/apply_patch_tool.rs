@@ -84,6 +84,11 @@ pub struct ApplyPatchToolArgs {
     pub input: String,
 }
 
+/// NOTE: the freeform (Lark grammar) variant does not currently expose
+/// `environment_id`. Multi-environment dispatch is only available via the
+/// JSON variant (`create_apply_patch_json_tool`). Models that use the
+/// freeform variant always target the primary environment. (Per spec § P3.)
+///
 /// Returns a custom tool that can be used to edit files. Well-suited for GPT-5 models
 /// https://platform.openai.com/docs/guides/function-calling#custom-tools
 pub fn create_apply_patch_freeform_tool() -> ToolSpec {
@@ -100,12 +105,23 @@ pub fn create_apply_patch_freeform_tool() -> ToolSpec {
 
 /// Returns a json tool that can be used to edit files. Should only be used with gpt-oss models
 pub fn create_apply_patch_json_tool() -> ToolSpec {
-    let properties = BTreeMap::from([(
-        "input".to_string(),
-        JsonSchema::string(Some(
-            "The entire contents of the apply_patch command".to_string(),
-        )),
-    )]);
+    let properties = BTreeMap::from([
+        (
+            "input".to_string(),
+            JsonSchema::string(Some(
+                "The entire contents of the apply_patch command".to_string(),
+            )),
+        ),
+        (
+            "environment_id".to_string(),
+            JsonSchema::string(Some(
+                "Optional. Identifier of the execution environment to apply this patch in. \
+                 Defaults to the primary environment for the turn. See <environments> in the \
+                 system prompt for available ids."
+                    .to_string(),
+            )),
+        ),
+    ]);
 
     ToolSpec::Function(ResponsesApiTool {
         name: "apply_patch".to_string(),

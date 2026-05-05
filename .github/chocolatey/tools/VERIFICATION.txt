@@ -1,0 +1,14 @@
+VERIFICATION
+
+agentx is built from open-source code at https://github.com/agentserver/codex
+(a fork of https://github.com/openai/codex).
+
+The Chocolatey package downloads the official Windows release asset published
+to the GitHub Release for the corresponding tag and verifies its SHA256
+checksum (recorded in chocolateyinstall.ps1 at package time).
+
+To verify a downloaded asset matches the published checksum, run:
+
+    Get-FileHash -Algorithm SHA256 <downloaded-file>
+
+and compare to the value in tools\chocolateyinstall.ps1.

@@ -1,0 +1,19 @@
+$ErrorActionPreference = 'Stop'
+
+$packageName = 'agentx'
+$url64       = '__URL64__'
+$checksum64  = '__SHA256_64__'
+
+$packageArgs = @{
+  packageName    = $packageName
+  url64bit       = $url64
+  checksumType64 = 'sha256'
+  checksum64     = $checksum64
+  unzipLocation  = "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)"
+}
+
+Install-ChocolateyZipPackage @packageArgs
+
+# Mark the unzipped agentx.exe as a shim (Chocolatey auto-shims executables in
+# tools\ directory, so this is informational).
+Write-Host "agentx installed via Chocolatey. Run 'agentx --help' to get started."

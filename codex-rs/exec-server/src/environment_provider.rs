@@ -21,6 +21,14 @@ pub trait EnvironmentProvider: Send + Sync {
         &self,
         local_runtime_paths: &ExecServerRuntimePaths,
     ) -> Result<HashMap<String, Environment>, ExecServerError>;
+
+    /// Returns the id of the environment that should be the session default.
+    /// Default impl returns None (preserves existing `DefaultEnvironmentProvider`
+    /// behavior, which lets `EnvironmentManager::from_environments` fall back
+    /// to its REMOTE/LOCAL heuristic).
+    fn default_environment_id(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// Default provider backed by `CODEX_EXEC_SERVER_URL`.
@@ -210,13 +218,14 @@ impl ManifestEnvironmentProvider {
         }
     }
 
-    pub fn default_environment_id(&self) -> Option<&str> {
-        Some(self.default_environment_id.as_str())
-    }
 }
 
 #[async_trait]
 impl EnvironmentProvider for ManifestEnvironmentProvider {
+    fn default_environment_id(&self) -> Option<&str> {
+        Some(self.default_environment_id.as_str())
+    }
+
     async fn get_environments(
         &self,
         local_runtime_paths: &ExecServerRuntimePaths,

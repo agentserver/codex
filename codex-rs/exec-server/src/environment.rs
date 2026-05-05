@@ -84,14 +84,44 @@ impl EnvironmentManager {
         Self::from_default_provider_url(exec_server_url, local_runtime_paths).await
     }
 
-    /// Builds a manager from `CODEX_EXEC_SERVER_URL` and local runtime paths
-    /// used when creating local filesystem helpers.
+    /// Builds a manager. When `CODEX_EXEC_SERVERS_JSON` is set, loads the
+    /// multi-env manifest (per spec § P1). Otherwise falls back to the
+    /// legacy `CODEX_EXEC_SERVER_URL` single-URL path (byte-identical to
+    /// upstream codex). When both are set, manifest wins and a warning is
+    /// logged.
     pub async fn new(args: EnvironmentManagerArgs) -> Self {
         let EnvironmentManagerArgs {
             local_runtime_paths,
         } = args;
-        let exec_server_url = std::env::var(CODEX_EXEC_SERVER_URL_ENV_VAR).ok();
-        Self::from_default_provider_url(exec_server_url, local_runtime_paths).await
+        let single_url = std::env::var(CODEX_EXEC_SERVER_URL_ENV_VAR).ok();
+        match crate::environment_provider::ManifestEnvironmentProvider::from_env() {
+            Ok(Some(manifest_provider)) => {
+                if single_url.is_some() {
+                    tracing::warn!(
+                        "both CODEX_EXEC_SERVERS_JSON and CODEX_EXEC_SERVER_URL are set; \
+                         manifest takes precedence and CODEX_EXEC_SERVER_URL is ignored"
+                    );
+                }
+                match Self::from_provider(&manifest_provider, local_runtime_paths.clone()).await {
+                    Ok(manager) => manager,
+                    Err(err) => {
+                        tracing::error!(
+                            "failed to build EnvironmentManager from manifest: {err}; \
+                             falling back to CODEX_EXEC_SERVER_URL path"
+                        );
+                        Self::from_default_provider_url(single_url, local_runtime_paths).await
+                    }
+                }
+            }
+            Ok(None) => Self::from_default_provider_url(single_url, local_runtime_paths).await,
+            Err(err) => {
+                tracing::error!(
+                    "failed to load manifest from CODEX_EXEC_SERVERS_JSON: {err}; \
+                     falling back to CODEX_EXEC_SERVER_URL path"
+                );
+                Self::from_default_provider_url(single_url, local_runtime_paths).await
+            }
+        }
     }
 
     async fn from_default_provider_url(
@@ -110,7 +140,10 @@ impl EnvironmentManager {
         manager
     }
 
-    /// Builds a manager from a provider-supplied startup snapshot.
+    /// Builds a manager from a provider-supplied startup snapshot. The
+    /// provider's `default_environment_id()` is honored when set; otherwise
+    /// the existing REMOTE/LOCAL heuristic is used (matches legacy behavior
+    /// for `DefaultEnvironmentProvider`).
     pub async fn from_provider<P>(
         provider: &P,
         local_runtime_paths: ExecServerRuntimePaths,
@@ -118,10 +151,14 @@ impl EnvironmentManager {
     where
         P: EnvironmentProvider + ?Sized,
     {
-        Self::from_provider_environments(
-            provider.get_environments(&local_runtime_paths).await?,
-            local_runtime_paths,
-        )
+        let environments = provider.get_environments(&local_runtime_paths).await?;
+        let provider_default = provider.default_environment_id().map(str::to_owned);
+        let mut manager = Self::from_provider_environments(environments, local_runtime_paths)?;
+        if let Some(default_id) = provider_default {
+            // Provider's default wins over the heuristic.
+            manager.default_environment = Some(default_id);
+        }
+        Ok(manager)
     }
 
     fn from_provider_environments(
@@ -584,6 +621,35 @@ mod tests {
         );
         assert!(environment.is_remote());
         assert_eq!(environment.exec_server_url(), Some("ws://127.0.0.1:8765"));
+    }
+
+    #[tokio::test]
+    async fn manager_builds_from_manifest_provider_with_explicit_default() {
+        unsafe { std::env::set_var("P1_MGR_TOK", "tok-x"); }
+        let mut tmp = tempfile::NamedTempFile::new().expect("temp");
+        std::io::Write::write_all(
+            tmp.as_file_mut(),
+            br#"{
+                "default_environment_id": "exe_two",
+                "environments": [
+                    {"id": "exe_one", "url": "ws://h/1", "auth_token_env": "P1_MGR_TOK"},
+                    {"id": "exe_two", "url": "ws://h/2", "auth_token_env": "P1_MGR_TOK"}
+                ]
+            }"#,
+        )
+        .expect("write");
+        let provider =
+            crate::environment_provider::ManifestEnvironmentProvider::from_path(tmp.path().to_path_buf())
+                .expect("provider");
+
+        let manager = super::EnvironmentManager::from_provider(&provider, test_runtime_paths())
+            .await
+            .expect("manager");
+
+        assert_eq!(manager.default_environment_id(), Some("exe_two"));
+        assert!(manager.get_environment("exe_one").is_some());
+        assert!(manager.get_environment("exe_two").is_some());
+        assert!(manager.default_environment().expect("env").is_remote());
     }
 
     #[tokio::test]

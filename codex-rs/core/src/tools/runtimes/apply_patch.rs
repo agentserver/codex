@@ -43,6 +43,10 @@ pub struct ApplyPatchRequest {
     pub exec_approval_requirement: ExecApprovalRequirement,
     pub additional_permissions: Option<AdditionalPermissionProfile>,
     pub permissions_preapproved: bool,
+    /// Optional environment id requested by the LLM via the `apply_patch`
+    /// tool's `environment_id` JSON property. `None` selects the primary
+    /// environment. See spec § P2.
+    pub environment_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -191,9 +195,29 @@ impl ToolRuntime<ApplyPatchRequest, ExecToolCallOutput> for ApplyPatchRuntime {
         attempt: &SandboxAttempt<'_>,
         ctx: &ToolCtx,
     ) -> Result<ExecToolCallOutput, ToolError> {
-        let turn_environment = ctx.turn.primary_environment().ok_or_else(|| {
-            ToolError::Rejected("apply_patch is unavailable in this session".to_string())
-        })?;
+        let turn_environment = ctx
+            .turn
+            .select_environment(req.environment_id.as_deref())
+            .ok_or_else(|| {
+                let available: Vec<&str> = ctx
+                    .turn
+                    .environments
+                    .iter()
+                    .map(|e| e.environment_id.as_str())
+                    .collect();
+                match req.environment_id.as_deref() {
+                    Some(id) if ctx.turn.environments.is_empty() => ToolError::Rejected(format!(
+                        "environment_id `{id}` is not available: this turn has no environments"
+                    )),
+                    Some(id) => ToolError::Rejected(format!(
+                        "environment_id `{id}` not found; available: [{}]",
+                        available.join(", ")
+                    )),
+                    None => ToolError::Rejected(
+                        "apply_patch is unavailable in this session".to_string(),
+                    ),
+                }
+            })?;
         let started_at = Instant::now();
         let fs = turn_environment.environment.get_filesystem();
         let sandbox = Self::file_system_sandbox_context_for_attempt(req, attempt);

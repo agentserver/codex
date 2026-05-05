@@ -63,6 +63,7 @@ fn guardian_review_request_includes_patch_context() {
         },
         additional_permissions: None,
         permissions_preapproved: false,
+        environment_id: None,
     };
 
     let guardian_request = ApplyPatchRuntime::build_guardian_review_request(&request, "call-1");
@@ -96,6 +97,7 @@ fn permission_request_payload_uses_apply_patch_hook_name_and_aliases() {
         },
         additional_permissions: None,
         permissions_preapproved: false,
+        environment_id: None,
     };
 
     let payload = runtime
@@ -135,6 +137,7 @@ fn file_system_sandbox_context_uses_active_attempt() {
         },
         additional_permissions: Some(additional_permissions.clone()),
         permissions_preapproved: false,
+        environment_id: None,
     };
     let sandbox_policy = SandboxPolicy::new_read_only_policy();
     let file_system_policy = FileSystemSandboxPolicy::from(&sandbox_policy);
@@ -192,6 +195,7 @@ fn no_sandbox_attempt_has_no_file_system_context() {
         },
         additional_permissions: None,
         permissions_preapproved: false,
+        environment_id: None,
     };
     let permissions = PermissionProfile::Disabled;
     let manager = SandboxManager::new();
@@ -212,4 +216,24 @@ fn no_sandbox_attempt_has_no_file_system_context() {
         ApplyPatchRuntime::file_system_sandbox_context_for_attempt(&req, &attempt),
         None
     );
+}
+
+#[test]
+fn apply_patch_request_carries_environment_id() {
+    let path = std::env::temp_dir()
+        .join("apply-patch-environment-id.txt")
+        .abs();
+    let req = ApplyPatchRequest {
+        action: ApplyPatchAction::new_add_for_test(&path, "hello".to_string()),
+        file_paths: Vec::new(),
+        changes: HashMap::new(),
+        exec_approval_requirement: ExecApprovalRequirement::Skip {
+            bypass_sandbox: false,
+            proposed_execpolicy_amendment: None,
+        },
+        additional_permissions: None,
+        permissions_preapproved: false,
+        environment_id: Some("exe_gamma".to_string()),
+    };
+    assert_eq!(req.environment_id.as_deref(), Some("exe_gamma"));
 }

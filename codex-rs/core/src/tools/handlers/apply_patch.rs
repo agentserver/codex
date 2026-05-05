@@ -412,6 +412,7 @@ impl ToolHandler for ApplyPatchHandler {
                                 .additional_permissions,
                             permissions_preapproved: effective_additional_permissions
                                 .permissions_preapproved,
+                            environment_id: None,
                         };
 
                         let mut orchestrator = ToolOrchestrator::new();
@@ -519,6 +520,7 @@ pub(crate) async fn intercept_apply_patch(
                             .additional_permissions,
                         permissions_preapproved: effective_additional_permissions
                             .permissions_preapproved,
+                        environment_id: None,
                     };
 
                     let mut orchestrator = ToolOrchestrator::new();

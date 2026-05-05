@@ -270,11 +270,26 @@ impl Environment {
         }
     }
 
+    /// Backwards-compatible constructor for the single-URL legacy path. New
+    /// callers should prefer `remote_with_auth` to attach a per-env bearer
+    /// token.
     pub(crate) fn remote_inner(
         exec_server_url: String,
         local_runtime_paths: Option<ExecServerRuntimePaths>,
     ) -> Self {
-        let client = LazyRemoteExecServerClient::new(exec_server_url.clone());
+        Self::remote_with_auth(exec_server_url, /*auth_token*/ None, local_runtime_paths)
+    }
+
+    /// Builds a remote environment whose websocket dial attaches an
+    /// `Authorization: Bearer <token>` header when `auth_token.is_some()`.
+    /// Used by `ManifestEnvironmentProvider` (P1) to honor each manifest
+    /// entry's `auth_token_env`-resolved value.
+    pub fn remote_with_auth(
+        exec_server_url: String,
+        auth_token: Option<String>,
+        local_runtime_paths: Option<ExecServerRuntimePaths>,
+    ) -> Self {
+        let client = LazyRemoteExecServerClient::with_auth(exec_server_url.clone(), auth_token);
         let exec_backend: Arc<dyn ExecBackend> = Arc::new(RemoteProcess::new(client.clone()));
         let filesystem: Arc<dyn ExecutorFileSystem> =
             Arc::new(RemoteFileSystem::new(client.clone()));
@@ -548,6 +563,27 @@ mod tests {
             .expect("start process");
 
         assert_eq!(response.process.process_id().as_str(), "default-env-proc");
+    }
+
+    #[tokio::test]
+    async fn remote_with_auth_constructs_remote_environment_with_token() {
+        let environment = super::Environment::remote_with_auth(
+            "ws://127.0.0.1:8765".to_string(),
+            Some("test-token".to_string()),
+            /*local_runtime_paths*/ None,
+        );
+        assert!(environment.is_remote());
+        assert_eq!(environment.exec_server_url(), Some("ws://127.0.0.1:8765"));
+    }
+
+    #[tokio::test]
+    async fn remote_inner_still_works_for_callers_that_pass_no_auth() {
+        let environment = super::Environment::remote_inner(
+            "ws://127.0.0.1:8765".to_string(),
+            /*local_runtime_paths*/ None,
+        );
+        assert!(environment.is_remote());
+        assert_eq!(environment.exec_server_url(), Some("ws://127.0.0.1:8765"));
     }
 
     #[tokio::test]

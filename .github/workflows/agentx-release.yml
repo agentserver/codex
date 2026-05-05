@@ -101,3 +101,102 @@ jobs:
           name: agentx-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
+
+  build-macos:
+    needs: tag-check
+    name: build-macos - ${{ matrix.target }}
+    runs-on: macos-15
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: codex-rs
+    env:
+      CARGO_PROFILE_RELEASE_LTO: "thin"
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+          - target: x86_64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cargo build (codex)
+        shell: bash
+        run: cargo build --target ${{ matrix.target }} --release --bin codex
+
+      - name: MacOS code signing (binary)
+        uses: ./.github/actions/macos-code-sign
+        with:
+          target: ${{ matrix.target }}
+          binaries: codex
+          sign-binaries: "true"
+          sign-dmg: "false"
+          apple-certificate: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          apple-certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          apple-notarization-key-p8: ${{ secrets.APPLE_NOTARIZATION_KEY_P8 }}
+          apple-notarization-key-id: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+          apple-notarization-issuer-id: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+
+      - name: Build macOS dmg
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          release_dir="target/${target}/release"
+          dmg_root="${RUNNER_TEMP}/agentx-dmg-root"
+          # The dmg file name stays codex-... here so the next macos-code-sign
+          # step (which hardcodes that path) can find it. We rename to agentx-*
+          # in the packaging step after signing+stapling.
+          dmg_path="${release_dir}/codex-${target}.dmg"
+          volname="AgentX (${target})"
+
+          rm -rf "$dmg_root"
+          mkdir -p "$dmg_root"
+          # Inside the dmg the binary is named 'agentx' for end-user clarity.
+          ditto "${release_dir}/codex" "${dmg_root}/agentx"
+
+          rm -f "$dmg_path"
+          hdiutil create \
+            -volname "$volname" \
+            -srcfolder "$dmg_root" \
+            -format UDZO \
+            -ov \
+            "$dmg_path"
+
+          [[ -f "$dmg_path" ]] || { echo "dmg missing"; exit 1; }
+
+      - name: MacOS code signing (dmg)
+        uses: ./.github/actions/macos-code-sign
+        with:
+          target: ${{ matrix.target }}
+          sign-binaries: "false"
+          sign-dmg: "true"
+          apple-certificate: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          apple-certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          apple-notarization-key-p8: ${{ secrets.APPLE_NOTARIZATION_KEY_P8 }}
+          apple-notarization-key-id: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+          apple-notarization-issuer-id: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+
+      - name: Package as agentx-${{ matrix.target }}.{tar.gz,dmg}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          TARGET: ${{ matrix.target }}
+          PLATFORM: macos
+          OUTDIR: ${{ github.workspace }}/dist
+        run: bash .github/workflows/agentx-release-package.sh
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: agentx-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error

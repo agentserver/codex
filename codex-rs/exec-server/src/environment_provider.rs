@@ -111,6 +111,135 @@ pub struct ManifestEntry {
     pub description: Option<String>,
 }
 
+use std::path::PathBuf;
+
+/// Provider that loads a JSON manifest of multiple remote environments.
+///
+/// Activated by setting `CODEX_EXEC_SERVERS_JSON=<path>`. See spec § P1 for
+/// the manifest schema and selection semantics.
+#[derive(Debug, Clone)]
+pub struct ManifestEnvironmentProvider {
+    manifest: ManifestFile,
+    default_environment_id: String,
+}
+
+impl ManifestEnvironmentProvider {
+    /// Reads + validates a manifest from disk. Returns an error for
+    /// malformed JSON, empty `environments[]`, duplicate ids, or a
+    /// `default_environment_id` not present in `environments`.
+    ///
+    /// Note: this validation runs at construction; the per-entry
+    /// `auth_token_env` lookup is deferred to `get_environments` because
+    /// the env var may be set after the provider is constructed in some
+    /// test setups. (Production code reads it eagerly via the env var
+    /// CODEX_EXEC_GATEWAY_TOKEN already set by codex-app-gateway before
+    /// spawning `codex exec`.)
+    pub fn from_path(path: PathBuf) -> Result<Self, ExecServerError> {
+        let bytes = std::fs::read(&path).map_err(|err| {
+            ExecServerError::Protocol(format!(
+                "failed to read manifest at {}: {err}",
+                path.display()
+            ))
+        })?;
+        let manifest: ManifestFile = serde_json::from_slice(&bytes).map_err(|err| {
+            ExecServerError::Protocol(format!(
+                "failed to parse manifest at {}: {err}",
+                path.display()
+            ))
+        })?;
+
+        if manifest.environments.is_empty() {
+            return Err(ExecServerError::Protocol(
+                "manifest environments list is empty".to_string(),
+            ));
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        for entry in &manifest.environments {
+            if entry.id.is_empty() {
+                return Err(ExecServerError::Protocol(
+                    "manifest entry has empty id".to_string(),
+                ));
+            }
+            if !seen.insert(entry.id.clone()) {
+                return Err(ExecServerError::Protocol(format!(
+                    "manifest contains duplicate environment id: {}",
+                    entry.id
+                )));
+            }
+            if entry.url.is_empty() {
+                return Err(ExecServerError::Protocol(format!(
+                    "manifest entry {} has empty url",
+                    entry.id
+                )));
+            }
+            if entry.auth_token_env.is_empty() {
+                return Err(ExecServerError::Protocol(format!(
+                    "manifest entry {} has empty auth_token_env",
+                    entry.id
+                )));
+            }
+        }
+
+        let default_environment_id = match &manifest.default_environment_id {
+            Some(id) => {
+                if !seen.contains(id) {
+                    return Err(ExecServerError::Protocol(format!(
+                        "default_environment_id `{id}` is not in environments[]"
+                    )));
+                }
+                id.clone()
+            }
+            None => manifest.environments[0].id.clone(),
+        };
+
+        Ok(Self {
+            manifest,
+            default_environment_id,
+        })
+    }
+
+    /// Convenience: build from `CODEX_EXEC_SERVERS_JSON`. Returns Ok(None)
+    /// when the var is unset.
+    pub fn from_env() -> Result<Option<Self>, ExecServerError> {
+        match std::env::var(CODEX_EXEC_SERVERS_JSON_ENV_VAR) {
+            Ok(path) if !path.trim().is_empty() => {
+                Self::from_path(PathBuf::from(path)).map(Some)
+            }
+            _ => Ok(None),
+        }
+    }
+
+    pub fn default_environment_id(&self) -> Option<&str> {
+        Some(self.default_environment_id.as_str())
+    }
+}
+
+#[async_trait]
+impl EnvironmentProvider for ManifestEnvironmentProvider {
+    async fn get_environments(
+        &self,
+        local_runtime_paths: &ExecServerRuntimePaths,
+    ) -> Result<HashMap<String, Environment>, ExecServerError> {
+        let mut out = HashMap::with_capacity(self.manifest.environments.len());
+        for entry in &self.manifest.environments {
+            let token = std::env::var(&entry.auth_token_env).map_err(|_| {
+                ExecServerError::Protocol(format!(
+                    "manifest entry `{}` references env var `{}`, which is not set",
+                    entry.id, entry.auth_token_env
+                ))
+            })?;
+            let environment = Environment::remote_with_auth(
+                entry.url.clone(),
+                Some(token),
+                Some(local_runtime_paths.clone()),
+            );
+            out.insert(entry.id.clone(), environment);
+        }
+        Ok(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
@@ -235,5 +364,110 @@ mod tests {
     #[test]
     fn manifest_env_var_constant_value() {
         assert_eq!(super::CODEX_EXEC_SERVERS_JSON_ENV_VAR, "CODEX_EXEC_SERVERS_JSON");
+    }
+
+    use std::io::Write;
+
+    fn write_manifest(json: &str) -> tempfile::NamedTempFile {
+        let mut f = tempfile::NamedTempFile::new().expect("temp file");
+        f.write_all(json.as_bytes()).expect("write");
+        f.flush().expect("flush");
+        f
+    }
+
+    #[tokio::test]
+    async fn manifest_provider_loads_explicit_default() {
+        // SAFETY: setting env vars in tests is OK as this is the only test mutating P1_AUTH_A.
+        unsafe { std::env::set_var("P1_AUTH_A", "tok-a"); }
+        let f = write_manifest(
+            r#"{
+                "default_environment_id": "exe_b",
+                "environments": [
+                    {"id": "exe_a", "url": "ws://h/a", "auth_token_env": "P1_AUTH_A"},
+                    {"id": "exe_b", "url": "ws://h/b", "auth_token_env": "P1_AUTH_A"}
+                ]
+            }"#,
+        );
+        let provider = super::ManifestEnvironmentProvider::from_path(f.path().to_path_buf())
+            .expect("provider");
+        let runtime_paths = test_runtime_paths();
+        let envs = provider.get_environments(&runtime_paths).await.expect("envs");
+        assert!(envs.contains_key("exe_a"));
+        assert!(envs.contains_key("exe_b"));
+        assert_eq!(provider.default_environment_id(), Some("exe_b"));
+    }
+
+    #[tokio::test]
+    async fn manifest_provider_falls_back_to_first_when_default_absent() {
+        unsafe { std::env::set_var("P1_AUTH_B", "tok-b"); }
+        let f = write_manifest(
+            r#"{
+                "environments": [
+                    {"id": "exe_first", "url": "ws://h/1", "auth_token_env": "P1_AUTH_B"},
+                    {"id": "exe_second", "url": "ws://h/2", "auth_token_env": "P1_AUTH_B"}
+                ]
+            }"#,
+        );
+        let provider = super::ManifestEnvironmentProvider::from_path(f.path().to_path_buf())
+            .expect("provider");
+        assert_eq!(provider.default_environment_id(), Some("exe_first"));
+    }
+
+    #[tokio::test]
+    async fn manifest_provider_rejects_empty_environments() {
+        let f = write_manifest(r#"{"environments": []}"#);
+        let err = super::ManifestEnvironmentProvider::from_path(f.path().to_path_buf())
+            .expect_err("should fail");
+        assert!(err.to_string().contains("environments"));
+    }
+
+    #[tokio::test]
+    async fn manifest_provider_rejects_unset_auth_env() {
+        unsafe { std::env::remove_var("P1_AUTH_MISSING"); }
+        let f = write_manifest(
+            r#"{
+                "environments": [
+                    {"id": "x", "url": "ws://h/x", "auth_token_env": "P1_AUTH_MISSING"}
+                ]
+            }"#,
+        );
+        let runtime_paths = test_runtime_paths();
+        let provider = super::ManifestEnvironmentProvider::from_path(f.path().to_path_buf())
+            .expect("provider parses");
+        let err = provider.get_environments(&runtime_paths).await
+            .expect_err("missing env should fail");
+        assert!(err.to_string().contains("P1_AUTH_MISSING"));
+    }
+
+    #[tokio::test]
+    async fn manifest_provider_rejects_default_id_not_in_list() {
+        unsafe { std::env::set_var("P1_AUTH_C", "tok-c"); }
+        let f = write_manifest(
+            r#"{
+                "default_environment_id": "exe_does_not_exist",
+                "environments": [
+                    {"id": "exe_real", "url": "ws://h/r", "auth_token_env": "P1_AUTH_C"}
+                ]
+            }"#,
+        );
+        let err = super::ManifestEnvironmentProvider::from_path(f.path().to_path_buf())
+            .expect_err("should fail");
+        assert!(err.to_string().contains("default_environment_id"));
+    }
+
+    #[tokio::test]
+    async fn manifest_provider_rejects_duplicate_ids() {
+        unsafe { std::env::set_var("P1_AUTH_D", "tok-d"); }
+        let f = write_manifest(
+            r#"{
+                "environments": [
+                    {"id": "dup", "url": "ws://h/1", "auth_token_env": "P1_AUTH_D"},
+                    {"id": "dup", "url": "ws://h/2", "auth_token_env": "P1_AUTH_D"}
+                ]
+            }"#,
+        );
+        let err = super::ManifestEnvironmentProvider::from_path(f.path().to_path_buf())
+            .expect_err("duplicate id should fail");
+        assert!(err.to_string().contains("dup"));
     }
 }

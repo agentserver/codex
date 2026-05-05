@@ -313,6 +313,11 @@ impl ToolHandler for UnifiedExecHandler {
                     Some(&tracker),
                     &context.call_id,
                     &tool_name.name,
+                    // unified_exec resolves env_id at the runtime layer
+                    // (runtimes/unified_exec.rs); the handler still uses the
+                    // primary env's filesystem here, so pass None to preserve
+                    // existing behaviour.
+                    None,
                 )
                 .await?
                 {

@@ -474,11 +474,36 @@ pub(crate) async fn intercept_apply_patch(
     tracker: Option<&SharedTurnDiffTracker>,
     call_id: &str,
     tool_name: &str,
+    environment_id: Option<&str>,
 ) -> Result<Option<FunctionToolOutput>, FunctionCallError> {
-    let sandbox = turn
-        .primary_environment()
-        .filter(|env| env.environment.is_remote())
-        .map(|_| turn.file_system_sandbox_context(/*additional_permissions*/ None));
+    // Mirror the resolution pattern used by handlers/shell.rs:426 and
+    // runtimes/unified_exec.rs:345 so that an apply_patch piggy-backed on a
+    // shell/exec_command call honours the caller-supplied env id rather than
+    // silently falling back to the primary environment.
+    let Some(turn_environment) = turn.select_environment(environment_id) else {
+        let msg = match environment_id {
+            Some(id) if turn.environments.is_empty() => format!(
+                "environment_id `{id}` is not available: this turn has no environments"
+            ),
+            Some(id) => {
+                let available: Vec<&str> = turn
+                    .environments
+                    .iter()
+                    .map(|e| e.environment_id.as_str())
+                    .collect();
+                format!(
+                    "environment_id `{id}` not found; available: [{}]",
+                    available.join(", ")
+                )
+            }
+            None => "apply_patch is unavailable in this session".to_string(),
+        };
+        return Err(FunctionCallError::RespondToModel(msg));
+    };
+    let sandbox = turn_environment
+        .environment
+        .is_remote()
+        .then(|| turn.file_system_sandbox_context(/*additional_permissions*/ None));
     match codex_apply_patch::maybe_parse_apply_patch_verified(command, cwd, fs, sandbox.as_ref())
         .await
     {
@@ -520,7 +545,7 @@ pub(crate) async fn intercept_apply_patch(
                             .additional_permissions,
                         permissions_preapproved: effective_additional_permissions
                             .permissions_preapproved,
-                        environment_id: None,
+                        environment_id: environment_id.map(str::to_owned),
                     };
 
                     let mut orchestrator = ToolOrchestrator::new();

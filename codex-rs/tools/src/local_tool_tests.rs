@@ -48,9 +48,12 @@ Examples of valid command strings:
         (
             "environment_id".to_string(),
             JsonSchema::string(Some(
-                "Optional. Identifier of the execution environment to run this command in. \
-                 Defaults to the primary environment for the turn. See <environments> in the \
-                 system prompt for available ids."
+                "Optional. Selects the execution environment used for `apply_patch` interception \
+                 and filesystem-side validation when this command is itself an `apply_patch` \
+                 invocation. **Note**: shell command execution itself is always local to the \
+                 codex host — for cross-environment remote exec, use the `exec_command` \
+                 (unified_exec) tool instead. See <environments> in the system prompt for \
+                 available ids."
                     .to_string(),
             )),
         ),
@@ -298,9 +301,12 @@ fn shell_tool_with_request_permission_includes_additional_permissions() {
         (
             "environment_id".to_string(),
             JsonSchema::string(Some(
-                "Optional. Identifier of the execution environment to run this command in. \
-                 Defaults to the primary environment for the turn. See <environments> in the \
-                 system prompt for available ids."
+                "Optional. Selects the execution environment used for `apply_patch` interception \
+                 and filesystem-side validation when this command is itself an `apply_patch` \
+                 invocation. **Note**: shell command execution itself is always local to the \
+                 codex host — for cross-environment remote exec, use the `exec_command` \
+                 (unified_exec) tool instead. See <environments> in the system prompt for \
+                 available ids."
                     .to_string(),
             )),
         ),

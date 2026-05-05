@@ -508,7 +508,9 @@ impl ShellHandler {
             )));
         }
 
-        // Intercept apply_patch if present.
+        // Intercept apply_patch if present. Forward the resolved env id so the
+        // intercepted apply_patch runs against the same environment the shell
+        // call selected (P3.4c: prior code lost env_id at this boundary).
         if let Some(output) = intercept_apply_patch(
             &exec_params.command,
             &exec_params.cwd,
@@ -518,6 +520,7 @@ impl ShellHandler {
             Some(&tracker),
             &call_id,
             tool_name.as_str(),
+            environment_id.as_deref(),
         )
         .await?
         {

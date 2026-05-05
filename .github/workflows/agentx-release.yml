@@ -17,8 +17,8 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write    # GitHub Release create + asset upload
-  id-token: write    # OIDC for any future cloud signing
+  contents: write # GitHub Release create + asset upload
+  id-token: write # OIDC for any future cloud signing
 
 jobs:
   tag-check:
@@ -448,8 +448,8 @@ jobs:
       - name: Stage chocolatey package
         shell: bash
         env:
-          VERSION:       ${{ needs.release.outputs.clean_version }}
-          TAG:           ${{ needs.release.outputs.tag }}
+          VERSION: ${{ needs.release.outputs.clean_version }}
+          TAG: ${{ needs.release.outputs.tag }}
         run: |
           set -euo pipefail
           asset="agentx-x86_64-pc-windows-msvc.exe.zip"

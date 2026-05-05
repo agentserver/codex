@@ -200,3 +200,47 @@ jobs:
           name: agentx-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
+
+  build-windows:
+    needs: tag-check
+    name: build-windows - ${{ matrix.target }}
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: codex-rs
+    env:
+      CARGO_PROFILE_RELEASE_LTO: "thin"
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cargo build (codex)
+        shell: bash
+        run: cargo build --target ${{ matrix.target }} --release --bin codex
+
+      - name: Package as agentx-${{ matrix.target }}.exe.zip
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          TARGET: ${{ matrix.target }}
+          PLATFORM: windows
+          OUTDIR: ${{ github.workspace }}/dist
+        run: bash .github/workflows/agentx-release-package.sh
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: agentx-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error

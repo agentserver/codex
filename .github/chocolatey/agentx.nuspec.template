@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>agentx</id>
+    <version>__VERSION__</version>
+    <title>agentx</title>
+    <authors>agentserver</authors>
+    <owners>agentserver</owners>
+    <licenseUrl>https://github.com/agentserver/codex/blob/main/LICENSE</licenseUrl>
+    <projectUrl>https://github.com/agentserver/codex</projectUrl>
+    <packageSourceUrl>https://github.com/agentserver/codex/tree/main/.github/chocolatey</packageSourceUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>agentx is the agentserver fork of OpenAI Codex — a lightweight coding agent that runs in your terminal.</description>
+    <summary>Lightweight coding agent that runs in your terminal (agentserver fork of Codex).</summary>
+    <tags>agentx codex cli ai coding-agent</tags>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

@@ -1,0 +1,563 @@
+# Release workflow for the agentserver/codex fork (distributed as "agentx").
+# To release:
+#   make agentx-release VERSION=0.128.0-agentx.1
+#   git push origin main && git push origin agentx-v0.128.0-agentx.1
+#
+# Upstream rust-release.yml is left untouched and stays dormant (we never push
+# rust-v* tags).
+
+name: agentx-release
+on:
+  push:
+    tags:
+      - "agentx-v*.*.*"
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write # GitHub Release create + asset upload
+  id-token: write # OIDC for any future cloud signing
+
+jobs:
+  tag-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Validate tag matches Cargo.toml version
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::Tag validation"
+
+          [[ "${GITHUB_REF_TYPE}" == "tag" ]] \
+            || { echo "❌  Not a tag push"; exit 1; }
+          # Accept either x.y.z (stable, will publish to winget/choco) or
+          # x.y.z-agentx.N (iteration, GitHub Release only). Same regex as
+          # the Makefile's agentx-release target.
+          [[ "${GITHUB_REF_NAME}" =~ ^agentx-v[0-9]+\.[0-9]+\.[0-9]+(-agentx\.[0-9]+)?$ ]] \
+            || { echo "❌  Tag '${GITHUB_REF_NAME}' doesn't match expected format"; exit 1; }
+
+          tag_ver="${GITHUB_REF_NAME#agentx-v}"
+          cargo_ver="$(grep -m1 '^version' codex-rs/Cargo.toml \
+                        | sed -E 's/version *= *"([^"]+)".*/\1/')"
+
+          [[ "${tag_ver}" == "${cargo_ver}" ]] \
+            || { echo "❌  Tag ${tag_ver} ≠ Cargo.toml ${cargo_ver}"; exit 1; }
+
+          echo "✅  Tag and Cargo.toml agree (${tag_ver})"
+          echo "::endgroup::"
+
+  build-linux:
+    needs: tag-check
+    name: build-linux - ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: codex-rs
+    env:
+      CARGO_PROFILE_RELEASE_LTO: "thin"
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux bwrap build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends pkg-config libcap-dev
+
+      - name: Install UBSan runtime (musl)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libubsan1
+          fi
+
+      - name: Use hermetic Cargo home (musl)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo_home="${GITHUB_WORKSPACE}/.cargo-home"
+          mkdir -p "${cargo_home}/bin"
+          echo "CARGO_HOME=${cargo_home}" >> "$GITHUB_ENV"
+          echo "${cargo_home}/bin" >> "$GITHUB_PATH"
+          : > "${cargo_home}/config.toml"
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.14.0
+
+      - name: Install musl build tools
+        env:
+          TARGET: ${{ matrix.target }}
+        run: bash "${GITHUB_WORKSPACE}/.github/scripts/install-musl-build-tools.sh"
+
+      - name: Configure rustc UBSan wrapper (musl host)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ubsan=""
+          if command -v ldconfig >/dev/null 2>&1; then
+            ubsan="$(ldconfig -p | grep -m1 'libubsan\.so\.1' | sed -E 's/.*=> (.*)$/\1/')"
+          fi
+          wrapper_root="${RUNNER_TEMP:-/tmp}"
+          wrapper="${wrapper_root}/rustc-ubsan-wrapper"
+          cat > "${wrapper}" <<EOF
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if [[ -n "${ubsan}" ]]; then
+            export LD_PRELOAD="${ubsan}\${LD_PRELOAD:+:\${LD_PRELOAD}}"
+          fi
+          exec "\$1" "\${@:2}"
+          EOF
+          chmod +x "${wrapper}"
+          echo "RUSTC_WRAPPER=${wrapper}" >> "$GITHUB_ENV"
+          echo "RUSTC_WORKSPACE_WRAPPER=" >> "$GITHUB_ENV"
+
+      - name: Clear sanitizer flags (musl)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Avoid problematic aws-lc jitter entropy code path on musl builders.
+          target_no_jitter="AWS_LC_SYS_NO_JITTER_ENTROPY_${{ matrix.target }}"
+          target_no_jitter="${target_no_jitter//-/_}"
+
+          sanitize_flags() {
+            local input="$1"
+            input="${input//-fsanitize=undefined/}"
+            input="${input//-fno-sanitize-recover=undefined/}"
+            input="${input//-fno-sanitize-trap=undefined/}"
+            echo "$input"
+          }
+
+          cflags="$(sanitize_flags "${CFLAGS-}")"
+          cxxflags="$(sanitize_flags "${CXXFLAGS-}")"
+
+          {
+            # aws-lc jitter entropy
+            echo "AWS_LC_SYS_NO_JITTER_ENTROPY=1"
+            echo "${target_no_jitter}=1"
+            # Clear global Rust flags so host/proc-macro builds don't pull in UBSan.
+            echo "RUSTFLAGS="
+            echo "CARGO_ENCODED_RUSTFLAGS="
+            echo "RUSTDOCFLAGS="
+            # Override any runner-level Cargo config rustflags as well.
+            echo "CARGO_BUILD_RUSTFLAGS="
+            echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS="
+            echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="
+            echo "CFLAGS=${cflags}"
+            echo "CXXFLAGS=${cxxflags}"
+          } >> "$GITHUB_ENV"
+
+      - name: Configure musl rusty_v8 artifact overrides and verify checksums
+        uses: ./.github/actions/setup-rusty-v8-musl
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Cargo build (codex)
+        shell: bash
+        run: cargo build --target ${{ matrix.target }} --release --bin codex
+
+      - name: Package as agentx-${{ matrix.target }}.tar.gz
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          TARGET: ${{ matrix.target }}
+          PLATFORM: linux
+          OUTDIR: ${{ github.workspace }}/dist
+        run: bash .github/workflows/agentx-release-package.sh
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: agentx-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  build-macos:
+    needs: tag-check
+    name: build-macos - ${{ matrix.target }}
+    runs-on: macos-15
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: codex-rs
+    env:
+      CARGO_PROFILE_RELEASE_LTO: "thin"
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+          - target: x86_64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cargo build (codex)
+        shell: bash
+        run: cargo build --target ${{ matrix.target }} --release --bin codex
+
+      - name: MacOS code signing (binary)
+        uses: ./.github/actions/macos-code-sign
+        with:
+          target: ${{ matrix.target }}
+          binaries: codex
+          sign-binaries: "true"
+          sign-dmg: "false"
+          apple-certificate: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          apple-certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          apple-notarization-key-p8: ${{ secrets.APPLE_NOTARIZATION_KEY_P8 }}
+          apple-notarization-key-id: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+          apple-notarization-issuer-id: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+
+      - name: Build macOS dmg
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          release_dir="target/${target}/release"
+          dmg_root="${RUNNER_TEMP}/agentx-dmg-root"
+          # The dmg file name stays codex-... here so the next macos-code-sign
+          # step (which hardcodes that path) can find it. We rename to agentx-*
+          # in the packaging step after signing+stapling.
+          dmg_path="${release_dir}/codex-${target}.dmg"
+          volname="AgentX (${target})"
+
+          rm -rf "$dmg_root"
+          mkdir -p "$dmg_root"
+          # Inside the dmg the binary is named 'agentx' for end-user clarity.
+          ditto "${release_dir}/codex" "${dmg_root}/agentx"
+
+          rm -f "$dmg_path"
+          hdiutil create \
+            -volname "$volname" \
+            -srcfolder "$dmg_root" \
+            -format UDZO \
+            -ov \
+            "$dmg_path"
+
+          [[ -f "$dmg_path" ]] || { echo "dmg missing"; exit 1; }
+
+      - name: MacOS code signing (dmg)
+        uses: ./.github/actions/macos-code-sign
+        with:
+          target: ${{ matrix.target }}
+          sign-binaries: "false"
+          sign-dmg: "true"
+          apple-certificate: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          apple-certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          apple-notarization-key-p8: ${{ secrets.APPLE_NOTARIZATION_KEY_P8 }}
+          apple-notarization-key-id: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+          apple-notarization-issuer-id: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+
+      - name: Package as agentx-${{ matrix.target }}.{tar.gz,dmg}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          TARGET: ${{ matrix.target }}
+          PLATFORM: macos
+          OUTDIR: ${{ github.workspace }}/dist
+        run: bash .github/workflows/agentx-release-package.sh
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: agentx-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  build-windows:
+    needs: tag-check
+    name: build-windows - ${{ matrix.target }}
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: codex-rs
+    env:
+      CARGO_PROFILE_RELEASE_LTO: "thin"
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cargo build (codex)
+        shell: bash
+        run: cargo build --target ${{ matrix.target }} --release --bin codex
+
+      - name: Package as agentx-${{ matrix.target }}.exe.zip
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          TARGET: ${{ matrix.target }}
+          PLATFORM: windows
+          OUTDIR: ${{ github.workspace }}/dist
+        run: bash .github/workflows/agentx-release-package.sh
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: agentx-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: [build-linux, build-macos, build-windows]
+    name: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.derive.outputs.version }}
+      clean_version: ${{ steps.derive.outputs.clean_version }}
+      tag: ${{ github.ref_name }}
+      is_stable: ${{ steps.derive.outputs.is_stable }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Generate release notes from tag commit message
+        id: release_notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          notes_path="${RUNNER_TEMP}/release-notes.md"
+          git log -1 --format=%B "${commit}" > "${notes_path}"
+          echo >> "${notes_path}"
+          echo "path=${notes_path}" >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: dist
+          pattern: agentx-*
+          merge-multiple: true
+
+      - name: List staged artifacts
+        run: ls -R dist/
+
+      - name: Regenerate combined SHA256SUMS across all platforms
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          # Glob agentx-* matches only release artifacts (avoids the SC2094
+          # foot-gun where a `find ... > SHA256SUMS.tmp` pipeline would race
+          # with the eager-created tmp file and hash an empty SHA256SUMS.tmp
+          # entry into the output).
+          sha256sum agentx-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Derive version strings
+        id: derive
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#agentx-v}"     # 0.128.0-agentx.1
+          clean_version="${version%%-*}"            # 0.128.0
+          if [[ "${version}" == "${clean_version}" ]]; then
+            is_stable="true"
+          else
+            is_stable="false"
+          fi
+          {
+            echo "version=${version}"
+            echo "clean_version=${clean_version}"
+            echo "is_stable=${is_stable}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
+        with:
+          name: ${{ steps.derive.outputs.version }}
+          tag_name: ${{ github.ref_name }}
+          body_path: ${{ steps.release_notes.outputs.path }}
+          files: dist/**
+          prerelease: ${{ steps.derive.outputs.is_stable == 'false' }}
+
+  winget:
+    name: winget
+    needs: release
+    if: ${{ needs.release.outputs.is_stable == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Publish to WinGet
+        uses: vedantmgoyal9/winget-releaser@7bd472be23763def6e16bd06cc8b1cdfab0e2fd5
+        with:
+          identifier: Agentserver.AgentX
+          version: ${{ needs.release.outputs.clean_version }}
+          release-tag: ${{ needs.release.outputs.tag }}
+          fork-user: agentserver
+          installers-regex: '^agentx-x86_64-pc-windows-msvc\.exe\.zip$'
+          token: ${{ secrets.WINGET_PUBLISH_PAT }}
+
+  choco:
+    name: chocolatey
+    needs: release
+    if: ${{ needs.release.outputs.is_stable == 'true' }}
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Stage chocolatey package
+        shell: bash
+        env:
+          VERSION: ${{ needs.release.outputs.clean_version }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          asset="agentx-x86_64-pc-windows-msvc.exe.zip"
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${asset}"
+
+          mkdir -p staged/tools
+          curl -sSLo "staged/tools/${asset}" "$url"
+          sha256="$(sha256sum "staged/tools/${asset}" | awk '{print $1}')"
+          rm "staged/tools/${asset}"   # choco install script downloads it at install time
+
+          # Static files
+          cp .github/chocolatey/tools/chocolateyuninstall.ps1 staged/tools/
+          cp .github/chocolatey/tools/LICENSE.txt             staged/tools/
+          cp .github/chocolatey/tools/VERIFICATION.txt        staged/tools/
+
+          # Templated files
+          sed -e "s|__VERSION__|${VERSION}|g" \
+              .github/chocolatey/agentx.nuspec.template \
+              > staged/agentx.nuspec
+
+          sed -e "s|__URL64__|${url}|g" \
+              -e "s|__SHA256_64__|${sha256}|g" \
+              .github/chocolatey/tools/chocolateyinstall.ps1.template \
+              > staged/tools/chocolateyinstall.ps1
+
+          ls -R staged/
+
+      - name: Pack and push
+        shell: pwsh
+        env:
+          CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
+        working-directory: staged
+        run: |
+          choco pack agentx.nuspec
+          choco push agentx.${{ needs.release.outputs.clean_version }}.nupkg `
+            --api-key "$env:CHOCO_API_KEY" `
+            --source "https://push.chocolatey.org/"
+
+  homebrew:
+    name: homebrew-tap
+    needs: release
+    if: ${{ needs.release.outputs.is_stable == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Compute SHA256 for each platform asset
+        id: shas
+        shell: bash
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          declare -A assets=(
+            [macos_arm]=agentx-aarch64-apple-darwin.tar.gz
+            [macos_intel]=agentx-x86_64-apple-darwin.tar.gz
+            [linux_arm]=agentx-aarch64-unknown-linux-musl.tar.gz
+            [linux_intel]=agentx-x86_64-unknown-linux-musl.tar.gz
+          )
+          {
+            for key in macos_arm macos_intel linux_arm linux_intel; do
+              asset="${assets[$key]}"
+              tmp="$(mktemp)"
+              curl -sSLo "$tmp" "${base}/${asset}"
+              sha="$(sha256sum "$tmp" | awk '{print $1}')"
+              rm "$tmp"
+              echo "${key}=${sha}"
+            done
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Render cask file
+        env:
+          VERSION: ${{ needs.release.outputs.clean_version }}
+          SHA256_MACOS_ARM: ${{ steps.shas.outputs.macos_arm }}
+          SHA256_MACOS_INTEL: ${{ steps.shas.outputs.macos_intel }}
+          SHA256_LINUX_ARM: ${{ steps.shas.outputs.linux_arm }}
+          SHA256_LINUX_INTEL: ${{ steps.shas.outputs.linux_intel }}
+        run: |
+          set -euo pipefail
+          mkdir -p rendered/Casks
+          sed -e "s|__VERSION__|${VERSION}|g" \
+              -e "s|__SHA256_MACOS_ARM__|${SHA256_MACOS_ARM}|g" \
+              -e "s|__SHA256_MACOS_INTEL__|${SHA256_MACOS_INTEL}|g" \
+              -e "s|__SHA256_LINUX_ARM__|${SHA256_LINUX_ARM}|g" \
+              -e "s|__SHA256_LINUX_INTEL__|${SHA256_LINUX_INTEL}|g" \
+              .github/homebrew/agentx.rb.template \
+              > rendered/Casks/agentx.rb
+          cat rendered/Casks/agentx.rb
+
+      - name: Push cask to agentserver/homebrew-tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_PAT }}
+          VERSION: ${{ needs.release.outputs.clean_version }}
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/agentserver/homebrew-tap.git" tap
+          cp rendered/Casks/agentx.rb tap/Casks/agentx.rb
+          cd tap
+          git config user.name  "agentx-release-bot"
+          git config user.email "agentx-release-bot@users.noreply.github.com"
+          git add Casks/agentx.rb
+          if git diff --cached --quiet; then
+            echo "No cask changes to push (already at ${VERSION})."
+            exit 0
+          fi
+          git commit -m "agentx ${VERSION}"
+          git push origin HEAD

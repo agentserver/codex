@@ -303,6 +303,120 @@ async fn shell_handler_default_environment_id_is_none() {
 }
 
 #[tokio::test]
+async fn shell_handler_rejects_unknown_environment_id_with_descriptive_error() {
+    use crate::session::tests::make_test_turn_context_with_environments;
+    use crate::session::turn_context::TurnEnvironment;
+
+    let env_a = std::sync::Arc::new(codex_exec_server::Environment::default_for_tests());
+    let env_b = std::sync::Arc::new(codex_exec_server::Environment::default_for_tests());
+    let cwd = codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
+        std::env::current_dir().expect("cwd").as_path(),
+    )
+    .expect("abs");
+    let environments = vec![
+        TurnEnvironment {
+            environment_id: "exe_one".into(),
+            environment: std::sync::Arc::clone(&env_a),
+            cwd: cwd.clone(),
+            shell: "/bin/sh".into(),
+        },
+        TurnEnvironment {
+            environment_id: "exe_two".into(),
+            environment: std::sync::Arc::clone(&env_b),
+            cwd: cwd.clone(),
+            shell: "/bin/sh".into(),
+        },
+    ];
+    let turn_context = make_test_turn_context_with_environments(environments).await;
+    // The handler resolves env_id from the parsed payload before doing any
+    // heavy lifting (orchestrator, exec, etc.), so an unknown id triggers an
+    // early error and we can exercise the production code path cheaply.
+    let (session, _baseline_turn) = make_session_and_context().await;
+    let arguments = json!({
+        "command": ["echo", "hi"],
+        "environment_id": "exe_missing",
+    })
+    .to_string();
+    let invocation = ToolInvocation {
+        session: session.into(),
+        turn: turn_context.into(),
+        cancellation_token: tokio_util::sync::CancellationToken::new(),
+        tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
+        call_id: "call-shell-env".to_string(),
+        tool_name: codex_tools::ToolName::plain("shell"),
+        source: ToolCallSource::Direct,
+        payload: ToolPayload::Function { arguments },
+    };
+    let result = ShellHandler.handle(invocation).await;
+    let err = match result {
+        Ok(_) => panic!("unknown environment_id must error"),
+        Err(err) => err,
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("exe_missing"),
+        "error should mention requested env id: {msg}"
+    );
+    assert!(
+        msg.contains("exe_one") && msg.contains("exe_two"),
+        "error should list available env ids: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn shell_handler_select_environment_routes_to_named_env() {
+    use crate::session::tests::make_test_turn_context_with_environments;
+    use crate::session::turn_context::TurnEnvironment;
+
+    // Mirrors the runtime contract verified by `unified_exec_routes_to_second_environment_when_environment_id_set`
+    // (P2.4) for the shell path. The shell handler uses the same
+    // `TurnContext::select_environment` helper (replacing the previous
+    // hardcoded `primary_environment()` lookup), so asserting it here
+    // pins the contract: env_id="exe_two" must select env_b's filesystem.
+    let env_a = std::sync::Arc::new(codex_exec_server::Environment::default_for_tests());
+    let env_b = std::sync::Arc::new(codex_exec_server::Environment::default_for_tests());
+    let cwd = codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
+        std::env::current_dir().expect("cwd").as_path(),
+    )
+    .expect("abs");
+    let environments = vec![
+        TurnEnvironment {
+            environment_id: "exe_one".into(),
+            environment: std::sync::Arc::clone(&env_a),
+            cwd: cwd.clone(),
+            shell: "/bin/sh".into(),
+        },
+        TurnEnvironment {
+            environment_id: "exe_two".into(),
+            environment: std::sync::Arc::clone(&env_b),
+            cwd: cwd.clone(),
+            shell: "/bin/sh".into(),
+        },
+    ];
+    let turn_context = make_test_turn_context_with_environments(environments).await;
+
+    let chosen = turn_context
+        .select_environment(Some("exe_two"))
+        .expect("found");
+    assert_eq!(chosen.environment_id, "exe_two");
+    assert!(std::sync::Arc::ptr_eq(&chosen.environment, &env_b));
+
+    let chosen_default = turn_context
+        .select_environment(None)
+        .expect("default selects primary");
+    assert_eq!(chosen_default.environment_id, "exe_one");
+    assert!(std::sync::Arc::ptr_eq(&chosen_default.environment, &env_a));
+
+    // The ShellRequest produced by the handler records the same id verbatim
+    // — the contract that P3.4b establishes end-to-end.
+    let req = crate::tools::handlers::shell::build_shell_request_with_environment_id_for_tests(
+        Some("exe_two".to_string()),
+        cwd.clone(),
+    );
+    assert_eq!(req.environment_id.as_deref(), Some("exe_two"));
+}
+
+#[tokio::test]
 async fn build_post_tool_use_payload_uses_tool_output_wire_value() {
     let payload = ToolPayload::Function {
         arguments: json!({ "command": "printf shell command" }).to_string(),

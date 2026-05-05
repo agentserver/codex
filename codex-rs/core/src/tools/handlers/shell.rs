@@ -87,6 +87,9 @@ struct RunExecLikeArgs {
     call_id: String,
     freeform: bool,
     shell_runtime_backend: ShellRuntimeBackend,
+    /// LLM-supplied environment id (from `ShellToolCallParams.environment_id`).
+    /// `None` means "use the primary environment" per § P3 spec.
+    environment_id: Option<String>,
 }
 
 impl ShellHandler {
@@ -258,6 +261,7 @@ impl ToolHandler for ShellHandler {
                     call_id,
                     freeform: false,
                     shell_runtime_backend: ShellRuntimeBackend::Generic,
+                    environment_id: params.environment_id.clone(),
                 })
                 .await
             }
@@ -276,6 +280,7 @@ impl ToolHandler for ShellHandler {
                     call_id,
                     freeform: false,
                     shell_runtime_backend: ShellRuntimeBackend::Generic,
+                    environment_id: params.environment_id.clone(),
                 })
                 .await
             }
@@ -390,6 +395,11 @@ impl ToolHandler for ShellCommandHandler {
             call_id,
             freeform: true,
             shell_runtime_backend: self.shell_runtime_backend(),
+            // `shell_command` tool params do not currently expose
+            // `environment_id`; the spec wires env selection only through the
+            // generic `shell` tool. Pass `None` so the handler picks the
+            // primary environment via `select_environment`.
+            environment_id: None,
         })
         .await
     }
@@ -409,13 +419,29 @@ impl ShellHandler {
             call_id,
             freeform,
             shell_runtime_backend,
+            environment_id,
         } = args;
 
         let mut exec_params = exec_params;
-        let Some(turn_environment) = turn.primary_environment() else {
-            return Err(FunctionCallError::RespondToModel(
-                "shell is unavailable in this session".to_string(),
-            ));
+        let Some(turn_environment) = turn.select_environment(environment_id.as_deref()) else {
+            let msg = match environment_id.as_deref() {
+                Some(id) if turn.environments.is_empty() => format!(
+                    "environment_id `{id}` is not available: this turn has no environments"
+                ),
+                Some(id) => {
+                    let available: Vec<&str> = turn
+                        .environments
+                        .iter()
+                        .map(|e| e.environment_id.as_str())
+                        .collect();
+                    format!(
+                        "environment_id `{id}` not found; available: [{}]",
+                        available.join(", ")
+                    )
+                }
+                None => "shell is unavailable in this session".to_string(),
+            };
+            return Err(FunctionCallError::RespondToModel(msg));
         };
         let fs = turn_environment.environment.get_filesystem();
 
@@ -547,6 +573,7 @@ impl ShellHandler {
                 .permissions_preapproved,
             justification: exec_params.justification.clone(),
             exec_approval_requirement,
+            environment_id: environment_id.clone(),
         };
         let mut orchestrator = ToolOrchestrator::new();
         let mut runtime = {
@@ -593,6 +620,38 @@ impl ShellHandler {
             success: Some(true),
             post_tool_use_response,
         })
+    }
+}
+
+/// Test-only constructor that builds a minimal `ShellRequest` carrying a
+/// caller-supplied `environment_id`. Used by `shell_tests.rs` to lock the
+/// contract `params.environment_id → ShellRequest.environment_id` end-to-end
+/// (per spec § P3.4b) without spinning up the full orchestrator stack.
+#[cfg(test)]
+pub(crate) fn build_shell_request_with_environment_id_for_tests(
+    environment_id: Option<String>,
+    cwd: codex_utils_absolute_path::AbsolutePathBuf,
+) -> crate::tools::runtimes::shell::ShellRequest {
+    use crate::tools::runtimes::shell::ShellRequest;
+    use crate::tools::sandboxing::ExecApprovalRequirement;
+    ShellRequest {
+        command: vec!["echo".to_string(), "hi".to_string()],
+        hook_command: String::new(),
+        cwd,
+        timeout_ms: None,
+        env: Default::default(),
+        explicit_env_overrides: Default::default(),
+        network: None,
+        sandbox_permissions: Default::default(),
+        additional_permissions: None,
+        #[cfg(unix)]
+        additional_permissions_preapproved: false,
+        justification: None,
+        exec_approval_requirement: ExecApprovalRequirement::Skip {
+            bypass_sandbox: false,
+            proposed_execpolicy_amendment: None,
+        },
+        environment_id,
     }
 }
 

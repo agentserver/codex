@@ -17,6 +17,7 @@ mod local_tool;
 mod mcp_resource_tool;
 mod mcp_tool;
 mod plan_tool;
+mod read_file_in_environment_tool;
 mod request_plugin_install;
 mod request_user_input_tool;
 mod responses_api;
@@ -29,6 +30,7 @@ mod tool_spec;
 mod utility_tool;
 mod view_image;
 mod view_image_in_environment_tool;
+mod write_file_in_environment_tool;
 
 pub use agent_job_tool::create_report_agent_job_result_tool;
 pub use agent_job_tool::create_spawn_agents_on_csv_tool;
@@ -98,6 +100,10 @@ pub use mcp_resource_tool::create_read_mcp_resource_tool;
 pub use mcp_tool::mcp_call_tool_result_output_schema;
 pub use mcp_tool::parse_mcp_tool;
 pub use plan_tool::create_update_plan_tool;
+// Re-exported for Pa.7 to register the new tool. Until then it is not
+// referenced outside the crate, hence the `allow`.
+#[allow(unused_imports)]
+pub use read_file_in_environment_tool::create_read_file_in_environment_tool;
 pub use request_plugin_install::REQUEST_PLUGIN_INSTALL_APPROVAL_KIND_VALUE;
 pub use request_plugin_install::REQUEST_PLUGIN_INSTALL_PERSIST_ALWAYS_VALUE;
 pub use request_plugin_install::REQUEST_PLUGIN_INSTALL_PERSIST_KEY;
@@ -175,3 +181,7 @@ pub use view_image::create_view_image_tool;
 // referenced outside the crate, hence the `allow`.
 #[allow(unused_imports)]
 pub use view_image_in_environment_tool::create_view_image_in_environment_tool;
+// Re-exported for Pa.7 to register the new tool. Until then it is not
+// referenced outside the crate, hence the `allow`.
+#[allow(unused_imports)]
+pub use write_file_in_environment_tool::create_write_file_in_environment_tool;

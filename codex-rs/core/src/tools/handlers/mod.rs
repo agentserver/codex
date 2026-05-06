@@ -13,6 +13,7 @@ pub(crate) mod multi_agents;
 pub(crate) mod multi_agents_common;
 pub(crate) mod multi_agents_v2;
 mod plan;
+pub(crate) mod read_file_in_environment;
 mod request_permissions;
 mod request_plugin_install;
 mod request_user_input;
@@ -23,6 +24,7 @@ mod unavailable_tool;
 pub(crate) mod unified_exec;
 mod view_image;
 pub(crate) mod view_image_in_environment;
+pub(crate) mod write_file_in_environment;
 
 use codex_sandboxing::policy_transforms::intersect_permission_profiles;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
@@ -63,6 +65,10 @@ pub use list_environments::ListEnvironmentsHandler;
 pub use mcp::McpHandler;
 pub use mcp_resource::McpResourceHandler;
 pub use plan::PlanHandler;
+// Re-exported for Pa.7 to register the new tool. Until then it is not
+// referenced outside the module, hence the `allow`.
+#[allow(unused_imports)]
+pub use read_file_in_environment::ReadFileInEnvironmentHandler;
 pub use request_permissions::RequestPermissionsHandler;
 pub use request_plugin_install::RequestPluginInstallHandler;
 pub use request_user_input::RequestUserInputHandler;
@@ -78,6 +84,10 @@ pub use view_image::ViewImageHandler;
 // referenced outside the module, hence the `allow`.
 #[allow(unused_imports)]
 pub use view_image_in_environment::ViewImageInEnvironmentHandler;
+// Re-exported for Pa.7 to register the new tool. Until then it is not
+// referenced outside the module, hence the `allow`.
+#[allow(unused_imports)]
+pub use write_file_in_environment::WriteFileInEnvironmentHandler;
 
 fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
 where

@@ -26,6 +26,10 @@ mod view_image;
 pub(crate) mod view_image_in_environment;
 pub(crate) mod write_file_in_environment;
 
+#[cfg(test)]
+#[path = "multi_env_integration_tests.rs"]
+mod multi_env_integration_tests;
+
 use codex_sandboxing::policy_transforms::intersect_permission_profiles;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
 use codex_sandboxing::policy_transforms::normalize_additional_permissions;

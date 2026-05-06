@@ -8601,3 +8601,72 @@ async fn session_start_hooks_require_project_trust_without_config_toml() -> std:
 
     Ok(())
 }
+
+#[tokio::test]
+async fn environments_block_absent_with_single_environment() {
+    use crate::context::AvailableEnvironmentsInstructions;
+    let cwd = codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
+        std::env::current_dir().expect("cwd").as_path(),
+    )
+    .expect("abs");
+    let env = std::sync::Arc::new(codex_exec_server::Environment::default_for_tests());
+    let environments = vec![crate::session::turn_context::TurnEnvironment {
+        environment_id: "only".into(),
+        environment: env,
+        cwd,
+        shell: "/bin/sh".into(),
+    }];
+    let descriptions = std::collections::HashMap::new();
+    assert!(
+        AvailableEnvironmentsInstructions::from_turn_environments(
+            &environments,
+            &descriptions,
+            Some("only"),
+        )
+        .is_none()
+    );
+}
+
+#[tokio::test]
+async fn environments_block_renders_with_two_environments() {
+    use crate::context::AvailableEnvironmentsInstructions;
+    use crate::context::ContextualUserFragment;
+    use codex_protocol::protocol::ENVIRONMENTS_CLOSE_TAG;
+    use codex_protocol::protocol::ENVIRONMENTS_OPEN_TAG;
+
+    let cwd = codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
+        std::env::current_dir().expect("cwd").as_path(),
+    )
+    .expect("abs");
+    let env_a = std::sync::Arc::new(codex_exec_server::Environment::default_for_tests());
+    let env_b = std::sync::Arc::new(codex_exec_server::Environment::default_for_tests());
+    let environments = vec![
+        crate::session::turn_context::TurnEnvironment {
+            environment_id: "exe_a".into(),
+            environment: env_a,
+            cwd: cwd.clone(),
+            shell: "/bin/sh".into(),
+        },
+        crate::session::turn_context::TurnEnvironment {
+            environment_id: "exe_b".into(),
+            environment: env_b,
+            cwd,
+            shell: "/bin/sh".into(),
+        },
+    ];
+    let mut descriptions = std::collections::HashMap::new();
+    descriptions.insert("exe_a".to_string(), Some("Alpha env".to_string()));
+    descriptions.insert("exe_b".to_string(), Some("Beta env".to_string()));
+    let frag = AvailableEnvironmentsInstructions::from_turn_environments(
+        &environments,
+        &descriptions,
+        Some("exe_a"),
+    )
+    .expect("fragment");
+    let rendered = frag.render();
+    assert!(rendered.contains(ENVIRONMENTS_OPEN_TAG));
+    assert!(rendered.contains(ENVIRONMENTS_CLOSE_TAG));
+    assert!(rendered.contains("exe_a"));
+    assert!(rendered.contains("Alpha env"));
+    assert!(rendered.contains("exec_command_in_environment"));
+}

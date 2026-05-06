@@ -271,38 +271,6 @@ async fn shell_command_pre_tool_use_payload_uses_raw_command() {
 }
 
 #[tokio::test]
-async fn shell_handler_threads_environment_id_into_unified_exec_request() {
-    let params = codex_protocol::models::ShellToolCallParams {
-        command: vec!["echo".to_string(), "hi".to_string()],
-        workdir: None,
-        timeout_ms: None,
-        sandbox_permissions: None,
-        prefix_rule: None,
-        additional_permissions: None,
-        justification: None,
-        environment_id: Some("exe_alpha".to_string()),
-    };
-    let req = crate::tools::handlers::shell::build_unified_exec_request_for_tests(&params);
-    assert_eq!(req.environment_id.as_deref(), Some("exe_alpha"));
-}
-
-#[tokio::test]
-async fn shell_handler_default_environment_id_is_none() {
-    let params = codex_protocol::models::ShellToolCallParams {
-        command: vec!["echo".to_string()],
-        workdir: None,
-        timeout_ms: None,
-        sandbox_permissions: None,
-        prefix_rule: None,
-        additional_permissions: None,
-        justification: None,
-        environment_id: None,
-    };
-    let req = crate::tools::handlers::shell::build_unified_exec_request_for_tests(&params);
-    assert!(req.environment_id.is_none());
-}
-
-#[tokio::test]
 async fn shell_handler_rejects_unknown_environment_id_with_descriptive_error() {
     use crate::session::tests::make_test_turn_context_with_environments;
     use crate::session::turn_context::TurnEnvironment;

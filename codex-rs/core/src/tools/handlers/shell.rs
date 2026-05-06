@@ -659,37 +659,5 @@ pub(crate) fn build_shell_request_with_environment_id_for_tests(
 }
 
 #[cfg(test)]
-pub(crate) fn build_unified_exec_request_for_tests(
-    params: &codex_protocol::models::ShellToolCallParams,
-) -> crate::tools::runtimes::unified_exec::UnifiedExecRequest {
-    use crate::tools::runtimes::unified_exec::UnifiedExecRequest;
-    use crate::tools::sandboxing::ExecApprovalRequirement;
-    UnifiedExecRequest {
-        command: params.command.clone(),
-        hook_command: String::new(),
-        process_id: 0,
-        cwd: codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
-            std::env::current_dir().expect("cwd").as_path(),
-        )
-        .expect("abs"),
-        env: Default::default(),
-        exec_server_env_config: None,
-        explicit_env_overrides: Default::default(),
-        network: None,
-        tty: false,
-        sandbox_permissions: Default::default(),
-        additional_permissions: params.additional_permissions.clone(),
-        #[cfg(unix)]
-        additional_permissions_preapproved: false,
-        justification: params.justification.clone(),
-        exec_approval_requirement: ExecApprovalRequirement::Skip {
-            bypass_sandbox: false,
-            proposed_execpolicy_amendment: None,
-        },
-        environment_id: params.environment_id.clone(),
-    }
-}
-
-#[cfg(test)]
 #[path = "shell_tests.rs"]
 mod tests;

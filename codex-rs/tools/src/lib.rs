@@ -3,6 +3,7 @@
 
 mod agent_job_tool;
 mod agent_tool;
+mod apply_patch_in_environment_tool;
 mod apply_patch_tool;
 mod code_mode;
 mod dynamic_tool;
@@ -41,6 +42,10 @@ pub use agent_tool::create_spawn_agent_tool_v1;
 pub use agent_tool::create_spawn_agent_tool_v2;
 pub use agent_tool::create_wait_agent_tool_v1;
 pub use agent_tool::create_wait_agent_tool_v2;
+// Re-exported for Pa.7 to register the new tool. Until then it is not
+// referenced outside the crate, hence the `allow`.
+#[allow(unused_imports)]
+pub use apply_patch_in_environment_tool::create_apply_patch_in_environment_tool;
 pub use apply_patch_tool::ApplyPatchToolArgs;
 pub use apply_patch_tool::create_apply_patch_freeform_tool;
 pub use apply_patch_tool::create_apply_patch_json_tool;

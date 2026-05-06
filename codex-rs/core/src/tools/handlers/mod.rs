@@ -1,5 +1,6 @@
 pub(crate) mod agent_jobs;
 pub(crate) mod apply_patch;
+pub(crate) mod apply_patch_in_environment;
 mod dynamic;
 pub(crate) mod exec_command_in_environment;
 mod goal;
@@ -35,6 +36,10 @@ use crate::session::session::Session;
 pub(crate) use crate::tools::code_mode::CodeModeExecuteHandler;
 pub(crate) use crate::tools::code_mode::CodeModeWaitHandler;
 pub use apply_patch::ApplyPatchHandler;
+// Re-exported for Pa.7 to register the new tool. Until then it is not
+// referenced outside the module, hence the `allow`.
+#[allow(unused_imports)]
+pub use apply_patch_in_environment::ApplyPatchInEnvironmentHandler;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 pub use dynamic::DynamicToolHandler;

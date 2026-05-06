@@ -359,107 +359,149 @@ impl ToolHandler for ApplyPatchHandler {
             }
         };
 
-        // Re-parse and verify the patch so we can compute changes and approval.
-        // Avoid building temporary ExecParams/command vectors; derive directly from inputs.
-        let cwd = turn.cwd.clone();
-        let command = vec!["apply_patch".to_string(), patch_input.clone()];
-        let Some(turn_environment) = turn.primary_environment() else {
-            return Err(FunctionCallError::RespondToModel(
-                "apply_patch is unavailable in this session".to_string(),
-            ));
-        };
-        let fs = turn_environment.environment.get_filesystem();
-        let sandbox = turn_environment
-            .environment
-            .is_remote()
-            .then(|| turn.file_system_sandbox_context(/*additional_permissions*/ None));
-        match codex_apply_patch::maybe_parse_apply_patch_verified(
-            &command,
-            &cwd,
-            fs.as_ref(),
-            sandbox.as_ref(),
+        handle_apply_patch_request(
+            patch_input,
+            environment_id,
+            session,
+            turn,
+            tracker,
+            call_id,
+            tool_name.display(),
         )
         .await
-        {
-            codex_apply_patch::MaybeApplyPatchVerified::Body(changes) => {
-                let (file_paths, effective_additional_permissions, file_system_sandbox_policy) =
-                    effective_patch_permissions(session.as_ref(), turn.as_ref(), &changes).await;
-                match apply_patch::apply_patch(turn.as_ref(), &file_system_sandbox_policy, changes)
-                    .await
-                {
-                    InternalApplyPatchInvocation::Output(item) => {
-                        let content = item?;
-                        Ok(ApplyPatchToolOutput::from_text(content))
-                    }
-                    InternalApplyPatchInvocation::DelegateToRuntime(apply) => {
-                        let changes = convert_apply_patch_to_protocol(&apply.action);
-                        let emitter =
-                            ToolEmitter::apply_patch(changes.clone(), apply.auto_approved);
-                        let event_ctx = ToolEventCtx::new(
-                            session.as_ref(),
-                            turn.as_ref(),
-                            &call_id,
-                            Some(&tracker),
-                        );
-                        emitter.begin(event_ctx).await;
+    }
+}
 
-                        let req = ApplyPatchRequest {
-                            action: apply.action,
-                            file_paths,
-                            changes,
-                            exec_approval_requirement: apply.exec_approval_requirement,
-                            additional_permissions: effective_additional_permissions
-                                .additional_permissions,
-                            permissions_preapproved: effective_additional_permissions
-                                .permissions_preapproved,
-                            environment_id: environment_id.clone(),
-                        };
+/// Shared body of the `apply_patch` / `apply_patch_in_environment` handler
+/// dispatch. Separates patch verification + runtime delegation from arg
+/// parsing so the two tools share their entire pipeline; the only thing that
+/// differs is `environment_id` (and how it was supplied).
+///
+/// `environment_id`:
+///   - `None` for the legacy `apply_patch` tool (always routes to the
+///     primary env, preserving upstream byte-equivalence per spec § Pa.0).
+///   - `Some(id)` for the env-aware `apply_patch_in_environment` tool added
+///     in spec § Pa.2. The caller is expected to have already validated
+///     that `id` resolves via `turn.select_environment(Some(id))` and
+///     produced a descriptive error otherwise; this helper trusts that
+///     pre-validation and falls back to the legacy "apply_patch is
+///     unavailable in this session" error only when no environment exists
+///     at all.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn handle_apply_patch_request(
+    patch_input: String,
+    environment_id: Option<String>,
+    session: Arc<Session>,
+    turn: Arc<TurnContext>,
+    tracker: SharedTurnDiffTracker,
+    call_id: String,
+    tool_name_display: String,
+) -> Result<ApplyPatchToolOutput, FunctionCallError> {
+    // Re-parse and verify the patch so we can compute changes and approval.
+    // Avoid building temporary ExecParams/command vectors; derive directly from inputs.
+    let cwd = turn.cwd.clone();
+    let command = vec!["apply_patch".to_string(), patch_input.clone()];
+    // Resolve env via `select_environment` so the env-aware tool routes the
+    // verification's filesystem lookup at the chosen env (mirrors Pa.1 in
+    // exec_command_in_environment.rs:217). With `environment_id == None`
+    // this is equivalent to `primary_environment()`, preserving the legacy
+    // `apply_patch` behaviour byte-for-byte.
+    let Some(turn_environment) = turn.select_environment(environment_id.as_deref()) else {
+        return Err(FunctionCallError::RespondToModel(
+            "apply_patch is unavailable in this session".to_string(),
+        ));
+    };
+    let fs = turn_environment.environment.get_filesystem();
+    let sandbox = turn_environment
+        .environment
+        .is_remote()
+        .then(|| turn.file_system_sandbox_context(/*additional_permissions*/ None));
+    match codex_apply_patch::maybe_parse_apply_patch_verified(
+        &command,
+        &cwd,
+        fs.as_ref(),
+        sandbox.as_ref(),
+    )
+    .await
+    {
+        codex_apply_patch::MaybeApplyPatchVerified::Body(changes) => {
+            let (file_paths, effective_additional_permissions, file_system_sandbox_policy) =
+                effective_patch_permissions(session.as_ref(), turn.as_ref(), &changes).await;
+            match apply_patch::apply_patch(turn.as_ref(), &file_system_sandbox_policy, changes)
+                .await
+            {
+                InternalApplyPatchInvocation::Output(item) => {
+                    let content = item?;
+                    Ok(ApplyPatchToolOutput::from_text(content))
+                }
+                InternalApplyPatchInvocation::DelegateToRuntime(apply) => {
+                    let changes = convert_apply_patch_to_protocol(&apply.action);
+                    let emitter =
+                        ToolEmitter::apply_patch(changes.clone(), apply.auto_approved);
+                    let event_ctx = ToolEventCtx::new(
+                        session.as_ref(),
+                        turn.as_ref(),
+                        &call_id,
+                        Some(&tracker),
+                    );
+                    emitter.begin(event_ctx).await;
 
-                        let mut orchestrator = ToolOrchestrator::new();
-                        let mut runtime = ApplyPatchRuntime::new();
-                        let tool_ctx = ToolCtx {
-                            session: session.clone(),
-                            turn: turn.clone(),
-                            call_id: call_id.clone(),
-                            tool_name: tool_name.display(),
-                        };
-                        let out = orchestrator
-                            .run(
-                                &mut runtime,
-                                &req,
-                                &tool_ctx,
-                                turn.as_ref(),
-                                turn.approval_policy.value(),
-                            )
-                            .await
-                            .map(|result| result.output);
-                        let event_ctx = ToolEventCtx::new(
-                            session.as_ref(),
+                    let req = ApplyPatchRequest {
+                        action: apply.action,
+                        file_paths,
+                        changes,
+                        exec_approval_requirement: apply.exec_approval_requirement,
+                        additional_permissions: effective_additional_permissions
+                            .additional_permissions,
+                        permissions_preapproved: effective_additional_permissions
+                            .permissions_preapproved,
+                        environment_id: environment_id.clone(),
+                    };
+
+                    let mut orchestrator = ToolOrchestrator::new();
+                    let mut runtime = ApplyPatchRuntime::new();
+                    let tool_ctx = ToolCtx {
+                        session: session.clone(),
+                        turn: turn.clone(),
+                        call_id: call_id.clone(),
+                        tool_name: tool_name_display,
+                    };
+                    let out = orchestrator
+                        .run(
+                            &mut runtime,
+                            &req,
+                            &tool_ctx,
                             turn.as_ref(),
-                            &call_id,
-                            Some(&tracker),
-                        );
-                        let content = emitter.finish(event_ctx, out).await?;
-                        Ok(ApplyPatchToolOutput::from_text(content))
-                    }
+                            turn.approval_policy.value(),
+                        )
+                        .await
+                        .map(|result| result.output);
+                    let event_ctx = ToolEventCtx::new(
+                        session.as_ref(),
+                        turn.as_ref(),
+                        &call_id,
+                        Some(&tracker),
+                    );
+                    let content = emitter.finish(event_ctx, out).await?;
+                    Ok(ApplyPatchToolOutput::from_text(content))
                 }
             }
-            codex_apply_patch::MaybeApplyPatchVerified::CorrectnessError(parse_error) => {
-                Err(FunctionCallError::RespondToModel(format!(
-                    "apply_patch verification failed: {parse_error}"
-                )))
-            }
-            codex_apply_patch::MaybeApplyPatchVerified::ShellParseError(error) => {
-                tracing::trace!("Failed to parse apply_patch input, {error:?}");
-                Err(FunctionCallError::RespondToModel(
-                    "apply_patch handler received invalid patch input".to_string(),
-                ))
-            }
-            codex_apply_patch::MaybeApplyPatchVerified::NotApplyPatch => {
-                Err(FunctionCallError::RespondToModel(
-                    "apply_patch handler received non-apply_patch input".to_string(),
-                ))
-            }
+        }
+        codex_apply_patch::MaybeApplyPatchVerified::CorrectnessError(parse_error) => {
+            Err(FunctionCallError::RespondToModel(format!(
+                "apply_patch verification failed: {parse_error}"
+            )))
+        }
+        codex_apply_patch::MaybeApplyPatchVerified::ShellParseError(error) => {
+            tracing::trace!("Failed to parse apply_patch input, {error:?}");
+            Err(FunctionCallError::RespondToModel(
+                "apply_patch handler received invalid patch input".to_string(),
+            ))
+        }
+        codex_apply_patch::MaybeApplyPatchVerified::NotApplyPatch => {
+            Err(FunctionCallError::RespondToModel(
+                "apply_patch handler received non-apply_patch input".to_string(),
+            ))
         }
     }
 }

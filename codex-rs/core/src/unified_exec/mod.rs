@@ -101,6 +101,13 @@ pub(crate) struct ExecCommandRequest {
     pub additional_permissions_preapproved: bool,
     pub justification: Option<String>,
     pub prefix_rule: Option<Vec<String>>,
+    /// LLM-supplied environment id (from the
+    /// `exec_command_in_environment` tool's `environment_id` field). `None`
+    /// selects the primary environment, mirroring the original
+    /// `exec_command` behaviour. Per spec § Pa.1, this is plumbed through to
+    /// `UnifiedExecRequest::environment_id` so the runtime's
+    /// `select_environment` call routes to the chosen env.
+    pub environment_id: Option<String>,
 }
 
 #[derive(Debug)]

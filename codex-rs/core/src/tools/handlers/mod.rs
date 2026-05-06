@@ -1,6 +1,7 @@
 pub(crate) mod agent_jobs;
 pub(crate) mod apply_patch;
 mod dynamic;
+pub(crate) mod exec_command_in_environment;
 mod goal;
 mod list_dir;
 mod mcp;
@@ -37,6 +38,10 @@ pub use apply_patch::ApplyPatchHandler;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 pub use dynamic::DynamicToolHandler;
+// Re-exported for Pa.7 to register the new tool. Until then it is not
+// referenced outside the module, hence the `allow`.
+#[allow(unused_imports)]
+pub use exec_command_in_environment::ExecCommandInEnvironmentHandler;
 pub use goal::GoalHandler;
 pub use list_dir::ListDirHandler;
 pub use mcp::McpHandler;

@@ -296,7 +296,7 @@ pub fn request_permissions_tool_description() -> String {
         .to_string()
 }
 
-fn unified_exec_output_schema() -> Value {
+pub(crate) fn unified_exec_output_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
@@ -330,7 +330,7 @@ fn unified_exec_output_schema() -> Value {
     })
 }
 
-fn create_approval_parameters(
+pub(crate) fn create_approval_parameters(
     exec_permission_approvals_enabled: bool,
 ) -> BTreeMap<String, JsonSchema> {
     let mut properties = BTreeMap::from([

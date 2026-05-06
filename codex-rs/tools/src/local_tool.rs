@@ -154,18 +154,6 @@ pub fn create_shell_tool(options: ShellToolOptions) -> ToolSpec {
                 "The timeout for the command in milliseconds".to_string(),
             )),
         ),
-        (
-            "environment_id".to_string(),
-            JsonSchema::string(Some(
-                "Optional. Selects the execution environment used for `apply_patch` interception \
-                 and filesystem-side validation when this command is itself an `apply_patch` \
-                 invocation. **Note**: shell command execution itself is always local to the \
-                 codex host — for cross-environment remote exec, use the `exec_command` \
-                 (unified_exec) tool instead. See <environments> in the system prompt for \
-                 available ids."
-                    .to_string(),
-            )),
-        ),
     ]);
     properties.extend(create_approval_parameters(
         options.exec_permission_approvals_enabled,

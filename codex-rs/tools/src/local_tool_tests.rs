@@ -46,18 +46,6 @@ Examples of valid command strings:
             JsonSchema::number(Some("The timeout for the command in milliseconds".to_string())),
         ),
         (
-            "environment_id".to_string(),
-            JsonSchema::string(Some(
-                "Optional. Selects the execution environment used for `apply_patch` interception \
-                 and filesystem-side validation when this command is itself an `apply_patch` \
-                 invocation. **Note**: shell command execution itself is always local to the \
-                 codex host — for cross-environment remote exec, use the `exec_command` \
-                 (unified_exec) tool instead. See <environments> in the system prompt for \
-                 available ids."
-                    .to_string(),
-            )),
-        ),
-        (
             "sandbox_permissions".to_string(),
             JsonSchema::string(Some(
                     "Sandbox permissions for the command. Set to \"require_escalated\" to request running without sandbox restrictions; defaults to \"use_default\"."
@@ -100,42 +88,6 @@ Examples of valid command strings:
             ),
             output_schema: None,
         })
-    );
-
-    let spec = create_shell_tool(ShellToolOptions {
-        exec_permission_approvals_enabled: false,
-    });
-    let parameters = match &spec {
-        ToolSpec::Function(ResponsesApiTool { parameters, .. }) => parameters,
-        other => panic!("expected function tool, got {other:?}"),
-    };
-    let serialized = serde_json::to_value(parameters).expect("schema");
-    let properties = serialized
-        .get("properties")
-        .expect("properties")
-        .as_object()
-        .expect("object");
-    assert!(
-        properties.contains_key("environment_id"),
-        "shell tool schema missing environment_id property: {serialized}"
-    );
-    let environment_id_schema = &properties["environment_id"];
-    assert_eq!(environment_id_schema["type"], "string");
-    assert!(
-        environment_id_schema["description"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("environment"),
-        "expected environment_id description to mention environment"
-    );
-    let required = serialized
-        .get("required")
-        .expect("required")
-        .as_array()
-        .expect("array");
-    assert!(
-        !required.iter().any(|r| r == "environment_id"),
-        "environment_id must not be in required[]"
     );
 }
 
@@ -296,18 +248,6 @@ fn shell_tool_with_request_permission_includes_additional_permissions() {
             "timeout_ms".to_string(),
             JsonSchema::number(Some(
                 "The timeout for the command in milliseconds".to_string(),
-            )),
-        ),
-        (
-            "environment_id".to_string(),
-            JsonSchema::string(Some(
-                "Optional. Selects the execution environment used for `apply_patch` interception \
-                 and filesystem-side validation when this command is itself an `apply_patch` \
-                 invocation. **Note**: shell command execution itself is always local to the \
-                 codex host — for cross-environment remote exec, use the `exec_command` \
-                 (unified_exec) tool instead. See <environments> in the system prompt for \
-                 available ids."
-                    .to_string(),
             )),
         ),
     ]);

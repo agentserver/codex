@@ -28,6 +28,7 @@ mod tool_registry_plan_types;
 mod tool_spec;
 mod utility_tool;
 mod view_image;
+mod view_image_in_environment_tool;
 
 pub use agent_job_tool::create_report_agent_job_result_tool;
 pub use agent_job_tool::create_spawn_agents_on_csv_tool;
@@ -170,3 +171,7 @@ pub use utility_tool::create_list_dir_tool;
 pub use utility_tool::create_test_sync_tool;
 pub use view_image::ViewImageToolOptions;
 pub use view_image::create_view_image_tool;
+// Re-exported for Pa.7 to register the new tool. Until then it is not
+// referenced outside the crate, hence the `allow`.
+#[allow(unused_imports)]
+pub use view_image_in_environment_tool::create_view_image_in_environment_tool;

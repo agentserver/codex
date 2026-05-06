@@ -22,6 +22,7 @@ mod tool_search;
 mod unavailable_tool;
 pub(crate) mod unified_exec;
 mod view_image;
+pub(crate) mod view_image_in_environment;
 
 use codex_sandboxing::policy_transforms::intersect_permission_profiles;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
@@ -73,6 +74,10 @@ pub use unavailable_tool::UnavailableToolHandler;
 pub(crate) use unavailable_tool::unavailable_tool_message;
 pub use unified_exec::UnifiedExecHandler;
 pub use view_image::ViewImageHandler;
+// Re-exported for Pa.7 to register the new tool. Until then it is not
+// referenced outside the module, hence the `allow`.
+#[allow(unused_imports)]
+pub use view_image_in_environment::ViewImageInEnvironmentHandler;
 
 fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
 where

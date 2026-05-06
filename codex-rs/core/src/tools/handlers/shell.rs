@@ -261,7 +261,12 @@ impl ToolHandler for ShellHandler {
                     call_id,
                     freeform: false,
                     shell_runtime_backend: ShellRuntimeBackend::Generic,
-                    environment_id: params.environment_id.clone(),
+                    // The shell tool's native schema does not expose
+                    // `environment_id` (Pa.0 reverted that LLM-tool surface);
+                    // env selection now flows only through the new env-aware
+                    // tools (Pa.1+). Defaulting to `None` lets
+                    // `select_environment` pick the primary environment.
+                    environment_id: None,
                 })
                 .await
             }
@@ -280,7 +285,12 @@ impl ToolHandler for ShellHandler {
                     call_id,
                     freeform: false,
                     shell_runtime_backend: ShellRuntimeBackend::Generic,
-                    environment_id: params.environment_id.clone(),
+                    // The shell tool's native schema does not expose
+                    // `environment_id` (Pa.0 reverted that LLM-tool surface);
+                    // env selection now flows only through the new env-aware
+                    // tools (Pa.1+). Defaulting to `None` lets
+                    // `select_environment` pick the primary environment.
+                    environment_id: None,
                 })
                 .await
             }

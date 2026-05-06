@@ -1275,13 +1275,6 @@ pub struct ShellToolCallParams {
     pub additional_permissions: Option<AdditionalPermissionProfile>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub justification: Option<String>,
-    /// Optional. Identifier of the execution environment to run this command
-    /// in. Defaults to the primary environment for the turn. See the
-    /// `<environments>` block in the system prompt for available ids.
-    /// (Per spec § P3.)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub environment_id: Option<String>,
 }
 
 /// If the `name` of a `ResponseItem::FunctionCall` is `shell_command`, the
@@ -2570,7 +2563,6 @@ mod tests {
                 prefix_rule: None,
                 additional_permissions: None,
                 justification: None,
-                environment_id: None,
             },
             params
         );
@@ -2931,19 +2923,5 @@ mod tests {
         }
 
         Ok(())
-    }
-
-    #[test]
-    fn shell_tool_call_params_accepts_environment_id() {
-        let json = r#"{"command":["ls"],"environment_id":"exe_alpha"}"#;
-        let params: super::ShellToolCallParams = serde_json::from_str(json).expect("parse");
-        assert_eq!(params.environment_id.as_deref(), Some("exe_alpha"));
-    }
-
-    #[test]
-    fn shell_tool_call_params_environment_id_is_optional() {
-        let json = r#"{"command":["ls"]}"#;
-        let params: super::ShellToolCallParams = serde_json::from_str(json).expect("parse");
-        assert!(params.environment_id.is_none());
     }
 }

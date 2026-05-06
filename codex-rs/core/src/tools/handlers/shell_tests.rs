@@ -218,7 +218,6 @@ async fn shell_pre_tool_use_payload_uses_joined_command() {
             prefix_rule: None,
             additional_permissions: None,
             justification: None,
-            environment_id: None,
         },
     };
     let (session, turn) = make_session_and_context().await;
@@ -270,66 +269,14 @@ async fn shell_command_pre_tool_use_payload_uses_raw_command() {
     );
 }
 
-#[tokio::test]
-async fn shell_handler_rejects_unknown_environment_id_with_descriptive_error() {
-    use crate::session::tests::make_test_turn_context_with_environments;
-    use crate::session::turn_context::TurnEnvironment;
-
-    let env_a = std::sync::Arc::new(codex_exec_server::Environment::default_for_tests());
-    let env_b = std::sync::Arc::new(codex_exec_server::Environment::default_for_tests());
-    let cwd = codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
-        std::env::current_dir().expect("cwd").as_path(),
-    )
-    .expect("abs");
-    let environments = vec![
-        TurnEnvironment {
-            environment_id: "exe_one".into(),
-            environment: std::sync::Arc::clone(&env_a),
-            cwd: cwd.clone(),
-            shell: "/bin/sh".into(),
-        },
-        TurnEnvironment {
-            environment_id: "exe_two".into(),
-            environment: std::sync::Arc::clone(&env_b),
-            cwd: cwd.clone(),
-            shell: "/bin/sh".into(),
-        },
-    ];
-    let turn_context = make_test_turn_context_with_environments(environments).await;
-    // The handler resolves env_id from the parsed payload before doing any
-    // heavy lifting (orchestrator, exec, etc.), so an unknown id triggers an
-    // early error and we can exercise the production code path cheaply.
-    let (session, _baseline_turn) = make_session_and_context().await;
-    let arguments = json!({
-        "command": ["echo", "hi"],
-        "environment_id": "exe_missing",
-    })
-    .to_string();
-    let invocation = ToolInvocation {
-        session: session.into(),
-        turn: turn_context.into(),
-        cancellation_token: tokio_util::sync::CancellationToken::new(),
-        tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
-        call_id: "call-shell-env".to_string(),
-        tool_name: codex_tools::ToolName::plain("shell"),
-        source: ToolCallSource::Direct,
-        payload: ToolPayload::Function { arguments },
-    };
-    let result = ShellHandler.handle(invocation).await;
-    let err = match result {
-        Ok(_) => panic!("unknown environment_id must error"),
-        Err(err) => err,
-    };
-    let msg = err.to_string();
-    assert!(
-        msg.contains("exe_missing"),
-        "error should mention requested env id: {msg}"
-    );
-    assert!(
-        msg.contains("exe_one") && msg.contains("exe_two"),
-        "error should list available env ids: {msg}"
-    );
-}
+// Note: a previous test (`shell_handler_rejects_unknown_environment_id_with_descriptive_error`)
+// asserted that the shell handler returned a descriptive error when the LLM
+// supplied an unknown `environment_id` via tool arguments. After Pa.0 reverted
+// the env_id LLM-tool surface, the shell tool's native schema no longer
+// exposes `environment_id` and `ShellToolCallParams` no longer carries it, so
+// the LLM cannot reach the unknown-id rejection branch through this tool.
+// The error path itself remains in the handler (see `shell.rs`) and will be
+// exercised by the new env-aware tools added in Pa.1+ via their own tests.
 
 #[tokio::test]
 async fn shell_handler_select_environment_routes_to_named_env() {

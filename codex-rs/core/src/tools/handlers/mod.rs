@@ -41,33 +41,18 @@ use crate::session::session::Session;
 pub(crate) use crate::tools::code_mode::CodeModeExecuteHandler;
 pub(crate) use crate::tools::code_mode::CodeModeWaitHandler;
 pub use apply_patch::ApplyPatchHandler;
-// Re-exported for Pa.7 to register the new tool. Until then it is not
-// referenced outside the module, hence the `allow`.
-#[allow(unused_imports)]
 pub use apply_patch_in_environment::ApplyPatchInEnvironmentHandler;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 pub use dynamic::DynamicToolHandler;
-// Re-exported for Pa.7 to register the new tool. Until then it is not
-// referenced outside the module, hence the `allow`.
-#[allow(unused_imports)]
 pub use exec_command_in_environment::ExecCommandInEnvironmentHandler;
 pub use goal::GoalHandler;
 pub use list_dir::ListDirHandler;
-// Re-exported for Pa.7 to register the new tool. Until then it is not
-// referenced outside the module, hence the `allow`.
-#[allow(unused_imports)]
 pub use list_dir_in_environment::ListDirInEnvironmentHandler;
-// Re-exported for Pa.7 to register the new tool. Until then it is not
-// referenced outside the module, hence the `allow`.
-#[allow(unused_imports)]
 pub use list_environments::ListEnvironmentsHandler;
 pub use mcp::McpHandler;
 pub use mcp_resource::McpResourceHandler;
 pub use plan::PlanHandler;
-// Re-exported for Pa.7 to register the new tool. Until then it is not
-// referenced outside the module, hence the `allow`.
-#[allow(unused_imports)]
 pub use read_file_in_environment::ReadFileInEnvironmentHandler;
 pub use request_permissions::RequestPermissionsHandler;
 pub use request_plugin_install::RequestPluginInstallHandler;
@@ -80,13 +65,7 @@ pub use unavailable_tool::UnavailableToolHandler;
 pub(crate) use unavailable_tool::unavailable_tool_message;
 pub use unified_exec::UnifiedExecHandler;
 pub use view_image::ViewImageHandler;
-// Re-exported for Pa.7 to register the new tool. Until then it is not
-// referenced outside the module, hence the `allow`.
-#[allow(unused_imports)]
 pub use view_image_in_environment::ViewImageInEnvironmentHandler;
-// Re-exported for Pa.7 to register the new tool. Until then it is not
-// referenced outside the module, hence the `allow`.
-#[allow(unused_imports)]
 pub use write_file_in_environment::WriteFileInEnvironmentHandler;
 
 fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>

@@ -1,9 +1,3 @@
-#![allow(dead_code)]
-// All public items in this module are dead code until Pa.7 wires the new
-// handler into the registry. The `#![allow(dead_code)]` above keeps the
-// noise contained to this file rather than relying on per-item attributes
-// that would have to be removed later.
-
 //! `read_file_in_environment` — env-aware file read primitive added in
 //! spec § Pa.6.
 //!
@@ -36,6 +30,11 @@ use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 
+/// Public tool name. Mirrors the schema name in
+/// `codex_tools::create_read_file_in_environment_tool`. Currently only
+/// referenced by tests; runtime registration uses the string literal in
+/// `codex_tools::tool_registry_plan::build_tool_registry_plan`.
+#[allow(dead_code)]
 pub(crate) const TOOL_NAME: &str = "read_file_in_environment";
 
 pub struct ReadFileInEnvironmentHandler;

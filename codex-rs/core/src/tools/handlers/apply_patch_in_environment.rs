@@ -1,9 +1,3 @@
-#![allow(dead_code)]
-// All public items in this module are dead code until Pa.7 wires the new
-// handler into the registry. The `#![allow(dead_code)]` above keeps the
-// noise contained to this file rather than relying on per-item attributes
-// that would have to be removed later.
-
 //! `apply_patch_in_environment` — env-aware mirror of the native
 //! `apply_patch` JSON tool, added in spec § Pa.2.
 //!

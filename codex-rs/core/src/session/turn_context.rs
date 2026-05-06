@@ -235,7 +235,8 @@ impl TurnContext {
         )
         .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
             &config.agent_roles,
-        ));
+        ))
+        .with_multi_environment_count(self.environments.len());
 
         Self {
             sub_id: self.sub_id.clone(),
@@ -517,7 +518,8 @@ impl Session {
         )
         .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
             &per_turn_config.agent_roles,
-        ));
+        ))
+        .with_multi_environment_count(environments.len());
 
         let per_turn_config = Arc::new(per_turn_config);
         let turn_metadata_state = Arc::new(TurnMetadataState::new(

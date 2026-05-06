@@ -47,9 +47,6 @@ pub use agent_tool::create_spawn_agent_tool_v1;
 pub use agent_tool::create_spawn_agent_tool_v2;
 pub use agent_tool::create_wait_agent_tool_v1;
 pub use agent_tool::create_wait_agent_tool_v2;
-// Re-exported for Pa.7 to register the new tool. Until then it is not
-// referenced outside the crate, hence the `allow`.
-#[allow(unused_imports)]
 pub use apply_patch_in_environment_tool::create_apply_patch_in_environment_tool;
 pub use apply_patch_tool::ApplyPatchToolArgs;
 pub use apply_patch_tool::create_apply_patch_freeform_tool;
@@ -78,13 +75,7 @@ pub use json_schema::JsonSchema;
 pub use json_schema::JsonSchemaPrimitiveType;
 pub use json_schema::JsonSchemaType;
 pub use json_schema::parse_tool_input_schema;
-// Re-exported for Pa.7 to register the new tool. Until then it is not
-// referenced outside the crate, hence the `allow`.
-#[allow(unused_imports)]
 pub use list_dir_in_environment_tool::create_list_dir_in_environment_tool;
-// Re-exported for Pa.7 to register the new tool. Until then it is not
-// referenced outside the crate, hence the `allow`.
-#[allow(unused_imports)]
 pub use list_environments_tool::create_list_environments_tool;
 pub use local_tool::CommandToolOptions;
 pub use local_tool::ShellToolOptions;
@@ -100,9 +91,6 @@ pub use mcp_resource_tool::create_read_mcp_resource_tool;
 pub use mcp_tool::mcp_call_tool_result_output_schema;
 pub use mcp_tool::parse_mcp_tool;
 pub use plan_tool::create_update_plan_tool;
-// Re-exported for Pa.7 to register the new tool. Until then it is not
-// referenced outside the crate, hence the `allow`.
-#[allow(unused_imports)]
 pub use read_file_in_environment_tool::create_read_file_in_environment_tool;
 pub use request_plugin_install::REQUEST_PLUGIN_INSTALL_APPROVAL_KIND_VALUE;
 pub use request_plugin_install::REQUEST_PLUGIN_INSTALL_PERSIST_ALWAYS_VALUE;
@@ -177,11 +165,5 @@ pub use utility_tool::create_list_dir_tool;
 pub use utility_tool::create_test_sync_tool;
 pub use view_image::ViewImageToolOptions;
 pub use view_image::create_view_image_tool;
-// Re-exported for Pa.7 to register the new tool. Until then it is not
-// referenced outside the crate, hence the `allow`.
-#[allow(unused_imports)]
 pub use view_image_in_environment_tool::create_view_image_in_environment_tool;
-// Re-exported for Pa.7 to register the new tool. Until then it is not
-// referenced outside the crate, hence the `allow`.
-#[allow(unused_imports)]
 pub use write_file_in_environment_tool::create_write_file_in_environment_tool;

@@ -77,14 +77,19 @@ pub(crate) fn build_specs_with_discoverable_tools(
     dynamic_tools: &[DynamicToolSpec],
 ) -> ToolRegistryBuilder {
     use crate::tools::handlers::ApplyPatchHandler;
+    use crate::tools::handlers::ApplyPatchInEnvironmentHandler;
     use crate::tools::handlers::CodeModeExecuteHandler;
     use crate::tools::handlers::CodeModeWaitHandler;
     use crate::tools::handlers::DynamicToolHandler;
+    use crate::tools::handlers::ExecCommandInEnvironmentHandler;
     use crate::tools::handlers::GoalHandler;
     use crate::tools::handlers::ListDirHandler;
+    use crate::tools::handlers::ListDirInEnvironmentHandler;
+    use crate::tools::handlers::ListEnvironmentsHandler;
     use crate::tools::handlers::McpHandler;
     use crate::tools::handlers::McpResourceHandler;
     use crate::tools::handlers::PlanHandler;
+    use crate::tools::handlers::ReadFileInEnvironmentHandler;
     use crate::tools::handlers::RequestPermissionsHandler;
     use crate::tools::handlers::RequestPluginInstallHandler;
     use crate::tools::handlers::RequestUserInputHandler;
@@ -95,6 +100,8 @@ pub(crate) fn build_specs_with_discoverable_tools(
     use crate::tools::handlers::UnavailableToolHandler;
     use crate::tools::handlers::UnifiedExecHandler;
     use crate::tools::handlers::ViewImageHandler;
+    use crate::tools::handlers::ViewImageInEnvironmentHandler;
+    use crate::tools::handlers::WriteFileInEnvironmentHandler;
     use crate::tools::handlers::multi_agents::CloseAgentHandler;
     use crate::tools::handlers::multi_agents::ResumeAgentHandler;
     use crate::tools::handlers::multi_agents::SendInputHandler;
@@ -202,6 +209,9 @@ pub(crate) fn build_specs_with_discoverable_tools(
             ToolHandlerKind::ApplyPatch => {
                 builder.register_handler(handler.name, apply_patch_handler.clone());
             }
+            ToolHandlerKind::ApplyPatchInEnvironment => {
+                builder.register_handler(handler.name, Arc::new(ApplyPatchInEnvironmentHandler));
+            }
             ToolHandlerKind::CloseAgentV1 => {
                 builder.register_handler(handler.name, Arc::new(CloseAgentHandler));
             }
@@ -217,6 +227,9 @@ pub(crate) fn build_specs_with_discoverable_tools(
             ToolHandlerKind::DynamicTool => {
                 builder.register_handler(handler.name, dynamic_tool_handler.clone());
             }
+            ToolHandlerKind::ExecCommandInEnvironment => {
+                builder.register_handler(handler.name, Arc::new(ExecCommandInEnvironmentHandler));
+            }
             ToolHandlerKind::FollowupTaskV2 => {
                 builder.register_handler(handler.name, Arc::new(FollowupTaskHandlerV2));
             }
@@ -229,6 +242,12 @@ pub(crate) fn build_specs_with_discoverable_tools(
             ToolHandlerKind::ListDir => {
                 builder.register_handler(handler.name, Arc::new(ListDirHandler));
             }
+            ToolHandlerKind::ListDirInEnvironment => {
+                builder.register_handler(handler.name, Arc::new(ListDirInEnvironmentHandler));
+            }
+            ToolHandlerKind::ListEnvironments => {
+                builder.register_handler(handler.name, Arc::new(ListEnvironmentsHandler));
+            }
             ToolHandlerKind::Mcp => {
                 builder.register_handler(handler.name, mcp_handler.clone());
             }
@@ -237,6 +256,9 @@ pub(crate) fn build_specs_with_discoverable_tools(
             }
             ToolHandlerKind::Plan => {
                 builder.register_handler(handler.name, plan_handler.clone());
+            }
+            ToolHandlerKind::ReadFileInEnvironment => {
+                builder.register_handler(handler.name, Arc::new(ReadFileInEnvironmentHandler));
             }
             ToolHandlerKind::RequestPermissions => {
                 builder.register_handler(handler.name, request_permissions_handler.clone());
@@ -290,11 +312,17 @@ pub(crate) fn build_specs_with_discoverable_tools(
             ToolHandlerKind::ViewImage => {
                 builder.register_handler(handler.name, view_image_handler.clone());
             }
+            ToolHandlerKind::ViewImageInEnvironment => {
+                builder.register_handler(handler.name, Arc::new(ViewImageInEnvironmentHandler));
+            }
             ToolHandlerKind::WaitAgentV1 => {
                 builder.register_handler(handler.name, Arc::new(WaitAgentHandler));
             }
             ToolHandlerKind::WaitAgentV2 => {
                 builder.register_handler(handler.name, Arc::new(WaitAgentHandlerV2));
+            }
+            ToolHandlerKind::WriteFileInEnvironment => {
+                builder.register_handler(handler.name, Arc::new(WriteFileInEnvironmentHandler));
             }
         }
     }

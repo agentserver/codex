@@ -223,6 +223,17 @@ impl EnvironmentManager {
     pub fn get_environment(&self, environment_id: &str) -> Option<Arc<Environment>> {
         self.environments.get(environment_id).cloned()
     }
+
+    /// Returns the number of registered environments.
+    ///
+    /// Codex's env-aware tool family (`exec_command_in_environment`,
+    /// `apply_patch_in_environment`, `list_environments`, etc.) is gated on
+    /// this value: those tools are only advertised to the model when at least
+    /// two environments are available, since routing is meaningless with a
+    /// single environment.
+    pub fn environments_count(&self) -> usize {
+        self.environments.len()
+    }
 }
 
 /// Concrete execution/filesystem environment selected for a session.
@@ -510,6 +521,31 @@ mod tests {
         );
         assert!(manager.get_environment(LOCAL_ENVIRONMENT_ID).is_none());
         assert!(!manager.local_environment().is_remote());
+    }
+
+    #[tokio::test]
+    async fn environment_manager_environments_count_reports_registered_count() {
+        let zero = EnvironmentManager::disabled_for_tests(test_runtime_paths());
+        assert_eq!(zero.environments_count(), 0);
+
+        let one = EnvironmentManager::default_for_tests();
+        assert_eq!(one.environments_count(), 1);
+
+        let two = EnvironmentManager::from_environments(
+            HashMap::from([
+                (
+                    LOCAL_ENVIRONMENT_ID.to_string(),
+                    Environment::default_for_tests(),
+                ),
+                (
+                    REMOTE_ENVIRONMENT_ID.to_string(),
+                    Environment::create_for_tests(Some("ws://127.0.0.1:8765".to_string()))
+                        .expect("remote environment"),
+                ),
+            ]),
+            test_runtime_paths(),
+        );
+        assert_eq!(two.environments_count(), 2);
     }
 
     #[tokio::test]

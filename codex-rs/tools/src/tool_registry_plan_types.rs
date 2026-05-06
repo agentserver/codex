@@ -12,18 +12,28 @@ use std::collections::HashMap;
 pub enum ToolHandlerKind {
     AgentJobs,
     ApplyPatch,
+    /// Env-aware mirror of `ApplyPatch`; gated on multi-env config (Pa.2).
+    ApplyPatchInEnvironment,
     CloseAgentV1,
     CloseAgentV2,
     CodeModeExecute,
     CodeModeWait,
     DynamicTool,
+    /// Env-aware mirror of `UnifiedExec` exec-command (Pa.1).
+    ExecCommandInEnvironment,
     FollowupTaskV2,
     Goal,
     ListAgentsV2,
     ListDir,
+    /// Env-aware mirror of `ListDir` (Pa.4).
+    ListDirInEnvironment,
+    /// Read-only catalog tool; gated on multi-env config (Pa.3).
+    ListEnvironments,
     Mcp,
     McpResource,
     Plan,
+    /// File read on a named environment (Pa.6).
+    ReadFileInEnvironment,
     RequestPermissions,
     RequestUserInput,
     ResumeAgentV1,
@@ -38,8 +48,12 @@ pub enum ToolHandlerKind {
     RequestPluginInstall,
     UnifiedExec,
     ViewImage,
+    /// Env-aware mirror of `ViewImage` (Pa.5).
+    ViewImageInEnvironment,
     WaitAgentV1,
     WaitAgentV2,
+    /// File write on a named environment (Pa.6).
+    WriteFileInEnvironment,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

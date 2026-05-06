@@ -1,9 +1,3 @@
-#![allow(dead_code)]
-// All public items in this module are dead code until Pa.7 wires the new
-// handler into the registry. The `#![allow(dead_code)]` above keeps the
-// noise contained to this file rather than relying on per-item attributes
-// that would have to be removed later.
-
 //! `list_environments` — read-only catalog tool, added in spec § Pa.3.
 //!
 //! Returns the list of execution environments visible to the current turn so
@@ -33,14 +27,21 @@ use crate::tools::registry::ToolKind;
 use serde::Deserialize;
 use serde_json::json;
 
+/// Public tool name. Mirrors the schema name in
+/// `codex_tools::create_list_environments_tool`. Currently only referenced
+/// by tests; runtime registration uses the string literal in
+/// `codex_tools::tool_registry_plan::build_tool_registry_plan`.
+#[allow(dead_code)]
 pub(crate) const TOOL_NAME: &str = "list_environments";
 
 pub struct ListEnvironmentsHandler;
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub(crate) struct ListEnvironmentsArgs {
-    /// Pa.3: parsed but ignored — see module docs.
+    /// Pa.3: parsed but ignored — see module docs. Tests verify default
+    /// parsing behaviour for forward compatibility with bridge-pinging.
     #[serde(default)]
+    #[allow(dead_code)]
     pub(crate) include_status: bool,
 }
 

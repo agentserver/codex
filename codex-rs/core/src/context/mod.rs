@@ -2,6 +2,7 @@
 
 mod approved_command_prefix_saved;
 mod apps_instructions;
+mod available_environments_instructions;
 mod available_plugins_instructions;
 mod available_skills_instructions;
 mod collaboration_mode_instructions;
@@ -27,6 +28,7 @@ mod user_shell_command;
 
 pub(crate) use approved_command_prefix_saved::ApprovedCommandPrefixSaved;
 pub(crate) use apps_instructions::AppsInstructions;
+pub(crate) use available_environments_instructions::AvailableEnvironmentsInstructions;
 pub(crate) use available_plugins_instructions::AvailablePluginsInstructions;
 pub(crate) use available_skills_instructions::AvailableSkillsInstructions;
 pub(crate) use collaboration_mode_instructions::CollaborationModeInstructions;

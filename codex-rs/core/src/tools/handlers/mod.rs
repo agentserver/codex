@@ -5,6 +5,7 @@ mod dynamic;
 pub(crate) mod exec_command_in_environment;
 mod goal;
 mod list_dir;
+pub(crate) mod list_environments;
 mod mcp;
 mod mcp_resource;
 pub(crate) mod multi_agents;
@@ -49,6 +50,10 @@ pub use dynamic::DynamicToolHandler;
 pub use exec_command_in_environment::ExecCommandInEnvironmentHandler;
 pub use goal::GoalHandler;
 pub use list_dir::ListDirHandler;
+// Re-exported for Pa.7 to register the new tool. Until then it is not
+// referenced outside the module, hence the `allow`.
+#[allow(unused_imports)]
+pub use list_environments::ListEnvironmentsHandler;
 pub use mcp::McpHandler;
 pub use mcp_resource::McpResourceHandler;
 pub use plan::PlanHandler;

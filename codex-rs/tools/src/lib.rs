@@ -11,6 +11,7 @@ mod exec_command_in_environment_tool;
 mod goal_tool;
 mod image_detail;
 mod json_schema;
+mod list_environments_tool;
 mod local_tool;
 mod mcp_resource_tool;
 mod mcp_tool;
@@ -73,6 +74,10 @@ pub use json_schema::JsonSchema;
 pub use json_schema::JsonSchemaPrimitiveType;
 pub use json_schema::JsonSchemaType;
 pub use json_schema::parse_tool_input_schema;
+// Re-exported for Pa.7 to register the new tool. Until then it is not
+// referenced outside the crate, hence the `allow`.
+#[allow(unused_imports)]
+pub use list_environments_tool::create_list_environments_tool;
 pub use local_tool::CommandToolOptions;
 pub use local_tool::ShellToolOptions;
 pub use local_tool::create_exec_command_tool;

@@ -238,11 +238,14 @@ impl EnvironmentProvider for ManifestEnvironmentProvider {
                     entry.id, entry.auth_token_env
                 ))
             })?;
-            let environment = Environment::remote_with_auth(
+            let mut environment = Environment::remote_with_auth(
                 entry.url.clone(),
                 Some(token),
                 Some(local_runtime_paths.clone()),
             );
+            if let Some(description) = &entry.description {
+                environment = environment.with_description(description.clone());
+            }
             out.insert(entry.id.clone(), environment);
         }
         Ok(out)

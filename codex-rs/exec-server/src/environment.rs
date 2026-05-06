@@ -236,6 +236,10 @@ pub struct Environment {
     filesystem: Arc<dyn ExecutorFileSystem>,
     http_client: Arc<dyn HttpClient>,
     local_runtime_paths: Option<ExecServerRuntimePaths>,
+    /// Free-form description shown in the system prompt's `<environments>`
+    /// block. Populated from manifest entries' `description` field; `None`
+    /// for environments built via the legacy single-URL path.
+    description: Option<String>,
 }
 
 impl Environment {
@@ -247,6 +251,7 @@ impl Environment {
             filesystem: Arc::new(LocalFileSystem::unsandboxed()),
             http_client: Arc::new(ReqwestHttpClient),
             local_runtime_paths: None,
+            description: None,
         }
     }
 }
@@ -304,6 +309,7 @@ impl Environment {
             )),
             http_client: Arc::new(ReqwestHttpClient),
             local_runtime_paths: Some(local_runtime_paths),
+            description: None,
         }
     }
 
@@ -337,6 +343,7 @@ impl Environment {
             filesystem,
             http_client: Arc::new(client),
             local_runtime_paths,
+            description: None,
         }
     }
 
@@ -363,6 +370,18 @@ impl Environment {
 
     pub fn get_filesystem(&self) -> Arc<dyn ExecutorFileSystem> {
         Arc::clone(&self.filesystem)
+    }
+
+    /// Returns a copy of this environment with `description` set. Used by
+    /// `ManifestEnvironmentProvider` to thread per-entry descriptions through
+    /// to the `<environments>` system-prompt block (P4).
+    pub fn with_description(mut self, description: String) -> Self {
+        self.description = Some(description);
+        self
+    }
+
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
     }
 }
 
@@ -650,6 +669,27 @@ mod tests {
         assert!(manager.get_environment("exe_one").is_some());
         assert!(manager.get_environment("exe_two").is_some());
         assert!(manager.default_environment().expect("env").is_remote());
+    }
+
+    #[tokio::test]
+    async fn environment_carries_description_when_set() {
+        let environment = super::Environment::remote_with_auth(
+            "ws://x".to_string(),
+            None,
+            None,
+        )
+        .with_description("Daisy MBP".to_string());
+        assert_eq!(environment.description(), Some("Daisy MBP"));
+    }
+
+    #[tokio::test]
+    async fn environment_default_description_is_none() {
+        let environment = super::Environment::remote_with_auth(
+            "ws://x".to_string(),
+            None,
+            None,
+        );
+        assert!(environment.description().is_none());
     }
 
     #[tokio::test]

@@ -77,3 +77,29 @@ async fn legacy_single_url_still_works_when_manifest_unset() {
 
     unsafe { std::env::remove_var("CODEX_EXEC_SERVER_URL"); }
 }
+
+#[tokio::test]
+async fn manifest_descriptions_propagate_to_environment() {
+    unsafe { std::env::set_var("P4_DESC_TOK", "tok-d"); }
+    let mut tmp = tempfile::NamedTempFile::new().expect("tmp");
+    std::io::Write::write_all(
+        &mut tmp,
+        br#"{
+            "environments": [
+                {"id":"a","url":"ws://h/a","auth_token_env":"P4_DESC_TOK","description":"Alpha host"},
+                {"id":"b","url":"ws://h/b","auth_token_env":"P4_DESC_TOK"}
+            ]
+        }"#,
+    )
+    .expect("write");
+
+    let provider = ManifestEnvironmentProvider::from_path(tmp.path().to_path_buf()).expect("p");
+    let manager = EnvironmentManager::from_provider(&provider, runtime_paths())
+        .await
+        .expect("m");
+    assert_eq!(
+        manager.get_environment("a").expect("a").description(),
+        Some("Alpha host")
+    );
+    assert!(manager.get_environment("b").expect("b").description().is_none());
+}

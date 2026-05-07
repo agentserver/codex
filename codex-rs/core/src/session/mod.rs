@@ -23,6 +23,7 @@ use crate::connectors;
 use crate::context::ApprovedCommandPrefixSaved;
 use crate::context::AppsInstructions;
 use crate::context::AvailablePluginsInstructions;
+use crate::context::AvailableEnvironmentsInstructions;
 use crate::context::AvailableSkillsInstructions;
 use crate::context::CollaborationModeInstructions;
 use crate::context::ContextualUserFragment;
@@ -2661,6 +2662,30 @@ impl Session {
                 }
                 developer_sections.push(skills_instructions.render());
             }
+        }
+        // <environments> block — only rendered when the turn has 2+ environments.
+        let env_descriptions: std::collections::HashMap<String, Option<String>> = turn_context
+            .environments
+            .iter()
+            .map(|env| {
+                (
+                    env.environment_id.clone(),
+                    env.environment.description().map(str::to_owned),
+                )
+            })
+            .collect();
+        let default_env_id = turn_context
+            .environments
+            .first()
+            .map(|env| env.environment_id.as_str());
+        if let Some(env_instructions) =
+            AvailableEnvironmentsInstructions::from_turn_environments(
+                &turn_context.environments,
+                &env_descriptions,
+                default_env_id,
+            )
+        {
+            developer_sections.push(env_instructions.render());
         }
         let loaded_plugins = self
             .services

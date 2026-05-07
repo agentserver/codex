@@ -18,6 +18,9 @@ use tokio::sync::watch;
 
 use tokio::time::timeout;
 use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::HeaderValue;
+use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 use tracing::debug;
 
 use crate::ProcessId;
@@ -113,6 +116,7 @@ impl RemoteExecServerConnectArgs {
             connect_timeout: CONNECT_TIMEOUT,
             initialize_timeout: INITIALIZE_TIMEOUT,
             resume_session_id: None,
+            auth_token: None,
         }
     }
 }
@@ -181,13 +185,19 @@ pub struct ExecServerClient {
 #[derive(Clone)]
 pub(crate) struct LazyRemoteExecServerClient {
     websocket_url: String,
+    auth_token: Option<String>,
     client: Arc<OnceCell<ExecServerClient>>,
 }
 
 impl LazyRemoteExecServerClient {
     pub(crate) fn new(websocket_url: String) -> Self {
+        Self::with_auth(websocket_url, None)
+    }
+
+    pub(crate) fn with_auth(websocket_url: String, auth_token: Option<String>) -> Self {
         Self {
             websocket_url,
+            auth_token,
             client: Arc::new(OnceCell::new()),
         }
     }
@@ -201,6 +211,7 @@ impl LazyRemoteExecServerClient {
                     connect_timeout: Duration::from_secs(5),
                     initialize_timeout: Duration::from_secs(5),
                     resume_session_id: None,
+                    auth_token: self.auth_token.clone(),
                 })
                 .await
             })
@@ -262,7 +273,22 @@ impl ExecServerClient {
     ) -> Result<Self, ExecServerError> {
         let websocket_url = args.websocket_url.clone();
         let connect_timeout = args.connect_timeout;
-        let (stream, _) = timeout(connect_timeout, connect_async(websocket_url.as_str()))
+        let auth_token = args.auth_token.clone();
+
+        let mut request = websocket_url.as_str().into_client_request().map_err(|source| {
+            ExecServerError::WebSocketConnect {
+                url: websocket_url.clone(),
+                source,
+            }
+        })?;
+        if let Some(token) = auth_token.as_deref() {
+            let header_value = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| {
+                ExecServerError::Protocol("invalid bearer token characters".to_string())
+            })?;
+            request.headers_mut().insert(AUTHORIZATION, header_value);
+        }
+
+        let (stream, _) = timeout(connect_timeout, connect_async(request))
             .await
             .map_err(|_| ExecServerError::WebSocketConnectTimeout {
                 url: websocket_url.clone(),

@@ -604,6 +604,157 @@ fn test_build_specs_agent_job_worker_tools_enabled() {
     );
 }
 
+/// Pa.7: the seven env-aware tools are NOT advertised when the turn has at
+/// most one execution environment. Routing is meaningless without a choice
+/// to make, and the native tools (`exec_command`, `apply_patch`, ...) are
+/// already byte-identical to upstream codex.
+#[test]
+fn env_aware_tool_family_absent_when_multi_environment_count_below_two() {
+    let model_info = model_info();
+    let mut features = Features::with_defaults();
+    features.enable(Feature::UnifiedExec);
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    // Default `multi_environment_count` is 1; verify explicitly.
+    assert_eq!(tools_config.multi_environment_count, 1);
+    let (tools, handlers) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    for absent in PA7_ENV_AWARE_TOOL_NAMES {
+        assert_lacks_tool_name(&tools, absent);
+        assert!(
+            !handlers.iter().any(|handler| handler.name.display() == *absent),
+            "expected handler {absent} to be absent at multi_environment_count=1"
+        );
+    }
+
+    // Sanity check: the env-aware count of 0 also keeps them gated off.
+    let zero_envs_config = tools_config.with_multi_environment_count(0);
+    let (tools, _) = build_specs(
+        &zero_envs_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+    for absent in PA7_ENV_AWARE_TOOL_NAMES {
+        assert_lacks_tool_name(&tools, absent);
+    }
+}
+
+/// Pa.7: when the turn has two or more execution environments, the seven
+/// env-aware mirror tools are advertised alongside their native siblings,
+/// and each one registers a handler entry.
+#[test]
+fn env_aware_tool_family_present_when_multi_environment_count_at_least_two() {
+    let model_info = model_info();
+    let mut features = Features::with_defaults();
+    features.enable(Feature::UnifiedExec);
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    })
+    .with_multi_environment_count(2);
+    let (tools, handlers) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    assert_contains_tool_names(&tools, PA7_ENV_AWARE_TOOL_NAMES);
+
+    // Native tools must still be present alongside the env-aware mirrors —
+    // the model continues to see its training-time schemas for the default
+    // environment.
+    assert_contains_tool_names(
+        &tools,
+        &[
+            "exec_command",
+            "write_stdin",
+            "apply_patch",
+            VIEW_IMAGE_TOOL_NAME,
+        ],
+    );
+
+    for expected in PA7_ENV_AWARE_TOOL_NAMES {
+        assert!(
+            handlers
+                .iter()
+                .any(|handler| handler.name.display() == *expected),
+            "expected handler {expected} to be registered when \
+             multi_environment_count >= 2; had: {:?}",
+            handlers
+                .iter()
+                .map(|handler| handler.name.display())
+                .collect::<Vec<_>>(),
+        );
+    }
+}
+
+/// Pa.7: env-aware tools require `has_environment` regardless of
+/// `multi_environment_count`. A nominally multi-env turn whose environment
+/// surface has been disabled (e.g., `with_has_environment(false)`) should
+/// still suppress the env-aware family — there is no exec backend to route
+/// to.
+#[test]
+fn env_aware_tool_family_requires_has_environment_even_with_multiple_envs() {
+    let model_info = model_info();
+    let mut features = Features::with_defaults();
+    features.enable(Feature::UnifiedExec);
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    })
+    .with_has_environment(false)
+    .with_multi_environment_count(3);
+    let (tools, _) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+    for absent in PA7_ENV_AWARE_TOOL_NAMES {
+        assert_lacks_tool_name(&tools, absent);
+    }
+}
+
+const PA7_ENV_AWARE_TOOL_NAMES: &[&str] = &[
+    "exec_command_in_environment",
+    "apply_patch_in_environment",
+    "list_environments",
+    "list_dir_in_environment",
+    "view_image_in_environment",
+    "read_file_in_environment",
+    "write_file_in_environment",
+];
+
 #[test]
 fn request_user_input_description_reflects_default_mode_feature_flag() {
     let model_info = model_info();

@@ -22,20 +22,25 @@ use crate::collect_code_mode_exec_prompt_tool_definitions;
 use crate::collect_request_plugin_install_entries;
 use crate::collect_tool_search_source_infos;
 use crate::create_apply_patch_freeform_tool;
+use crate::create_apply_patch_in_environment_tool;
 use crate::create_apply_patch_json_tool;
 use crate::create_close_agent_tool_v1;
 use crate::create_close_agent_tool_v2;
 use crate::create_code_mode_tool;
 use crate::create_create_goal_tool;
+use crate::create_exec_command_in_environment_tool;
 use crate::create_exec_command_tool;
 use crate::create_followup_task_tool;
 use crate::create_get_goal_tool;
 use crate::create_image_generation_tool;
 use crate::create_list_agents_tool;
+use crate::create_list_dir_in_environment_tool;
 use crate::create_list_dir_tool;
+use crate::create_list_environments_tool;
 use crate::create_list_mcp_resource_templates_tool;
 use crate::create_list_mcp_resources_tool;
 use crate::create_local_shell_tool;
+use crate::create_read_file_in_environment_tool;
 use crate::create_read_mcp_resource_tool;
 use crate::create_report_agent_job_result_tool;
 use crate::create_request_permissions_tool;
@@ -53,11 +58,13 @@ use crate::create_test_sync_tool;
 use crate::create_tool_search_tool;
 use crate::create_update_goal_tool;
 use crate::create_update_plan_tool;
+use crate::create_view_image_in_environment_tool;
 use crate::create_view_image_tool;
 use crate::create_wait_agent_tool_v1;
 use crate::create_wait_agent_tool_v2;
 use crate::create_wait_tool;
 use crate::create_web_search_tool;
+use crate::create_write_file_in_environment_tool;
 use crate::create_write_stdin_tool;
 use crate::default_namespace_description;
 use crate::dynamic_tool_to_loadable_tool_spec;
@@ -402,6 +409,84 @@ pub fn build_tool_registry_plan(
             config.code_mode_enabled,
         );
         plan.register_handler("view_image", ToolHandlerKind::ViewImage);
+    }
+
+    // Pa.7: env-aware tool family. Only advertise when the model has more than
+    // one execution environment to choose between — otherwise the env_id
+    // parameter is noise and the native (non-env) tools cover the surface.
+    // The native tools above stay byte-identical to upstream so the model
+    // continues to see its training-time schemas; this block adds parallel
+    // `*_in_environment` tools alongside them when routing makes sense.
+    if config.has_environment && config.multi_environment_count >= 2 {
+        plan.push_spec(
+            create_exec_command_in_environment_tool(CommandToolOptions {
+                allow_login_shell: config.allow_login_shell,
+                exec_permission_approvals_enabled,
+            }),
+            /*supports_parallel_tool_calls*/ true,
+            config.code_mode_enabled,
+        );
+        plan.register_handler(
+            "exec_command_in_environment",
+            ToolHandlerKind::ExecCommandInEnvironment,
+        );
+
+        plan.push_spec(
+            create_apply_patch_in_environment_tool(),
+            /*supports_parallel_tool_calls*/ false,
+            config.code_mode_enabled,
+        );
+        plan.register_handler(
+            "apply_patch_in_environment",
+            ToolHandlerKind::ApplyPatchInEnvironment,
+        );
+
+        plan.push_spec(
+            create_list_environments_tool(),
+            /*supports_parallel_tool_calls*/ true,
+            config.code_mode_enabled,
+        );
+        plan.register_handler("list_environments", ToolHandlerKind::ListEnvironments);
+
+        plan.push_spec(
+            create_list_dir_in_environment_tool(),
+            /*supports_parallel_tool_calls*/ true,
+            config.code_mode_enabled,
+        );
+        plan.register_handler(
+            "list_dir_in_environment",
+            ToolHandlerKind::ListDirInEnvironment,
+        );
+
+        plan.push_spec(
+            create_view_image_in_environment_tool(),
+            /*supports_parallel_tool_calls*/ true,
+            config.code_mode_enabled,
+        );
+        plan.register_handler(
+            "view_image_in_environment",
+            ToolHandlerKind::ViewImageInEnvironment,
+        );
+
+        plan.push_spec(
+            create_read_file_in_environment_tool(),
+            /*supports_parallel_tool_calls*/ true,
+            config.code_mode_enabled,
+        );
+        plan.register_handler(
+            "read_file_in_environment",
+            ToolHandlerKind::ReadFileInEnvironment,
+        );
+
+        plan.push_spec(
+            create_write_file_in_environment_tool(),
+            /*supports_parallel_tool_calls*/ false,
+            config.code_mode_enabled,
+        );
+        plan.register_handler(
+            "write_file_in_environment",
+            ToolHandlerKind::WriteFileInEnvironment,
+        );
     }
 
     if config.collab_tools {

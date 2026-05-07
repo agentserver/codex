@@ -626,3 +626,57 @@ async fn remote_exec_server_rejects_inherited_fd_launches() -> anyhow::Result<()
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn unified_exec_routes_to_second_environment_when_environment_id_set() {
+    let env_a = std::sync::Arc::new(codex_exec_server::Environment::default_for_tests());
+    let env_b = std::sync::Arc::new(codex_exec_server::Environment::default_for_tests());
+    let cwd = codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
+        std::env::current_dir().expect("cwd").as_path(),
+    )
+    .expect("abs");
+    let environments = vec![
+        crate::session::turn_context::TurnEnvironment {
+            environment_id: "exe_one".into(),
+            environment: std::sync::Arc::clone(&env_a),
+            cwd: cwd.clone(),
+            shell: "/bin/sh".into(),
+        },
+        crate::session::turn_context::TurnEnvironment {
+            environment_id: "exe_two".into(),
+            environment: std::sync::Arc::clone(&env_b),
+            cwd: cwd.clone(),
+            shell: "/bin/sh".into(),
+        },
+    ];
+    let turn_context =
+        crate::session::tests::make_test_turn_context_with_environments(environments).await;
+
+    let chosen = turn_context.select_environment(Some("exe_two")).expect("found");
+    assert_eq!(chosen.environment_id, "exe_two");
+    assert!(std::sync::Arc::ptr_eq(&chosen.environment, &env_b));
+
+    let chosen_default = turn_context.select_environment(None).expect("default");
+    assert_eq!(chosen_default.environment_id, "exe_one");
+    assert!(std::sync::Arc::ptr_eq(&chosen_default.environment, &env_a));
+
+    let unknown_err = unknown_environment_helper(Some("exe_missing"), &turn_context.environments);
+    assert!(unknown_err.contains("exe_missing"));
+    assert!(unknown_err.contains("exe_one") && unknown_err.contains("exe_two"));
+}
+
+fn unknown_environment_helper(
+    requested: Option<&str>,
+    environments: &[crate::session::turn_context::TurnEnvironment],
+) -> String {
+    match requested {
+        Some(id) => {
+            let available: Vec<&str> = environments
+                .iter()
+                .map(|e| e.environment_id.as_str())
+                .collect();
+            format!("environment_id `{id}` not found; available: [{}]", available.join(", "))
+        }
+        None => "exec_command is unavailable in this session".to_string(),
+    }
+}

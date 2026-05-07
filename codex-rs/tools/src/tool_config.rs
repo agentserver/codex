@@ -116,6 +116,20 @@ pub struct ToolsConfig {
     pub agent_jobs_tools: bool,
     pub agent_jobs_worker_tools: bool,
     pub agent_type_description: String,
+    /// Number of execution environments visible to this turn.
+    ///
+    /// The env-aware tool family (`exec_command_in_environment`,
+    /// `apply_patch_in_environment`, `list_environments`,
+    /// `list_dir_in_environment`, `view_image_in_environment`,
+    /// `read_file_in_environment`, `write_file_in_environment`) is only
+    /// advertised when this value is `>= 2`. With a single environment, the
+    /// existing native tools (`exec_command`, `apply_patch`, `list_dir`,
+    /// `view_image`, ...) cover the surface and the env-id parameter would be
+    /// noise. See spec § Pa.7.
+    ///
+    /// Defaults to `1` so byte-identical behaviour with upstream codex is
+    /// preserved unless callers explicitly opt in.
+    pub multi_environment_count: usize,
 }
 
 pub struct ToolsConfigParams<'a> {
@@ -233,7 +247,15 @@ impl ToolsConfig {
             agent_jobs_tools: include_agent_jobs,
             agent_jobs_worker_tools,
             agent_type_description: String::new(),
+            multi_environment_count: 1,
         }
+    }
+
+    /// Set the number of execution environments for this turn. Used to gate
+    /// the env-aware tool family; see [`ToolsConfig::multi_environment_count`].
+    pub fn with_multi_environment_count(mut self, multi_environment_count: usize) -> Self {
+        self.multi_environment_count = multi_environment_count;
+        self
     }
 
     pub fn with_agent_type_description(mut self, agent_type_description: String) -> Self {

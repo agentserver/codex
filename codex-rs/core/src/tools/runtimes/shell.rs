@@ -60,6 +60,17 @@ pub struct ShellRequest {
     pub additional_permissions_preapproved: bool,
     pub justification: Option<String>,
     pub exec_approval_requirement: ExecApprovalRequirement,
+    /// Optional environment id requested by the LLM via the `shell` tool's
+    /// `environment_id` JSON property. `None` selects the primary environment.
+    /// (Per spec § P3.) The shell handler resolves this id to a concrete
+    /// `TurnEnvironment` (for filesystem / apply_patch interception) before
+    /// constructing the request; the shell runtime itself executes locally and
+    /// records this field so the contract is observable end-to-end.
+    #[allow(
+        dead_code,
+        reason = "shell runtime executes locally and does not dispatch on env_id; field exists to lock the contract observable from tests / future env-aware backends"
+    )]
+    pub environment_id: Option<String>,
 }
 
 /// Selects `ShellRuntime` behavior for different callers.

@@ -286,3 +286,118 @@ fn write_permissions_for_paths_keep_dirs_outside_workspace_root() {
         Some(vec![expected_outside])
     );
 }
+
+#[test]
+fn apply_patch_args_carry_environment_id() {
+    let args_json = r#"{"input":"*** Begin Patch\n*** End Patch\n","environment_id":"exe_beta"}"#;
+    let args: codex_tools::ApplyPatchToolArgs = serde_json::from_str(args_json).expect("parse");
+    assert_eq!(args.environment_id.as_deref(), Some("exe_beta"));
+    assert!(args.input.contains("Begin Patch"));
+}
+
+#[test]
+fn apply_patch_args_environment_id_default_is_none() {
+    let args_json = r#"{"input":"*** Begin Patch\n*** End Patch\n"}"#;
+    let args: codex_tools::ApplyPatchToolArgs = serde_json::from_str(args_json).expect("parse");
+    assert!(args.environment_id.is_none());
+}
+
+/// P3.4c regression test: prior to this fix, `intercept_apply_patch` ignored
+/// the caller-supplied `environment_id` (hardcoded `primary_environment()` and
+/// `ApplyPatchRequest { environment_id: None }`). The shell handler resolves
+/// env_id from `params.environment_id` (P3.4b) and forwards it here; if the
+/// helper drops it, an `apply_patch` invocation routed through `shell` against
+/// `exe_two` would silently target the primary environment instead.
+///
+/// We prove env_id is consumed by passing an unknown id alongside a valid
+/// apply_patch command on a turn that *does* have environments. If env_id
+/// were ignored, `intercept_apply_patch` would fall back to the primary env
+/// and proceed to parse/execute the patch (or fail for an unrelated reason).
+/// With the fix in place, the helper rejects the request with the same
+/// descriptive error pattern used by the shell handler.
+#[tokio::test]
+async fn intercept_apply_patch_routes_by_environment_id() {
+    use crate::session::tests::make_session_and_context;
+    use crate::session::tests::make_test_turn_context_with_environments;
+    use crate::session::turn_context::TurnEnvironment;
+    use codex_exec_server::LOCAL_FS;
+
+    let env_a = std::sync::Arc::new(codex_exec_server::Environment::default_for_tests());
+    let env_b = std::sync::Arc::new(codex_exec_server::Environment::default_for_tests());
+    let cwd_path = std::env::current_dir().expect("cwd");
+    let cwd = cwd_path.as_path().abs();
+    let environments = vec![
+        TurnEnvironment {
+            environment_id: "exe_one".into(),
+            environment: std::sync::Arc::clone(&env_a),
+            cwd: cwd.clone(),
+            shell: "/bin/sh".into(),
+        },
+        TurnEnvironment {
+            environment_id: "exe_two".into(),
+            environment: std::sync::Arc::clone(&env_b),
+            cwd: cwd.clone(),
+            shell: "/bin/sh".into(),
+        },
+    ];
+    let turn = make_test_turn_context_with_environments(environments).await;
+    let (session, _) = make_session_and_context().await;
+
+    let patch = sample_patch();
+    let command = vec!["apply_patch".to_string(), patch.to_string()];
+
+    // Negative: unknown env_id surfaces a descriptive error mentioning the
+    // requested id and the available ids — proving env_id reaches
+    // `select_environment` instead of being silently swapped for primary.
+    let result = intercept_apply_patch(
+        &command,
+        &cwd,
+        LOCAL_FS.as_ref(),
+        std::sync::Arc::new(session),
+        std::sync::Arc::new(turn),
+        None,
+        "call-intercept",
+        "shell",
+        Some("exe_missing"),
+    )
+    .await;
+    let err = match result {
+        Ok(_) => panic!("unknown env_id must error, not return Ok"),
+        Err(err) => err,
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("exe_missing"),
+        "error should name the requested env id: {msg}"
+    );
+    assert!(
+        msg.contains("exe_one") && msg.contains("exe_two"),
+        "error should list available env ids: {msg}"
+    );
+
+    // Positive: with the same multi-env turn, `select_environment("exe_two")`
+    // resolves to env_b (this mirrors the resolution intercept_apply_patch now
+    // performs). This pins the routing contract: the env id flowed in by
+    // shell.rs reaches the env lookup that previously hardcoded primary.
+    let (_session2, _) = make_session_and_context().await;
+    let env_a2 = std::sync::Arc::new(codex_exec_server::Environment::default_for_tests());
+    let env_b2 = std::sync::Arc::new(codex_exec_server::Environment::default_for_tests());
+    let environments2 = vec![
+        TurnEnvironment {
+            environment_id: "exe_one".into(),
+            environment: std::sync::Arc::clone(&env_a2),
+            cwd: cwd.clone(),
+            shell: "/bin/sh".into(),
+        },
+        TurnEnvironment {
+            environment_id: "exe_two".into(),
+            environment: std::sync::Arc::clone(&env_b2),
+            cwd: cwd.clone(),
+            shell: "/bin/sh".into(),
+        },
+    ];
+    let turn2 = make_test_turn_context_with_environments(environments2).await;
+    let chosen = turn2.select_environment(Some("exe_two")).expect("found");
+    assert_eq!(chosen.environment_id, "exe_two");
+    assert!(std::sync::Arc::ptr_eq(&chosen.environment, &env_b2));
+}

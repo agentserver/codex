@@ -1,14 +1,19 @@
 pub(crate) mod agent_jobs;
 pub(crate) mod apply_patch;
+pub(crate) mod apply_patch_in_environment;
 mod dynamic;
+pub(crate) mod exec_command_in_environment;
 mod goal;
 mod list_dir;
+pub(crate) mod list_dir_in_environment;
+pub(crate) mod list_environments;
 mod mcp;
 mod mcp_resource;
 pub(crate) mod multi_agents;
 pub(crate) mod multi_agents_common;
 pub(crate) mod multi_agents_v2;
 mod plan;
+pub(crate) mod read_file_in_environment;
 mod request_permissions;
 mod request_plugin_install;
 mod request_user_input;
@@ -18,6 +23,12 @@ mod tool_search;
 mod unavailable_tool;
 pub(crate) mod unified_exec;
 mod view_image;
+pub(crate) mod view_image_in_environment;
+pub(crate) mod write_file_in_environment;
+
+#[cfg(test)]
+#[path = "multi_env_integration_tests.rs"]
+mod multi_env_integration_tests;
 
 use codex_sandboxing::policy_transforms::intersect_permission_profiles;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
@@ -34,14 +45,19 @@ use crate::session::session::Session;
 pub(crate) use crate::tools::code_mode::CodeModeExecuteHandler;
 pub(crate) use crate::tools::code_mode::CodeModeWaitHandler;
 pub use apply_patch::ApplyPatchHandler;
+pub use apply_patch_in_environment::ApplyPatchInEnvironmentHandler;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 pub use dynamic::DynamicToolHandler;
+pub use exec_command_in_environment::ExecCommandInEnvironmentHandler;
 pub use goal::GoalHandler;
 pub use list_dir::ListDirHandler;
+pub use list_dir_in_environment::ListDirInEnvironmentHandler;
+pub use list_environments::ListEnvironmentsHandler;
 pub use mcp::McpHandler;
 pub use mcp_resource::McpResourceHandler;
 pub use plan::PlanHandler;
+pub use read_file_in_environment::ReadFileInEnvironmentHandler;
 pub use request_permissions::RequestPermissionsHandler;
 pub use request_plugin_install::RequestPluginInstallHandler;
 pub use request_user_input::RequestUserInputHandler;
@@ -53,6 +69,8 @@ pub use unavailable_tool::UnavailableToolHandler;
 pub(crate) use unavailable_tool::unavailable_tool_message;
 pub use unified_exec::UnifiedExecHandler;
 pub use view_image::ViewImageHandler;
+pub use view_image_in_environment::ViewImageInEnvironmentHandler;
+pub use write_file_in_environment::WriteFileInEnvironmentHandler;
 
 fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
 where

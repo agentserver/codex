@@ -110,6 +110,24 @@ impl TurnContext {
         self.environments.first()
     }
 
+    /// Returns the turn environment whose id matches `requested`, or the
+    /// primary (first) environment when `requested` is `None`.
+    ///
+    /// Returns `None` when `requested` is `Some(id)` but no environment in
+    /// this turn context has that id, **or** when the environments list is
+    /// empty. Per spec § P2, the caller is responsible for converting the
+    /// `None` result into a descriptive error visible to the LLM (e.g.
+    /// `ToolError::Rejected("environment_id `xyz` not found; available: ...")`).
+    pub(crate) fn select_environment(
+        &self,
+        requested: Option<&str>,
+    ) -> Option<&TurnEnvironment> {
+        match requested {
+            Some(id) => self.environments.iter().find(|e| e.environment_id == id),
+            None => self.environments.first(),
+        }
+    }
+
     pub(crate) fn sandbox_policy(&self) -> SandboxPolicy {
         let file_system_sandbox_policy = self.file_system_sandbox_policy();
         let network_sandbox_policy = self.network_sandbox_policy();
@@ -217,7 +235,8 @@ impl TurnContext {
         )
         .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
             &config.agent_roles,
-        ));
+        ))
+        .with_multi_environment_count(self.environments.len());
 
         Self {
             sub_id: self.sub_id.clone(),
@@ -499,7 +518,8 @@ impl Session {
         )
         .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
             &per_turn_config.agent_roles,
-        ));
+        ))
+        .with_multi_environment_count(environments.len());
 
         let per_turn_config = Arc::new(per_turn_config);
         let turn_metadata_state = Arc::new(TurnMetadataState::new(

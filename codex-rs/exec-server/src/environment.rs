@@ -84,14 +84,44 @@ impl EnvironmentManager {
         Self::from_default_provider_url(exec_server_url, local_runtime_paths).await
     }
 
-    /// Builds a manager from `CODEX_EXEC_SERVER_URL` and local runtime paths
-    /// used when creating local filesystem helpers.
+    /// Builds a manager. When `CODEX_EXEC_SERVERS_JSON` is set, loads the
+    /// multi-env manifest (per spec § P1). Otherwise falls back to the
+    /// legacy `CODEX_EXEC_SERVER_URL` single-URL path (byte-identical to
+    /// upstream codex). When both are set, manifest wins and a warning is
+    /// logged.
     pub async fn new(args: EnvironmentManagerArgs) -> Self {
         let EnvironmentManagerArgs {
             local_runtime_paths,
         } = args;
-        let exec_server_url = std::env::var(CODEX_EXEC_SERVER_URL_ENV_VAR).ok();
-        Self::from_default_provider_url(exec_server_url, local_runtime_paths).await
+        let single_url = std::env::var(CODEX_EXEC_SERVER_URL_ENV_VAR).ok();
+        match crate::environment_provider::ManifestEnvironmentProvider::from_env() {
+            Ok(Some(manifest_provider)) => {
+                if single_url.is_some() {
+                    tracing::warn!(
+                        "both CODEX_EXEC_SERVERS_JSON and CODEX_EXEC_SERVER_URL are set; \
+                         manifest takes precedence and CODEX_EXEC_SERVER_URL is ignored"
+                    );
+                }
+                match Self::from_provider(&manifest_provider, local_runtime_paths.clone()).await {
+                    Ok(manager) => manager,
+                    Err(err) => {
+                        tracing::error!(
+                            "failed to build EnvironmentManager from manifest: {err}; \
+                             falling back to CODEX_EXEC_SERVER_URL path"
+                        );
+                        Self::from_default_provider_url(single_url, local_runtime_paths).await
+                    }
+                }
+            }
+            Ok(None) => Self::from_default_provider_url(single_url, local_runtime_paths).await,
+            Err(err) => {
+                tracing::error!(
+                    "failed to load manifest from CODEX_EXEC_SERVERS_JSON: {err}; \
+                     falling back to CODEX_EXEC_SERVER_URL path"
+                );
+                Self::from_default_provider_url(single_url, local_runtime_paths).await
+            }
+        }
     }
 
     async fn from_default_provider_url(
@@ -110,7 +140,10 @@ impl EnvironmentManager {
         manager
     }
 
-    /// Builds a manager from a provider-supplied startup snapshot.
+    /// Builds a manager from a provider-supplied startup snapshot. The
+    /// provider's `default_environment_id()` is honored when set; otherwise
+    /// the existing REMOTE/LOCAL heuristic is used (matches legacy behavior
+    /// for `DefaultEnvironmentProvider`).
     pub async fn from_provider<P>(
         provider: &P,
         local_runtime_paths: ExecServerRuntimePaths,
@@ -118,10 +151,14 @@ impl EnvironmentManager {
     where
         P: EnvironmentProvider + ?Sized,
     {
-        Self::from_provider_environments(
-            provider.get_environments(&local_runtime_paths).await?,
-            local_runtime_paths,
-        )
+        let environments = provider.get_environments(&local_runtime_paths).await?;
+        let provider_default = provider.default_environment_id().map(str::to_owned);
+        let mut manager = Self::from_provider_environments(environments, local_runtime_paths)?;
+        if let Some(default_id) = provider_default {
+            // Provider's default wins over the heuristic.
+            manager.default_environment = Some(default_id);
+        }
+        Ok(manager)
     }
 
     fn from_provider_environments(
@@ -186,6 +223,17 @@ impl EnvironmentManager {
     pub fn get_environment(&self, environment_id: &str) -> Option<Arc<Environment>> {
         self.environments.get(environment_id).cloned()
     }
+
+    /// Returns the number of registered environments.
+    ///
+    /// Codex's env-aware tool family (`exec_command_in_environment`,
+    /// `apply_patch_in_environment`, `list_environments`, etc.) is gated on
+    /// this value: those tools are only advertised to the model when at least
+    /// two environments are available, since routing is meaningless with a
+    /// single environment.
+    pub fn environments_count(&self) -> usize {
+        self.environments.len()
+    }
 }
 
 /// Concrete execution/filesystem environment selected for a session.
@@ -199,6 +247,10 @@ pub struct Environment {
     filesystem: Arc<dyn ExecutorFileSystem>,
     http_client: Arc<dyn HttpClient>,
     local_runtime_paths: Option<ExecServerRuntimePaths>,
+    /// Free-form description shown in the system prompt's `<environments>`
+    /// block. Populated from manifest entries' `description` field; `None`
+    /// for environments built via the legacy single-URL path.
+    description: Option<String>,
 }
 
 impl Environment {
@@ -210,6 +262,7 @@ impl Environment {
             filesystem: Arc::new(LocalFileSystem::unsandboxed()),
             http_client: Arc::new(ReqwestHttpClient),
             local_runtime_paths: None,
+            description: None,
         }
     }
 }
@@ -267,14 +320,30 @@ impl Environment {
             )),
             http_client: Arc::new(ReqwestHttpClient),
             local_runtime_paths: Some(local_runtime_paths),
+            description: None,
         }
     }
 
+    /// Backwards-compatible constructor for the single-URL legacy path. New
+    /// callers should prefer `remote_with_auth` to attach a per-env bearer
+    /// token.
     pub(crate) fn remote_inner(
         exec_server_url: String,
         local_runtime_paths: Option<ExecServerRuntimePaths>,
     ) -> Self {
-        let client = LazyRemoteExecServerClient::new(exec_server_url.clone());
+        Self::remote_with_auth(exec_server_url, /*auth_token*/ None, local_runtime_paths)
+    }
+
+    /// Builds a remote environment whose websocket dial attaches an
+    /// `Authorization: Bearer <token>` header when `auth_token.is_some()`.
+    /// Used by `ManifestEnvironmentProvider` (P1) to honor each manifest
+    /// entry's `auth_token_env`-resolved value.
+    pub fn remote_with_auth(
+        exec_server_url: String,
+        auth_token: Option<String>,
+        local_runtime_paths: Option<ExecServerRuntimePaths>,
+    ) -> Self {
+        let client = LazyRemoteExecServerClient::with_auth(exec_server_url.clone(), auth_token);
         let exec_backend: Arc<dyn ExecBackend> = Arc::new(RemoteProcess::new(client.clone()));
         let filesystem: Arc<dyn ExecutorFileSystem> =
             Arc::new(RemoteFileSystem::new(client.clone()));
@@ -285,6 +354,7 @@ impl Environment {
             filesystem,
             http_client: Arc::new(client),
             local_runtime_paths,
+            description: None,
         }
     }
 
@@ -311,6 +381,18 @@ impl Environment {
 
     pub fn get_filesystem(&self) -> Arc<dyn ExecutorFileSystem> {
         Arc::clone(&self.filesystem)
+    }
+
+    /// Returns a copy of this environment with `description` set. Used by
+    /// `ManifestEnvironmentProvider` to thread per-entry descriptions through
+    /// to the `<environments>` system-prompt block (P4).
+    pub fn with_description(mut self, description: String) -> Self {
+        self.description = Some(description);
+        self
+    }
+
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
     }
 }
 
@@ -442,6 +524,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn environment_manager_environments_count_reports_registered_count() {
+        let zero = EnvironmentManager::disabled_for_tests(test_runtime_paths());
+        assert_eq!(zero.environments_count(), 0);
+
+        let one = EnvironmentManager::default_for_tests();
+        assert_eq!(one.environments_count(), 1);
+
+        let two = EnvironmentManager::from_environments(
+            HashMap::from([
+                (
+                    LOCAL_ENVIRONMENT_ID.to_string(),
+                    Environment::default_for_tests(),
+                ),
+                (
+                    REMOTE_ENVIRONMENT_ID.to_string(),
+                    Environment::create_for_tests(Some("ws://127.0.0.1:8765".to_string()))
+                        .expect("remote environment"),
+                ),
+            ]),
+            test_runtime_paths(),
+        );
+        assert_eq!(two.environments_count(), 2);
+    }
+
+    #[tokio::test]
     async fn environment_manager_rejects_empty_environment_id() {
         let err = EnvironmentManager::from_provider_environments(
             HashMap::from([("".to_string(), Environment::default_for_tests())]),
@@ -548,6 +655,77 @@ mod tests {
             .expect("start process");
 
         assert_eq!(response.process.process_id().as_str(), "default-env-proc");
+    }
+
+    #[tokio::test]
+    async fn remote_with_auth_constructs_remote_environment_with_token() {
+        let environment = super::Environment::remote_with_auth(
+            "ws://127.0.0.1:8765".to_string(),
+            Some("test-token".to_string()),
+            /*local_runtime_paths*/ None,
+        );
+        assert!(environment.is_remote());
+        assert_eq!(environment.exec_server_url(), Some("ws://127.0.0.1:8765"));
+    }
+
+    #[tokio::test]
+    async fn remote_inner_still_works_for_callers_that_pass_no_auth() {
+        let environment = super::Environment::remote_inner(
+            "ws://127.0.0.1:8765".to_string(),
+            /*local_runtime_paths*/ None,
+        );
+        assert!(environment.is_remote());
+        assert_eq!(environment.exec_server_url(), Some("ws://127.0.0.1:8765"));
+    }
+
+    #[tokio::test]
+    async fn manager_builds_from_manifest_provider_with_explicit_default() {
+        unsafe { std::env::set_var("P1_MGR_TOK", "tok-x"); }
+        let mut tmp = tempfile::NamedTempFile::new().expect("temp");
+        std::io::Write::write_all(
+            tmp.as_file_mut(),
+            br#"{
+                "default_environment_id": "exe_two",
+                "environments": [
+                    {"id": "exe_one", "url": "ws://h/1", "auth_token_env": "P1_MGR_TOK"},
+                    {"id": "exe_two", "url": "ws://h/2", "auth_token_env": "P1_MGR_TOK"}
+                ]
+            }"#,
+        )
+        .expect("write");
+        let provider =
+            crate::environment_provider::ManifestEnvironmentProvider::from_path(tmp.path().to_path_buf())
+                .expect("provider");
+
+        let manager = super::EnvironmentManager::from_provider(&provider, test_runtime_paths())
+            .await
+            .expect("manager");
+
+        assert_eq!(manager.default_environment_id(), Some("exe_two"));
+        assert!(manager.get_environment("exe_one").is_some());
+        assert!(manager.get_environment("exe_two").is_some());
+        assert!(manager.default_environment().expect("env").is_remote());
+    }
+
+    #[tokio::test]
+    async fn environment_carries_description_when_set() {
+        let environment = super::Environment::remote_with_auth(
+            "ws://x".to_string(),
+            None,
+            None,
+        )
+        .with_description("Daisy MBP".to_string());
+        assert_eq!(environment.description(), Some("Daisy MBP"));
+    }
+
+    #[tokio::test]
+    async fn environment_default_description_is_none() {
+        let environment = super::Environment::remote_with_auth(
+            "ws://x".to_string(),
+            None,
+            None,
+        );
+        assert!(environment.description().is_none());
     }
 
     #[tokio::test]

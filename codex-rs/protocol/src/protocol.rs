@@ -99,6 +99,8 @@ pub const APPS_INSTRUCTIONS_OPEN_TAG: &str = "<apps_instructions>";
 pub const APPS_INSTRUCTIONS_CLOSE_TAG: &str = "</apps_instructions>";
 pub const SKILLS_INSTRUCTIONS_OPEN_TAG: &str = "<skills_instructions>";
 pub const SKILLS_INSTRUCTIONS_CLOSE_TAG: &str = "</skills_instructions>";
+pub const ENVIRONMENTS_OPEN_TAG: &str = "<environments>";
+pub const ENVIRONMENTS_CLOSE_TAG: &str = "</environments>";
 pub const PLUGINS_INSTRUCTIONS_OPEN_TAG: &str = "<plugins_instructions>";
 pub const PLUGINS_INSTRUCTIONS_CLOSE_TAG: &str = "</plugins_instructions>";
 pub const COLLABORATION_MODE_OPEN_TAG: &str = "<collaboration_mode>";
@@ -5442,5 +5444,16 @@ mod tests {
                 .expect("new_or_append should return info");
 
         assert_eq!(info.model_context_window, Some(258_400));
+    }
+}
+
+#[cfg(test)]
+mod environments_tag_tests {
+    use super::*;
+
+    #[test]
+    fn environments_tag_constants_are_xml_pair() {
+        assert_eq!(ENVIRONMENTS_OPEN_TAG, "<environments>");
+        assert_eq!(ENVIRONMENTS_CLOSE_TAG, "</environments>");
     }
 }
